@@ -319,6 +319,14 @@ export default function Page() {
     const timeToBreak = cont.working ? Math.max(0, BREAK_AFTER_HOURS * 3600 - cont.seconds) : 0;
     const breakAtMs = cont.working && !breakDue ? nowMs + timeToBreak * 1000 : null;
 
+    // A single "next thing to happen" — whichever of the next break or the
+    // end-of-day target is sooner. This is the only time shown on the dashboard.
+    const candidates: { kind: 'break' | 'leave'; at: number }[] = [];
+    if (breakAtMs) candidates.push({ kind: 'break', at: breakAtMs });
+    if (leaveAtMs) candidates.push({ kind: 'leave', at: leaveAtMs });
+    candidates.sort((a, b) => a.at - b.at);
+    const nextMilestone = candidates[0] ?? null;
+
     return {
       trackedToday,
       target,
@@ -334,6 +342,7 @@ export default function Page() {
       working: cont.working,
       breakDue,
       breakAtMs,
+      nextMilestone,
     };
   }, [entries, nowMs, settings.projectId, settings.shortFriday, projectNameById]);
 
@@ -473,6 +482,15 @@ export default function Page() {
                   <div className="of">of {fmtHM(view.target)} target</div>
                 </ProgressRing>
 
+                {view.nextMilestone ? (
+                  <div className={`next-time ${view.nextMilestone.kind}`}>
+                    {view.nextMilestone.kind === 'break' ? '☕ Break at ' : '🏁 Leave at '}
+                    <strong>{fmtTimeOfDay(view.nextMilestone.at)}</strong>
+                  </div>
+                ) : (
+                  <div className="next-time done">🎉 Target reached — you can leave</div>
+                )}
+
                 <div className="stats">
                   <div className="stat">
                     <div className="label">Tracked today</div>
@@ -483,23 +501,11 @@ export default function Page() {
                     <div className={`value ${done ? 'green' : ''}`}>
                       {done ? `+${fmtHM(view.trackedToday - view.target)}` : fmtHM(view.remaining)}
                     </div>
-                    <div className="value-sub">
-                      {done
-                        ? 'you can leave 🎉'
-                        : view.leaveAtMs
-                        ? `leave ~${fmtTimeOfDay(view.leaveAtMs)}`
-                        : ' '}
-                    </div>
                   </div>
                   <div className="stat">
                     <div className="label">Continuous</div>
                     <div className={`value ${showBreakAlert ? 'amber' : ''}`}>
                       {view.working ? fmtHM(view.continuous) : '—'}
-                    </div>
-                    <div className="value-sub">
-                      {view.working && !view.breakDue && view.breakAtMs
-                        ? `break ~${fmtTimeOfDay(view.breakAtMs)}`
-                        : ' '}
                     </div>
                   </div>
                 </div>

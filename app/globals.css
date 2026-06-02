@@ -239,6 +239,29 @@ body {
   color: var(--muted);
 }
 
+/* ---------- Single next-milestone time ---------- */
+.next-time {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 8px;
+  font-size: clamp(16px, 3vmin, 26px);
+  font-weight: 600;
+  color: var(--muted);
+}
+.next-time strong {
+  font-weight: 800;
+  font-variant-numeric: tabular-nums;
+}
+.next-time.break {
+  color: var(--amber);
+}
+.next-time.leave {
+  color: var(--accent-soft);
+}
+.next-time.done {
+  color: var(--green);
+}
+
 /* ---------- Stats ---------- */
 .stats {
   display: grid;
