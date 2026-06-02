@@ -78,6 +78,31 @@ selected project. A break is considered taken when either:
 Either resets the continuous-work timer. The alert can be snoozed for 15
 minutes.
 
+## Staying within Toggl's rate limits
+
+Toggl's **Free** plan allows only **30 API requests per hour** (per user, per
+org; the `/me` endpoint has its own 30/hour budget). The app is built to stay
+comfortably under that:
+
+- **One request per refresh.** The week's time-entries call already includes the
+  running timer, so there's no separate "current entry" call.
+- **Cached connect.** Your workspace + project list are cached in `localStorage`
+  for 24h, so reloading the page costs **zero** requests until the cache
+  expires. (Click **Connect/Reconnect** in Settings to force a refresh.)
+- **Configurable refresh interval**, default **3 minutes** (~20 requests/hour).
+  Options range from 1 min (paid plans) to 10 min. The on-screen counter keeps
+  ticking every second locally between refreshes, so the display stays live even
+  at a slow interval.
+- **Pauses when the tab is hidden** — no requests while you're not looking; it
+  refreshes immediately when you return.
+- **Backs off automatically** on a rate-limit response (HTTP 402/429),
+  doubling the wait up to 15 minutes instead of hammering the API.
+- **Live budget meter** in the footer shows an estimate of requests used in the
+  last hour (turns amber near the limit).
+
+> Tip: if you open the dashboard in several tabs/devices at once, they each spend
+> from the same hourly budget — keep one open, or raise the interval.
+
 ## Tunable constants
 
 All thresholds live at the top of [`lib/calc.ts`](lib/calc.ts):

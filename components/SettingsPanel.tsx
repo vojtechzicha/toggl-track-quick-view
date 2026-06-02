@@ -8,7 +8,18 @@ export interface SettingsValue {
   projectId: number | null;
   projectName: string;
   shortFriday: boolean;
+  refreshSec: number;
 }
+
+// Each option's implied requests/hour, so the user can see the budget impact
+// (Toggl Free allows 30/hour).
+const REFRESH_OPTIONS = [
+  { sec: 60, label: '1 min — ~60/hr (paid plans only)' },
+  { sec: 120, label: '2 min — ~30/hr (at the Free limit)' },
+  { sec: 180, label: '3 min — ~20/hr (recommended)' },
+  { sec: 300, label: '5 min — ~12/hr (conservative)' },
+  { sec: 600, label: '10 min — ~6/hr' },
+];
 
 export default function SettingsPanel({
   initial,
@@ -34,6 +45,7 @@ export default function SettingsPanel({
   const [token, setToken] = useState(initial.token);
   const [projectId, setProjectId] = useState<number | null>(initial.projectId);
   const [shortFriday, setShortFriday] = useState(initial.shortFriday);
+  const [refreshSec, setRefreshSec] = useState(initial.refreshSec);
 
   const tokenConnected = projects.length > 0;
   const showProjects = serverManaged || tokenConnected;
@@ -47,6 +59,7 @@ export default function SettingsPanel({
       projectId,
       projectName: proj?.name ?? initial.projectName,
       shortFriday,
+      refreshSec,
     });
   };
 
@@ -127,6 +140,25 @@ export default function SettingsPanel({
             />
             <span className="slider" />
           </label>
+        </div>
+
+        <div className="field">
+          <label htmlFor="refresh">Refresh interval</label>
+          <select
+            id="refresh"
+            value={refreshSec}
+            onChange={(e) => setRefreshSec(Number(e.target.value))}
+          >
+            {REFRESH_OPTIONS.map((o) => (
+              <option key={o.sec} value={o.sec}>
+                {o.label}
+              </option>
+            ))}
+          </select>
+          <p className="hint">
+            How often to fetch from Toggl. The on-screen counter still updates every second
+            between refreshes. Toggl&apos;s Free plan allows 30 requests/hour.
+          </p>
         </div>
 
         <div className="row">
