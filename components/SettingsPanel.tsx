@@ -13,6 +13,7 @@ export interface SettingsValue {
 export default function SettingsPanel({
   initial,
   projects,
+  serverManaged,
   authError,
   connecting,
   onConnect,
@@ -22,6 +23,7 @@ export default function SettingsPanel({
 }: {
   initial: SettingsValue;
   projects: Project[];
+  serverManaged: boolean;
   authError: string | null;
   connecting: boolean;
   onConnect: (token: string) => void;
@@ -34,11 +36,14 @@ export default function SettingsPanel({
   const [shortFriday, setShortFriday] = useState(initial.shortFriday);
 
   const tokenConnected = projects.length > 0;
+  const showProjects = serverManaged || tokenConnected;
 
   const handleSave = () => {
     const proj = projects.find((p) => p.id === projectId);
     onSave({
-      token,
+      // In server-managed mode the token always stays empty so the proxy uses
+      // the server's TOGGL_API_TOKEN.
+      token: serverManaged ? '' : token,
       projectId,
       projectName: proj?.name ?? initial.projectName,
       shortFriday,
@@ -50,39 +55,48 @@ export default function SettingsPanel({
       <div className="panel">
         <h2>Settings</h2>
 
-        <div className="field">
-          <label htmlFor="token">Toggl Track API token</label>
-          <input
-            id="token"
-            type="password"
-            value={token}
-            placeholder="Paste your API token"
-            onChange={(e) => setToken(e.target.value)}
-            autoComplete="off"
-          />
+        {serverManaged ? (
           <p className="hint">
-            Find it at{' '}
-            <a href="https://track.toggl.com/profile" target="_blank" rel="noreferrer">
-              track.toggl.com/profile
-            </a>{' '}
-            (bottom of the page). It is stored only in this browser and sent through this
-            app&apos;s own proxy.
+            The Toggl API token is configured on the server, so there&apos;s nothing to enter
+            here. Just pick your project below.
           </p>
-        </div>
+        ) : (
+          <>
+            <div className="field">
+              <label htmlFor="token">Toggl Track API token</label>
+              <input
+                id="token"
+                type="password"
+                value={token}
+                placeholder="Paste your API token"
+                onChange={(e) => setToken(e.target.value)}
+                autoComplete="off"
+              />
+              <p className="hint">
+                Find it at{' '}
+                <a href="https://track.toggl.com/profile" target="_blank" rel="noreferrer">
+                  track.toggl.com/profile
+                </a>{' '}
+                (bottom of the page). It is stored only in this browser and sent through this
+                app&apos;s own proxy.
+              </p>
+            </div>
 
-        <div className="row" style={{ justifyContent: 'flex-start' }}>
-          <button
-            className="btn"
-            onClick={() => onConnect(token)}
-            disabled={!token || connecting}
-          >
-            {connecting ? 'Connecting…' : tokenConnected ? 'Reconnect' : 'Connect'}
-          </button>
-        </div>
+            <div className="row" style={{ justifyContent: 'flex-start' }}>
+              <button
+                className="btn"
+                onClick={() => onConnect(token)}
+                disabled={!token || connecting}
+              >
+                {connecting ? 'Connecting…' : tokenConnected ? 'Reconnect' : 'Connect'}
+              </button>
+            </div>
+          </>
+        )}
 
         {authError && <div className="err-msg">{authError}</div>}
 
-        {tokenConnected && (
+        {showProjects && (
           <div className="field">
             <label htmlFor="project">Project</label>
             <select

@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import ProgressRing from '@/components/ProgressRing';
 import SettingsPanel, { SettingsValue } from '@/components/SettingsPanel';
-import { getMe, getProjects, getCurrent, getEntries, Project } from '@/lib/toggl';
+import { getConfig, getMe, getProjects, getCurrent, getEntries, Project } from '@/lib/toggl';
 import {
   TimeEntry,
   normalize,
@@ -48,6 +48,7 @@ export default function Page() {
   const [hydrated, setHydrated] = useState(false);
 
   const [projects, setProjects] = useState<Project[]>([]);
+  const [serverManaged, setServerManaged] = useState<boolean | null>(null); // null = unknown
   const [ready, setReady] = useState(false); // token verified + workspace known
   const [connecting, setConnecting] = useState(false);
   const [authError, setAuthError] = useState<string | null>(null);
@@ -59,13 +60,15 @@ export default function Page() {
   const [nowMs, setNowMs] = useState(0);
   const [snoozeUntil, setSnoozeUntil] = useState(0);
 
-  // Hydrate from localStorage after mount (avoids SSR/client mismatch).
+  // Hydrate from localStorage after mount (avoids SSR/client mismatch) and
+  // find out whether the server already holds a token.
   useEffect(() => {
-    const s = loadSettings();
-    setSettings(s);
+    setSettings(loadSettings());
     setNowMs(Date.now());
     setHydrated(true);
-    if (!s.projectId) setShowSettings(true);
+    getConfig()
+      .then((c) => setServerManaged(!!c.serverToken))
+      .catch(() => setServerManaged(false));
   }, []);
 
   // 1s tick drives the live clock for any running entry.
@@ -101,21 +104,36 @@ export default function Page() {
       } catch {
         setReady(false);
         setProjects([]);
-        setAuthError('Could not authenticate with Toggl. Check your API token.');
+        setAuthError(
+          serverManaged
+            ? 'The server-configured Toggl token was rejected. Check TOGGL_API_TOKEN.'
+            : 'Could not authenticate with Toggl. Check your API token.'
+        );
+        setShowSettings(true);
       } finally {
         setConnecting(false);
       }
     },
-    []
+    [serverManaged]
   );
 
-  // Auto-connect once hydrated if we already have a token.
+  // Once we know the server-token status, connect appropriately.
   useEffect(() => {
-    if (hydrated && settings.token && !ready) {
+    if (!hydrated || serverManaged === null || ready) return;
+    if (serverManaged) {
+      connect(''); // server holds the token; ignore any stored browser token
+    } else if (settings.token) {
       connect(settings.token);
+    } else {
+      setShowSettings(true);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [hydrated]);
+  }, [hydrated, serverManaged]);
+
+  // After a successful connection, prompt for a project if none is chosen yet.
+  useEffect(() => {
+    if (ready && !settings.projectId) setShowSettings(true);
+  }, [ready, settings.projectId]);
 
   // Poll time entries + the running entry while connected.
   useEffect(() => {
@@ -304,6 +322,7 @@ export default function Page() {
             shortFriday: settings.shortFriday,
           }}
           projects={projects}
+          serverManaged={!!serverManaged}
           authError={authError}
           connecting={connecting}
           onConnect={connect}

@@ -29,6 +29,12 @@ async function tApi<T>(path: string, token: string, search?: string): Promise<T>
   return (text ? JSON.parse(text) : null) as T;
 }
 
+export async function getConfig(): Promise<{ serverToken: boolean }> {
+  const res = await fetch('/api/config', { cache: 'no-store' });
+  if (!res.ok) return { serverToken: false };
+  return res.json();
+}
+
 export const getMe = (token: string) => tApi<Me>('me', token);
 
 export const getProjects = (token: string, workspaceId: number) =>
