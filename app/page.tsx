@@ -14,6 +14,7 @@ import {
   startOfWeekMonday,
   fmtHM,
   fmtClock,
+  fmtTimeOfDay,
   BREAK_AFTER_HOURS,
 } from '@/lib/calc';
 
@@ -294,6 +295,8 @@ export default function Page() {
     const target = dailyTargetSeconds(now, norm, settings.projectId, settings.shortFriday);
     const remaining = Math.max(0, target - trackedToday);
     const fraction = target > 0 ? trackedToday / target : 1;
+    // Projected wall-clock time you hit the target (if still working toward it).
+    const leaveAtMs = remaining > 0 ? nowMs + remaining * 1000 : null;
 
     const runningEntry = norm.find((e) => e.running) ?? null;
     const trackingProject = !!runningEntry && runningEntry.projectId === settings.projectId;
@@ -302,23 +305,56 @@ export default function Page() {
       trackingOther && runningEntry?.projectId != null
         ? projectNameById.get(runningEntry.projectId) ?? 'another project'
         : '';
+    const runningRaw = entries.find((e) => e.duration < 0 || !e.stop) ?? null;
+    const currentDescription = runningRaw?.description?.trim() || '';
 
     const cont = continuousWorkSeconds(norm, settings.projectId, nowMs);
     const breakDue = cont.working && cont.seconds >= BREAK_AFTER_HOURS * 3600;
+    // Projected wall-clock time the next break is due (while working on project).
+    const timeToBreak = cont.working ? Math.max(0, BREAK_AFTER_HOURS * 3600 - cont.seconds) : 0;
+    const breakAtMs = cont.working && !breakDue ? nowMs + timeToBreak * 1000 : null;
 
     return {
       trackedToday,
       target,
       remaining,
       fraction,
+      leaveAtMs,
       trackingProject,
       trackingOther,
       otherName,
+      currentDescription,
       continuous: cont.seconds,
       working: cont.working,
       breakDue,
+      breakAtMs,
     };
   }, [entries, nowMs, settings.projectId, settings.shortFriday, projectNameById]);
+
+  // Today's tracked entries for the history side panel (no extra API calls —
+  // derived from the same week fetch). Running entry shows live duration.
+  const history = useMemo(() => {
+    if (!nowMs) return [];
+    const dayStart = startOfDay(new Date(nowMs)).getTime();
+    return entries
+      .map((e) => {
+        const startMs = new Date(e.start).getTime();
+        const running = e.duration < 0 || !e.stop;
+        const stopMs = running ? nowMs : new Date(e.stop as string).getTime();
+        return {
+          id: e.id,
+          desc: e.description?.trim() || '(no description)',
+          project: e.project_id != null ? projectNameById.get(e.project_id) ?? null : null,
+          isCurrent: e.project_id === settings.projectId,
+          startMs,
+          stopMs,
+          running,
+          dur: Math.max(0, (stopMs - startMs) / 1000),
+        };
+      })
+      .filter((e) => e.stopMs > dayStart)
+      .sort((a, b) => b.startMs - a.startMs);
+  }, [entries, nowMs, projectNameById, settings.projectId]);
 
   const showBreakAlert = !!view?.breakDue && nowMs > snoozeUntil;
 
@@ -374,42 +410,106 @@ export default function Page() {
           </div>
         )}
 
-        <div className="stage">
-          {view ? (
-            <>
-              <StatusBadge view={view} />
+        <div className="main">
+          <div className="stage">
+            {view ? (
+              <>
+                <StatusBadge view={view} />
 
-              <ProgressRing fraction={view.fraction} color={ringColor}>
-                <div className="clock">{fmtClock(view.trackedToday)}</div>
-                <div className="pct">{Math.round(view.fraction * 100)}%</div>
-                <div className="of">of {fmtHM(view.target)} target</div>
-              </ProgressRing>
+                <ProgressRing fraction={view.fraction} color={ringColor}>
+                  <div className="clock">{fmtClock(view.trackedToday)}</div>
+                  <div className="pct">{Math.round(view.fraction * 100)}%</div>
+                  <div className="of">of {fmtHM(view.target)} target</div>
+                </ProgressRing>
 
-              <div className="stats">
-                <div className="stat">
-                  <div className="label">Tracked today</div>
-                  <div className="value">{fmtHM(view.trackedToday)}</div>
-                </div>
-                <div className="stat">
-                  <div className="label">{done ? 'Over target' : 'Remaining'}</div>
-                  <div className={`value ${done ? 'green' : ''}`}>
-                    {done ? `+${fmtHM(view.trackedToday - view.target)}` : fmtHM(view.remaining)}
+                <div className="stats">
+                  <div className="stat">
+                    <div className="label">Tracked today</div>
+                    <div className="value">{fmtHM(view.trackedToday)}</div>
+                  </div>
+                  <div className="stat">
+                    <div className="label">{done ? 'Over target' : 'Remaining'}</div>
+                    <div className={`value ${done ? 'green' : ''}`}>
+                      {done ? `+${fmtHM(view.trackedToday - view.target)}` : fmtHM(view.remaining)}
+                    </div>
+                    <div className="value-sub">
+                      {done
+                        ? 'you can leave 🎉'
+                        : view.leaveAtMs
+                        ? `leave ~${fmtTimeOfDay(view.leaveAtMs)}`
+                        : ' '}
+                    </div>
+                  </div>
+                  <div className="stat">
+                    <div className="label">Continuous</div>
+                    <div className={`value ${showBreakAlert ? 'amber' : ''}`}>
+                      {view.working ? fmtHM(view.continuous) : '—'}
+                    </div>
+                    <div className={`value-sub ${showBreakAlert ? 'amber' : ''}`}>
+                      {!view.working
+                        ? ' '
+                        : showBreakAlert
+                        ? 'break overdue'
+                        : view.breakAtMs
+                        ? `break ~${fmtTimeOfDay(view.breakAtMs)}`
+                        : ' '}
+                    </div>
                   </div>
                 </div>
-                <div className="stat">
-                  <div className="label">Continuous</div>
-                  <div className={`value ${showBreakAlert ? 'amber' : ''}`}>
-                    {view.working ? fmtHM(view.continuous) : '—'}
-                  </div>
+              </>
+            ) : (
+              <div className="center-msg" style={{ height: 'auto' }}>
+                {settings.token || serverManaged
+                  ? 'Pick a project in settings to begin.'
+                  : 'Connect Toggl to begin.'}
+              </div>
+            )}
+          </div>
+
+          {view && (
+            <aside className="side">
+              <div className="side-card">
+                <div className="side-title">Currently tracking</div>
+                {view.trackingProject || view.trackingOther ? (
+                  <>
+                    <div className="now-desc">
+                      {view.currentDescription || '(no description)'}
+                    </div>
+                    <div className="now-meta">
+                      {view.trackingOther ? view.otherName : settings.projectName}
+                    </div>
+                  </>
+                ) : (
+                  <div className="now-idle">Nothing running</div>
+                )}
+              </div>
+
+              <div className="side-card history-card">
+                <div className="side-title">Today&apos;s entries</div>
+                <div className="history-list">
+                  {history.length === 0 ? (
+                    <div className="now-idle">No entries yet today</div>
+                  ) : (
+                    history.map((h) => (
+                      <div key={h.id} className={`hist-item ${h.running ? 'live' : ''}`}>
+                        <div className="hist-top">
+                          <span className="hist-desc">{h.desc}</span>
+                          <span className="hist-dur">{fmtHM(h.dur)}</span>
+                        </div>
+                        <div className="hist-bottom">
+                          <span className={`hist-proj ${h.isCurrent ? 'current' : ''}`}>
+                            {h.project ?? 'No project'}
+                          </span>
+                          <span className="hist-time">
+                            {fmtTimeOfDay(h.startMs)}–{h.running ? 'now' : fmtTimeOfDay(h.stopMs)}
+                          </span>
+                        </div>
+                      </div>
+                    ))
+                  )}
                 </div>
               </div>
-            </>
-          ) : (
-            <div className="center-msg" style={{ height: 'auto' }}>
-              {settings.token || serverManaged
-                ? 'Pick a project in settings to begin.'
-                : 'Connect Toggl to begin.'}
-            </div>
+            </aside>
           )}
         </div>
 

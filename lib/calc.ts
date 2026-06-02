@@ -164,6 +164,10 @@ export function fmtHM(seconds: number): string {
   return `${h}h ${String(m).padStart(2, '0')}m`;
 }
 
+export function fmtTimeOfDay(ms: number): string {
+  return new Date(ms).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+}
+
 export function fmtClock(seconds: number): string {
   const s = Math.max(0, Math.floor(seconds));
   const h = Math.floor(s / 3600);
