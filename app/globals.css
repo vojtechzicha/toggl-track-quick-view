@@ -273,6 +273,13 @@ body {
 .footer .err {
   color: var(--red);
 }
+.footer .budget.warn {
+  color: var(--amber);
+}
+.footer .budget.over {
+  color: var(--red);
+  font-weight: 600;
+}
 
 /* ---------- Settings overlay ---------- */
 .overlay {

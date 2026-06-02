@@ -16,6 +16,19 @@ export interface Project {
   color?: string;
 }
 
+export class TogglError extends Error {
+  status: number;
+  constructor(status: number) {
+    super(`Toggl request failed (${status})`);
+    this.status = status;
+  }
+}
+
+/** True for the rate-limit responses Toggl uses (402 per docs; 429 elsewhere). */
+export function isRateLimit(e: unknown): boolean {
+  return e instanceof TogglError && (e.status === 402 || e.status === 429);
+}
+
 async function tApi<T>(path: string, token: string, search?: string): Promise<T> {
   const url = `/api/toggl/${path}${search ? `?${search}` : ''}`;
   const res = await fetch(url, {
@@ -23,7 +36,7 @@ async function tApi<T>(path: string, token: string, search?: string): Promise<T>
     cache: 'no-store',
   });
   if (!res.ok) {
-    throw new Error(`Toggl request failed (${res.status})`);
+    throw new TogglError(res.status);
   }
   const text = await res.text();
   return (text ? JSON.parse(text) : null) as T;
