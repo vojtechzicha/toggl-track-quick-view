@@ -6,10 +6,12 @@ import SettingsPanel, { SettingsValue } from '@/components/SettingsPanel';
 import { getConfig, getMe, getProjects, getEntries, isRateLimit, Project } from '@/lib/toggl';
 import {
   TimeEntry,
+  Gap,
   normalize,
   projectSecondsInRange,
   dailyTargetSeconds,
   continuousWorkSeconds,
+  unreportedGaps,
   startOfDay,
   startOfWeekMonday,
   fmtHM,
@@ -225,7 +227,13 @@ export default function Page() {
       lastFetchRef.current = Date.now();
       setReqThisHour(recordReqs(1));
       try {
-        const start = startOfWeekMonday(new Date()).toISOString();
+        // From Monday (needed for the short-Friday weekly model) but never later
+        // than the start of yesterday, so unreported-time detection always has
+        // both yesterday and today even on a Monday (when yesterday is Sunday,
+        // i.e. last week).
+        const weekStart = startOfWeekMonday(new Date()).getTime();
+        const yesterdayStart = startOfDay(new Date()).getTime() - 24 * 3600 * 1000;
+        const start = new Date(Math.min(weekStart, yesterdayStart)).toISOString();
         // Up to "now" only — avoids pulling any future-dated (e.g. tomorrow) entries.
         const end = new Date(Date.now() + 60 * 1000).toISOString();
         const ent = await getEntries(settings.token, start, end);
@@ -374,7 +382,7 @@ export default function Page() {
 
     type Item = {
       key: string;
-      kind: 'project' | 'break';
+      kind: 'project' | 'break' | 'unreported';
       desc: string;
       startMs: number;
       stopMs: number;
@@ -413,8 +421,37 @@ export default function Page() {
         }
       }
     }
+
+    // Interleave genuine unreported gaps (no entry on any project) as their own
+    // rows. Computed independently of the project/break grouping above so a gap
+    // hidden between two other-project entries still surfaces.
+    for (const g of unreportedGaps(normalize(entries, nowMs), dayStart, nowMs)) {
+      items.push({
+        key: `u${g.startMs}`,
+        kind: 'unreported',
+        desc: 'Unreported',
+        startMs: g.startMs,
+        stopMs: g.stopMs,
+        running: false,
+        dur: g.seconds,
+      });
+    }
+
+    items.sort((a, b) => a.startMs - b.startMs);
     return items.reverse(); // newest first
   }, [entries, nowMs, settings.projectId]);
+
+  // Unreported time (no entry at all) for the side card — today and yesterday.
+  const unreported = useMemo(() => {
+    if (!nowMs) return null;
+    const norm = normalize(entries, nowMs);
+    const todayStart = startOfDay(new Date(nowMs)).getTime();
+    const yesterdayStart = todayStart - 24 * 3600 * 1000;
+    const today = unreportedGaps(norm, todayStart, nowMs);
+    const yesterday = unreportedGaps(norm, yesterdayStart, todayStart);
+    const sum = (gs: Gap[]) => gs.reduce((s, g) => s + g.seconds, 0);
+    return { today, yesterday, todayTotal: sum(today), yestTotal: sum(yesterday) };
+  }, [entries, nowMs]);
 
   const showBreakAlert = !!view?.breakDue && nowMs > snoozeUntil;
 
@@ -538,6 +575,23 @@ export default function Page() {
                 )}
               </div>
 
+              {unreported &&
+                (unreported.today.length > 0 || unreported.yesterday.length > 0) && (
+                  <div className="side-card unrep-card">
+                    <div className="side-title">Unreported time</div>
+                    <UnreportedGroup
+                      label="Today"
+                      gaps={unreported.today}
+                      total={unreported.todayTotal}
+                    />
+                    <UnreportedGroup
+                      label="Yesterday"
+                      gaps={unreported.yesterday}
+                      total={unreported.yestTotal}
+                    />
+                  </div>
+                )}
+
               <div className="side-card history-card">
                 <div className="side-title">Today&apos;s entries</div>
                 <div className="history-list">
@@ -549,11 +603,15 @@ export default function Page() {
                         key={h.key}
                         className={`hist-item ${h.running ? 'live' : ''} ${
                           h.kind === 'break' ? 'brk' : ''
-                        }`}
+                        } ${h.kind === 'unreported' ? 'unrep' : ''}`}
                       >
                         <div className="hist-top">
                           <span className="hist-desc">
-                            {h.kind === 'break' ? '☕ Break' : h.desc}
+                            {h.kind === 'break'
+                              ? '☕ Break'
+                              : h.kind === 'unreported'
+                              ? '⚠ Unreported'
+                              : h.desc}
                           </span>
                           <span className="hist-dur">{fmtHM(h.dur)}</span>
                         </div>
@@ -606,6 +664,35 @@ export default function Page() {
         />
       )}
     </>
+  );
+}
+
+function UnreportedGroup({
+  label,
+  gaps,
+  total,
+}: {
+  label: string;
+  gaps: Gap[];
+  total: number;
+}) {
+  return (
+    <div className="unrep-group">
+      <div className="unrep-head">
+        <span>{label}</span>
+        <span className={total > 0 ? 'amber' : 'ok'}>
+          {total > 0 ? fmtHM(total) : '✓ all reported'}
+        </span>
+      </div>
+      {gaps.map((g) => (
+        <div key={g.startMs} className="unrep-row">
+          <span className="unrep-time">
+            {fmtTimeOfDay(g.startMs)}–{fmtTimeOfDay(g.stopMs)}
+          </span>
+          <span className="unrep-dur">{fmtHM(g.seconds)}</span>
+        </div>
+      ))}
+    </div>
   );
 }
 
