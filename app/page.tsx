@@ -226,7 +226,8 @@ export default function Page() {
       setReqThisHour(recordReqs(1));
       try {
         const start = startOfWeekMonday(new Date()).toISOString();
-        const end = new Date(Date.now() + 24 * 3600 * 1000).toISOString();
+        // Up to "now" only — avoids pulling any future-dated (e.g. tomorrow) entries.
+        const end = new Date(Date.now() + 60 * 1000).toISOString();
         const ent = await getEntries(settings.token, start, end);
         if (cancelled) return;
         setEntries(ent ?? []);
@@ -307,6 +308,10 @@ export default function Page() {
         : '';
     const runningRaw = entries.find((e) => e.duration < 0 || !e.stop) ?? null;
     const currentDescription = runningRaw?.description?.trim() || '';
+    // Live elapsed time of whatever entry is currently running (ticks each second).
+    const currentSeconds = runningRaw
+      ? Math.max(0, (nowMs - new Date(runningRaw.start).getTime()) / 1000)
+      : 0;
 
     const cont = continuousWorkSeconds(norm, settings.projectId, nowMs);
     const breakDue = cont.working && cont.seconds >= BREAK_AFTER_HOURS * 3600;
@@ -324,6 +329,7 @@ export default function Page() {
       trackingOther,
       otherName,
       currentDescription,
+      currentSeconds,
       continuous: cont.seconds,
       working: cont.working,
       breakDue,
@@ -331,12 +337,16 @@ export default function Page() {
     };
   }, [entries, nowMs, settings.projectId, settings.shortFriday, projectNameById]);
 
-  // Today's tracked entries for the history side panel (no extra API calls —
-  // derived from the same week fetch). Running entry shows live duration.
+  // Today's timeline for the side panel (no extra API calls — derived from the
+  // same week fetch). Only entries that *start today* are included. Entries on
+  // any other project are not detailed — they collapse into a single "Break"
+  // block, since for this view working elsewhere counts as a break.
   const history = useMemo(() => {
     if (!nowMs) return [];
     const dayStart = startOfDay(new Date(nowMs)).getTime();
-    return entries
+    const dayEnd = dayStart + 24 * 3600 * 1000;
+
+    const today = entries
       .map((e) => {
         const startMs = new Date(e.start).getTime();
         const running = e.duration < 0 || !e.stop;
@@ -344,17 +354,58 @@ export default function Page() {
         return {
           id: e.id,
           desc: e.description?.trim() || '(no description)',
-          project: e.project_id != null ? projectNameById.get(e.project_id) ?? null : null,
-          isCurrent: e.project_id === settings.projectId,
+          projectId: e.project_id,
           startMs,
           stopMs,
           running,
-          dur: Math.max(0, (stopMs - startMs) / 1000),
         };
       })
-      .filter((e) => e.stopMs > dayStart)
-      .sort((a, b) => b.startMs - a.startMs);
-  }, [entries, nowMs, projectNameById, settings.projectId]);
+      .filter((e) => e.startMs >= dayStart && e.startMs < dayEnd)
+      .sort((a, b) => a.startMs - b.startMs);
+
+    type Item = {
+      key: string;
+      kind: 'project' | 'break';
+      desc: string;
+      startMs: number;
+      stopMs: number;
+      running: boolean;
+      dur: number;
+    };
+    const items: Item[] = [];
+    for (const e of today) {
+      if (e.projectId === settings.projectId) {
+        items.push({
+          key: `e${e.id}`,
+          kind: 'project',
+          desc: e.desc,
+          startMs: e.startMs,
+          stopMs: e.stopMs,
+          running: e.running,
+          dur: Math.max(0, (e.stopMs - e.startMs) / 1000),
+        });
+      } else {
+        const last = items[items.length - 1];
+        if (last && last.kind === 'break') {
+          // extend the current break across this other-project entry
+          last.stopMs = e.stopMs;
+          last.running = last.running || e.running;
+          last.dur = Math.max(0, (last.stopMs - last.startMs) / 1000);
+        } else {
+          items.push({
+            key: `b${e.id}`,
+            kind: 'break',
+            desc: 'Break',
+            startMs: e.startMs,
+            stopMs: e.stopMs,
+            running: e.running,
+            dur: Math.max(0, (e.stopMs - e.startMs) / 1000),
+          });
+        }
+      }
+    }
+    return items.reverse(); // newest first
+  }, [entries, nowMs, settings.projectId]);
 
   const showBreakAlert = !!view?.breakDue && nowMs > snoozeUntil;
 
@@ -445,12 +496,8 @@ export default function Page() {
                     <div className={`value ${showBreakAlert ? 'amber' : ''}`}>
                       {view.working ? fmtHM(view.continuous) : '—'}
                     </div>
-                    <div className={`value-sub ${showBreakAlert ? 'amber' : ''}`}>
-                      {!view.working
-                        ? ' '
-                        : showBreakAlert
-                        ? 'break overdue'
-                        : view.breakAtMs
+                    <div className="value-sub">
+                      {view.working && !view.breakDue && view.breakAtMs
                         ? `break ~${fmtTimeOfDay(view.breakAtMs)}`
                         : ' '}
                     </div>
@@ -478,6 +525,7 @@ export default function Page() {
                     <div className="now-meta">
                       {view.trackingOther ? view.otherName : settings.projectName}
                     </div>
+                    <div className="now-time">{fmtClock(view.currentSeconds)}</div>
                   </>
                 ) : (
                   <div className="now-idle">Nothing running</div>
@@ -491,15 +539,19 @@ export default function Page() {
                     <div className="now-idle">No entries yet today</div>
                   ) : (
                     history.map((h) => (
-                      <div key={h.id} className={`hist-item ${h.running ? 'live' : ''}`}>
+                      <div
+                        key={h.key}
+                        className={`hist-item ${h.running ? 'live' : ''} ${
+                          h.kind === 'break' ? 'brk' : ''
+                        }`}
+                      >
                         <div className="hist-top">
-                          <span className="hist-desc">{h.desc}</span>
+                          <span className="hist-desc">
+                            {h.kind === 'break' ? '☕ Break' : h.desc}
+                          </span>
                           <span className="hist-dur">{fmtHM(h.dur)}</span>
                         </div>
                         <div className="hist-bottom">
-                          <span className={`hist-proj ${h.isCurrent ? 'current' : ''}`}>
-                            {h.project ?? 'No project'}
-                          </span>
                           <span className="hist-time">
                             {fmtTimeOfDay(h.startMs)}–{h.running ? 'now' : fmtTimeOfDay(h.stopMs)}
                           </span>
