@@ -87,8 +87,13 @@ derived from the same week fetch, so it costs **no extra API calls**: entries
 across all projects are merged and the gaps _between_ them are reported. Time
 before your first entry or after your last isn't counted — only genuine gaps in
 the middle. Gaps shorter than `UNREPORTED_MIN_MINUTES` (default **1 min**) are
-ignored as noise. The same gaps also appear inline as amber dashed rows in
-today's timeline.
+ignored as noise.
+
+The entries panel has **Today / Yesterday** tabs so you can see exactly where
+each gap falls relative to your tracked work. Within the timeline a gap is drawn
+as a **red dashed divider** (not a card), so it clearly reads as a hole rather
+than another entry. A summary "Unreported time" card lists both days' gaps with
+per-day totals.
 
 ## Staying within Toggl's rate limits
 

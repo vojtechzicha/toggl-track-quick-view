@@ -358,6 +358,33 @@ body {
   color: var(--muted);
   font-size: clamp(12px, 1.7vmin, 15px);
 }
+.day-tabs {
+  display: flex;
+  gap: 6px;
+  margin-bottom: 10px;
+}
+.day-tab {
+  flex: 1;
+  background: var(--bg);
+  border: 1px solid var(--line);
+  color: var(--muted);
+  border-radius: 10px;
+  padding: 7px 10px;
+  font-size: clamp(11px, 1.5vmin, 13px);
+  font-weight: 700;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+  cursor: pointer;
+  transition: background 0.15s, border-color 0.15s, color 0.15s;
+}
+.day-tab:hover {
+  border-color: var(--accent);
+}
+.day-tab.active {
+  background: var(--card2);
+  border-color: var(--accent);
+  color: var(--text);
+}
 .history-list {
   flex: 1;
   min-height: 0;
@@ -394,15 +421,28 @@ body {
   color: var(--muted);
   font-weight: 600;
 }
-.hist-item.unrep {
-  border-style: dashed;
-  border-color: rgba(245, 158, 11, 0.5);
-  background: rgba(245, 158, 11, 0.06);
-  opacity: 1;
+/* Unreported gap: a divider line, deliberately *not* a card, so it reads as a
+   hole in the timeline rather than another tracked entry. */
+.gap-marker {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 2px 0;
 }
-.hist-item.unrep .hist-desc {
-  color: var(--amber);
+.gap-marker::before,
+.gap-marker::after {
+  content: '';
+  flex: 1;
+  border-top: 1px dashed var(--red);
+  opacity: 0.6;
+}
+.gap-text {
+  flex: 0 0 auto;
+  color: var(--red);
+  font-size: clamp(10px, 1.4vmin, 12px);
   font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
 }
 .hist-top {
   display: flex;
