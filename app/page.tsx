@@ -289,12 +289,6 @@ export default function Page() {
     };
   }, [ready, settings.token, settings.refreshSec]);
 
-  const projectNameById = useMemo(() => {
-    const m = new Map<number, string>();
-    for (const p of projects) m.set(p.id, p.name);
-    return m;
-  }, [projects]);
-
   const view = useMemo(() => {
     if (!settings.projectId || !nowMs) return null;
     const norm = normalize(entries, nowMs);
@@ -311,10 +305,10 @@ export default function Page() {
     const runningEntry = norm.find((e) => e.running) ?? null;
     const trackingProject = !!runningEntry && runningEntry.projectId === settings.projectId;
     const trackingOther = !!runningEntry && runningEntry.projectId !== settings.projectId;
-    const otherName =
-      trackingOther && runningEntry?.projectId != null
-        ? projectNameById.get(runningEntry.projectId) ?? 'another project'
-        : '';
+    // Working on a different project never surfaces that project's name. Before
+    // the daily target is reached it counts as a "Break"; once it's reached,
+    // any other work is just "No tracking".
+    const otherLabel = trackingOther ? (remaining <= 0 ? 'No tracking' : 'Break') : '';
     const runningRaw = entries.find((e) => e.duration < 0 || !e.stop) ?? null;
     const currentDescription = runningRaw?.description?.trim() || '';
     // Live elapsed time of whatever entry is currently running (ticks each second).
@@ -344,7 +338,7 @@ export default function Page() {
       leaveAtMs,
       trackingProject,
       trackingOther,
-      otherName,
+      otherLabel,
       currentDescription,
       currentSeconds,
       continuous: cont.seconds,
@@ -353,7 +347,7 @@ export default function Page() {
       breakAtMs,
       nextMilestone,
     };
-  }, [entries, nowMs, settings.projectId, settings.shortFriday, projectNameById]);
+  }, [entries, nowMs, settings.projectId, settings.shortFriday]);
 
   // Day timelines for the side panel (no extra API calls — both days come from
   // the same week fetch). Only entries that *start* within the day are listed;
@@ -573,16 +567,16 @@ export default function Page() {
             <aside className="side">
               <div className="side-card">
                 <div className="side-title">Currently tracking</div>
-                {view.trackingProject || view.trackingOther ? (
+                {view.trackingProject ? (
                   <>
                     <div className="now-desc">
                       {view.currentDescription || '(no description)'}
                     </div>
-                    <div className="now-meta">
-                      {view.trackingOther ? view.otherName : settings.projectName}
-                    </div>
+                    <div className="now-meta">{settings.projectName}</div>
                     <div className="now-time">{fmtClock(view.currentSeconds)}</div>
                   </>
+                ) : view.trackingOther ? (
+                  <div className="now-idle">{view.otherLabel}</div>
                 ) : (
                   <div className="now-idle">Nothing running</div>
                 )}
@@ -737,7 +731,7 @@ function UnreportedGroup({
 function StatusBadge({
   view,
 }: {
-  view: { trackingProject: boolean; trackingOther: boolean; otherName: string };
+  view: { trackingProject: boolean; trackingOther: boolean; otherLabel: string };
 }) {
   if (view.trackingProject) {
     return (
@@ -749,7 +743,7 @@ function StatusBadge({
   if (view.trackingOther) {
     return (
       <span className="badge other">
-        <span className="dot" /> Tracking {view.otherName}
+        <span className="dot" /> {view.otherLabel}
       </span>
     );
   }
