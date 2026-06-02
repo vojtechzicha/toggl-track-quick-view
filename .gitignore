@@ -141,3 +141,10 @@ dist
 vite.config.js.timestamp-*
 vite.config.ts.timestamp-*
 .vite/
+
+# Next.js / Vercel
+/.next/
+/out/
+next-env.d.ts
+.vercel
+*.tsbuildinfo
