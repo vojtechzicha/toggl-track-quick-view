@@ -78,6 +78,23 @@ selected project. A break is considered taken when either:
 Either resets the continuous-work timer. The alert can be snoozed for 15
 minutes.
 
+## Unreported time
+
+The side panel flags **unreported time** — stretches of **today and yesterday**
+where _no_ timer was running on _any_ project (a true hole in the timeline, as
+opposed to a "Break", which here means working on a different project). It's
+derived from the same week fetch, so it costs **no extra API calls**: entries
+across all projects are merged and the gaps _between_ them are reported. Time
+before your first entry or after your last isn't counted — only genuine gaps in
+the middle. Gaps shorter than `UNREPORTED_MIN_MINUTES` (default **1 min**) are
+ignored as noise.
+
+The entries panel has **Today / Yesterday** tabs so you can see exactly where
+each gap falls relative to your tracked work. Within the timeline a gap is drawn
+as a **red dashed divider** (not a card), so it clearly reads as a hole rather
+than another entry. A summary "Unreported time" card lists both days' gaps with
+per-day totals.
+
 ## Staying within Toggl's rate limits
 
 Toggl's **Free** plan allows only **30 API requests per hour** (per user, per
@@ -107,4 +124,4 @@ comfortably under that:
 
 All thresholds live at the top of [`lib/calc.ts`](lib/calc.ts):
 `WEEKLY_HOURS`, `MIDWEEK_TARGET_HOURS`, `DESIRED_FRIDAY_HOURS`,
-`BREAK_AFTER_HOURS`, `BREAK_GAP_MINUTES`, etc.
+`BREAK_AFTER_HOURS`, `BREAK_GAP_MINUTES`, `UNREPORTED_MIN_MINUTES`, etc.

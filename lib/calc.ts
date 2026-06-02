@@ -8,6 +8,7 @@ export const DESIRED_FRIDAY_HOURS = 5; // amount Thursday tries to leave for Fri
 export const BREAK_AFTER_HOURS = 4.5; // remind to take a break after this much
 export const BREAK_GAP_MINUTES = 10; // a gap >= this counts as a real break
 export const MAX_DAILY_TARGET_HOURS = 12; // clamp so a bad week can't demand 16h
+export const UNREPORTED_MIN_MINUTES = 1; // ignore gaps shorter than this as noise
 
 const HOUR = 3600;
 const MS = 1000;
@@ -155,6 +156,54 @@ export function continuousWorkSeconds(
   }
 
   return { working: true, seconds: (nowMs - streakStart) / MS };
+}
+
+/** A span of time with no time entry at all (any project) — "unreported" time. */
+export interface Gap {
+  startMs: number;
+  stopMs: number;
+  seconds: number;
+}
+
+/**
+ * Holes in the timeline within [fromMs, toMs) where *no* entry (any project) was
+ * running — i.e. unreported time. Only gaps *between* entries count: time before
+ * the first entry or after the last is ignored (you simply weren't tracking
+ * then). Entries are clipped to the window and overlapping ones merged first, so
+ * the result is the true gaps. Gaps shorter than `minMinutes` are dropped as
+ * noise (e.g. a few seconds between back-to-back entries).
+ */
+export function unreportedGaps(
+  entries: NormEntry[],
+  fromMs: number,
+  toMs: number,
+  minMinutes = UNREPORTED_MIN_MINUTES
+): Gap[] {
+  const spans = entries
+    .map((e) => ({ a: Math.max(e.startMs, fromMs), b: Math.min(e.stopMs, toMs) }))
+    .filter((s) => s.b > s.a)
+    .sort((s1, s2) => s1.a - s2.a);
+  if (spans.length === 0) return [];
+
+  // Merge overlapping / touching spans so a gap is a genuine hole, not just the
+  // boundary between two adjacent entries.
+  const merged: { a: number; b: number }[] = [{ ...spans[0] }];
+  for (let i = 1; i < spans.length; i++) {
+    const last = merged[merged.length - 1];
+    if (spans[i].a <= last.b) last.b = Math.max(last.b, spans[i].b);
+    else merged.push({ ...spans[i] });
+  }
+
+  const minMs = minMinutes * 60 * MS;
+  const gaps: Gap[] = [];
+  for (let i = 1; i < merged.length; i++) {
+    const startMs = merged[i - 1].b;
+    const stopMs = merged[i].a;
+    if (stopMs - startMs >= minMs) {
+      gaps.push({ startMs, stopMs, seconds: (stopMs - startMs) / MS });
+    }
+  }
+  return gaps;
 }
 
 export function fmtHM(seconds: number): string {

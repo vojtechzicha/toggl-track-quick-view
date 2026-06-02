@@ -358,6 +358,33 @@ body {
   color: var(--muted);
   font-size: clamp(12px, 1.7vmin, 15px);
 }
+.day-tabs {
+  display: flex;
+  gap: 6px;
+  margin-bottom: 10px;
+}
+.day-tab {
+  flex: 1;
+  background: var(--bg);
+  border: 1px solid var(--line);
+  color: var(--muted);
+  border-radius: 10px;
+  padding: 7px 10px;
+  font-size: clamp(11px, 1.5vmin, 13px);
+  font-weight: 700;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+  cursor: pointer;
+  transition: background 0.15s, border-color 0.15s, color 0.15s;
+}
+.day-tab:hover {
+  border-color: var(--accent);
+}
+.day-tab.active {
+  background: var(--card2);
+  border-color: var(--accent);
+  color: var(--text);
+}
 .history-list {
   flex: 1;
   min-height: 0;
@@ -393,6 +420,29 @@ body {
 .hist-item.brk .hist-desc {
   color: var(--muted);
   font-weight: 600;
+}
+/* Unreported gap: a divider line, deliberately *not* a card, so it reads as a
+   hole in the timeline rather than another tracked entry. */
+.gap-marker {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 2px 0;
+}
+.gap-marker::before,
+.gap-marker::after {
+  content: '';
+  flex: 1;
+  border-top: 1px dashed var(--red);
+  opacity: 0.6;
+}
+.gap-text {
+  flex: 0 0 auto;
+  color: var(--red);
+  font-size: clamp(10px, 1.4vmin, 12px);
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
 }
 .hist-top {
   display: flex;
@@ -434,6 +484,48 @@ body {
 .hist-time {
   flex: 0 0 auto;
   font-variant-numeric: tabular-nums;
+}
+
+/* ---------- Unreported-time card ---------- */
+.unrep-card {
+  border-color: rgba(245, 158, 11, 0.35);
+}
+.unrep-group + .unrep-group {
+  margin-top: 10px;
+  padding-top: 10px;
+  border-top: 1px solid var(--line);
+}
+.unrep-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 8px;
+  font-size: clamp(12px, 1.7vmin, 14px);
+  font-weight: 700;
+  margin-bottom: 6px;
+}
+.unrep-head .amber {
+  color: var(--amber);
+  font-variant-numeric: tabular-nums;
+}
+.unrep-head .ok {
+  color: var(--green);
+  font-weight: 600;
+  font-size: clamp(11px, 1.5vmin, 13px);
+}
+.unrep-row {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 3px 0;
+  font-size: clamp(11px, 1.5vmin, 13px);
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+.unrep-row .unrep-dur {
+  flex: 0 0 auto;
+  color: var(--text);
+  font-weight: 600;
 }
 
 @media (max-width: 860px) {
