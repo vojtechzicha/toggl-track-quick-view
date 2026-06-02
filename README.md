@@ -23,8 +23,12 @@ It fills the whole screen with no scrolling.
   same-origin proxy route (`app/api/toggl/[...path]`) that adds Basic auth — no
   CORS setup, and your token never touches a third party.
 - Your API token, selected project, and preferences live in the browser's
-  `localStorage` (or, optionally, a `TOGGL_API_TOKEN` env var for a private
-  single-user deploy).
+  `localStorage`.
+- Alternatively, set a **`TOGGL_API_TOKEN`** env var for a private single-user
+  deploy: the app detects it on load, connects automatically, and hides the
+  token field in Settings (you only pick a project). A browser-entered token
+  always takes precedence over the env var; the env var is the fallback used
+  when no browser token is sent.
 
 ## Running locally
 
