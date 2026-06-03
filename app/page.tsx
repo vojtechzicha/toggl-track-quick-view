@@ -145,7 +145,15 @@ export default function Page() {
   // When the shared server cache is on, its interval governs polling and the
   // per-device refresh picker is hidden (the server owns the budget).
   const cacheEnabled = serverCache.enabled && !!serverCache.intervalSec;
+  // Interval to display in the UI (the configured server cadence).
   const effectiveRefreshSec = cacheEnabled ? serverCache.intervalSec! : settings.refreshSec;
+  // Actual poll cadence. In cache mode we poll one second SLOWER than the cache
+  // TTL so a client's poll reliably arrives just after the entry has expired —
+  // a guaranteed miss → freshly-refreshed data — instead of landing a hair
+  // early, getting a hit, and only refreshing every other poll (which would
+  // leave a lone client looking at ~2× the interval of stale data). A miss
+  // resets the cache clock, so upstream usage stays ~1 fetch per interval.
+  const pollIntervalSec = cacheEnabled ? serverCache.intervalSec! + 1 : settings.refreshSec;
 
   // 1s tick drives the live clock and lets the request meter decay.
   useEffect(() => {
@@ -235,7 +243,7 @@ export default function Page() {
     if (!ready) return;
     let cancelled = false;
     let timer: ReturnType<typeof setTimeout>;
-    const intervalMs = Math.max(30, effectiveRefreshSec) * 1000;
+    const intervalMs = Math.max(30, pollIntervalSec) * 1000;
 
     const fetchNow = async () => {
       lastFetchRef.current = Date.now();
@@ -302,7 +310,7 @@ export default function Page() {
       clearTimeout(timer);
       document.removeEventListener('visibilitychange', onVisible);
     };
-  }, [ready, settings.token, effectiveRefreshSec, cacheEnabled]);
+  }, [ready, settings.token, pollIntervalSec, cacheEnabled]);
 
   const view = useMemo(() => {
     if (!settings.projectId || !nowMs) return null;
