@@ -21,10 +21,15 @@ const REFRESH_OPTIONS = [
   { sec: 600, label: '10 min — ~6/hr' },
 ];
 
+function fmtInterval(sec: number): string {
+  return sec % 60 === 0 ? `${sec / 60} min` : `${sec}s`;
+}
+
 export default function SettingsPanel({
   initial,
   projects,
   serverManaged,
+  cacheInterval,
   authError,
   connecting,
   onConnect,
@@ -35,6 +40,9 @@ export default function SettingsPanel({
   initial: SettingsValue;
   projects: Project[];
   serverManaged: boolean;
+  // When non-null, the shared server cache governs the refresh cadence (in
+  // seconds) and the per-device refresh picker is hidden.
+  cacheInterval: number | null;
   authError: string | null;
   connecting: boolean;
   onConnect: (token: string) => void;
@@ -142,24 +150,36 @@ export default function SettingsPanel({
           </label>
         </div>
 
-        <div className="field">
-          <label htmlFor="refresh">Refresh interval</label>
-          <select
-            id="refresh"
-            value={refreshSec}
-            onChange={(e) => setRefreshSec(Number(e.target.value))}
-          >
-            {REFRESH_OPTIONS.map((o) => (
-              <option key={o.sec} value={o.sec}>
-                {o.label}
-              </option>
-            ))}
-          </select>
-          <p className="hint">
-            How often to fetch from Toggl. The on-screen counter still updates every second
-            between refreshes. Toggl&apos;s Free plan allows 30 requests/hour.
-          </p>
-        </div>
+        {cacheInterval !== null ? (
+          <div className="field">
+            <label>Refresh interval</label>
+            <p className="hint">
+              Managed by the server: a shared cache refreshes from Toggl every{' '}
+              <strong>{fmtInterval(cacheInterval)}</strong> and serves every device from it, so
+              opening this on extra devices/tabs costs no additional API requests. The on-screen
+              counter still updates every second between refreshes.
+            </p>
+          </div>
+        ) : (
+          <div className="field">
+            <label htmlFor="refresh">Refresh interval</label>
+            <select
+              id="refresh"
+              value={refreshSec}
+              onChange={(e) => setRefreshSec(Number(e.target.value))}
+            >
+              {REFRESH_OPTIONS.map((o) => (
+                <option key={o.sec} value={o.sec}>
+                  {o.label}
+                </option>
+              ))}
+            </select>
+            <p className="hint">
+              How often to fetch from Toggl. The on-screen counter still updates every second
+              between refreshes. Toggl&apos;s Free plan allows 30 requests/hour.
+            </p>
+          </div>
+        )}
 
         <div className="row">
           {canClose && (

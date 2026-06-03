@@ -11,6 +11,13 @@ import { NextRequest } from 'next/server';
 // The token is taken from the `x-toggl-token` request header (sent by the
 // client from localStorage) or, as a fallback, from the TOGGL_API_TOKEN
 // environment variable (handy when deploying a private instance to Vercel).
+//
+// When TOGGL_CACHE_INTERVAL is set AND we're using the server-held token,
+// responses are served from a shared in-process cache (see lib/serverCache.ts)
+// so multiple devices/tabs collapse onto a single upstream request per
+// interval instead of each spending from Toggl's hourly budget.
+
+import { cacheIntervalSec, cachedToggl } from '@/lib/serverCache';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -29,14 +36,33 @@ export async function GET(
   { params }: { params: Promise<{ path: string[] }> }
 ) {
   const { path } = await params;
-  const token = req.headers.get('x-toggl-token') || process.env.TOGGL_API_TOKEN;
+  const headerToken = req.headers.get('x-toggl-token');
+  const token = headerToken || process.env.TOGGL_API_TOKEN;
 
   if (!token) {
     return json({ error: 'Missing Toggl API token.' }, 401);
   }
 
-  const target = `${TOGGL_BASE}/${path.join('/')}${req.nextUrl.search}`;
+  const joined = path.join('/');
+  const search = req.nextUrl.search;
   const auth = Buffer.from(`${token}:api_token`).toString('base64');
+
+  // Shared-cache path: only for the server's own token (no per-browser token),
+  // so every cached viewer is the same user seeing identical data.
+  const interval = cacheIntervalSec();
+  if (interval !== null && !headerToken && process.env.TOGGL_API_TOKEN) {
+    try {
+      const cached = await cachedToggl(joined, search, auth, interval);
+      return new Response(cached.body, {
+        status: cached.status,
+        headers: { 'content-type': cached.contentType, 'cache-control': 'no-store' },
+      });
+    } catch {
+      return json({ error: 'Failed to reach the Toggl API.' }, 502);
+    }
+  }
+
+  const target = `${TOGGL_BASE}/${joined}${search}`;
 
   try {
     const res = await fetch(target, {

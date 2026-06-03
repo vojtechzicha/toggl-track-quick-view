@@ -106,6 +106,11 @@ export default function Page() {
 
   const [projects, setProjects] = useState<Project[]>([]);
   const [serverManaged, setServerManaged] = useState<boolean | null>(null); // null = unknown
+  // Shared server-side cache. When enabled, the refresh cadence is driven by
+  // the server (not the per-device picker), so all devices share its budget.
+  const [serverCache, setServerCache] = useState<{ enabled: boolean; intervalSec: number | null }>(
+    { enabled: false, intervalSec: null }
+  );
   const [ready, setReady] = useState(false); // token verified + workspace known
   const [connecting, setConnecting] = useState(false);
   const [authError, setAuthError] = useState<string | null>(null);
@@ -130,9 +135,25 @@ export default function Page() {
     setReqThisHour(pruneLoad().length);
     setHydrated(true);
     getConfig()
-      .then((c) => setServerManaged(!!c.serverToken))
+      .then((c) => {
+        setServerManaged(!!c.serverToken);
+        setServerCache(c.cache ?? { enabled: false, intervalSec: null });
+      })
       .catch(() => setServerManaged(false));
   }, []);
+
+  // When the shared server cache is on, its interval governs polling and the
+  // per-device refresh picker is hidden (the server owns the budget).
+  const cacheEnabled = serverCache.enabled && !!serverCache.intervalSec;
+  // Interval to display in the UI (the configured server cadence).
+  const effectiveRefreshSec = cacheEnabled ? serverCache.intervalSec! : settings.refreshSec;
+  // Actual poll cadence. In cache mode we poll one second SLOWER than the cache
+  // TTL so a client's poll reliably arrives just after the entry has expired —
+  // a guaranteed miss → freshly-refreshed data — instead of landing a hair
+  // early, getting a hit, and only refreshing every other poll (which would
+  // leave a lone client looking at ~2× the interval of stale data). A miss
+  // resets the cache clock, so upstream usage stays ~1 fetch per interval.
+  const pollIntervalSec = cacheEnabled ? serverCache.intervalSec! + 1 : settings.refreshSec;
 
   // 1s tick drives the live clock and lets the request meter decay.
   useEffect(() => {
@@ -222,11 +243,13 @@ export default function Page() {
     if (!ready) return;
     let cancelled = false;
     let timer: ReturnType<typeof setTimeout>;
-    const intervalMs = Math.max(30, settings.refreshSec) * 1000;
+    const intervalMs = Math.max(30, pollIntervalSec) * 1000;
 
     const fetchNow = async () => {
       lastFetchRef.current = Date.now();
-      setReqThisHour(recordReqs(1));
+      // In cache mode this device's poll is usually a server cache hit (no Toggl
+      // call), so the per-device hourly meter would over-count — skip it.
+      if (!cacheEnabled) setReqThisHour(recordReqs(1));
       try {
         // From Monday (needed for the short-Friday weekly model) but never later
         // than the start of yesterday, so unreported-time detection always has
@@ -287,7 +310,7 @@ export default function Page() {
       clearTimeout(timer);
       document.removeEventListener('visibilitychange', onVisible);
     };
-  }, [ready, settings.token, settings.refreshSec]);
+  }, [ready, settings.token, pollIntervalSec, cacheEnabled]);
 
   const view = useMemo(() => {
     if (!settings.projectId || !nowMs) return null;
@@ -664,12 +687,19 @@ export default function Page() {
         <footer className="footer">
           {fetchError ? (
             <span className="err">{fetchError}</span>
+          ) : cacheEnabled ? (
+            <span>
+              Shared server cache · refreshes every {fmtInterval(effectiveRefreshSec)} across all
+              devices
+            </span>
           ) : (
             <span>Refreshes every {fmtInterval(settings.refreshSec)} · live counter each second</span>
           )}
-          <span className={`budget ${budgetClass}`}>
-            {' · '}≈{reqThisHour}/{HOURLY_LIMIT} API requests this hour
-          </span>
+          {!cacheEnabled && (
+            <span className={`budget ${budgetClass}`}>
+              {' · '}≈{reqThisHour}/{HOURLY_LIMIT} API requests this hour
+            </span>
+          )}
         </footer>
       </div>
 
@@ -684,6 +714,7 @@ export default function Page() {
           }}
           projects={projects}
           serverManaged={!!serverManaged}
+          cacheInterval={cacheEnabled ? effectiveRefreshSec : null}
           authError={authError}
           connecting={connecting}
           onConnect={(token) => connect(token, true)}

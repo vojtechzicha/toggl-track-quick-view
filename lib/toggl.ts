@@ -42,9 +42,19 @@ async function tApi<T>(path: string, token: string, search?: string): Promise<T>
   return (text ? JSON.parse(text) : null) as T;
 }
 
-export async function getConfig(): Promise<{ serverToken: boolean }> {
+export interface AppConfig {
+  serverToken: boolean;
+  cache: { enabled: boolean; intervalSec: number | null };
+}
+
+const CONFIG_FALLBACK: AppConfig = {
+  serverToken: false,
+  cache: { enabled: false, intervalSec: null },
+};
+
+export async function getConfig(): Promise<AppConfig> {
   const res = await fetch('/api/config', { cache: 'no-store' });
-  if (!res.ok) return { serverToken: false };
+  if (!res.ok) return CONFIG_FALLBACK;
   return res.json();
 }
 
