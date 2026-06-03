@@ -118,7 +118,46 @@ comfortably under that:
   last hour (turns amber near the limit).
 
 > Tip: if you open the dashboard in several tabs/devices at once, they each spend
-> from the same hourly budget — keep one open, or raise the interval.
+> from the same hourly budget — keep one open, raise the interval, or enable the
+> shared server cache below.
+
+## Shared server-side cache (multi-device)
+
+If you want to keep the dashboard open on **several devices** (desk monitor,
+laptop, phone…) without each one independently burning through Toggl's 30/hour
+budget, set the **`TOGGL_CACHE_INTERVAL`** env var (requires `TOGGL_API_TOKEN`,
+since the cache is keyed to the server's own token).
+
+When it's set:
+
+- Every device's poll is served from a **shared in-process cache**
+  (`lib/serverCache.ts`) sitting behind the proxy. Only the **first** poll after
+  the cache goes stale actually calls Toggl; the rest read the cached payload.
+  So total upstream usage is **~one request per interval regardless of how many
+  devices are watching**.
+- It's **lazy / demand-driven** — there is no background timer. The cache only
+  refreshes when a request arrives and finds it stale, so **an idle dashboard
+  (nobody looking) makes zero requests.**
+- Concurrent polls are **de-duplicated** (single-flight): three devices hitting
+  it at the same instant cause exactly one Toggl call.
+- On a transient error or rate-limit, the last good payload is **served stale**
+  rather than blanking the screen.
+- The front-end's per-device **Refresh interval** picker is **hidden**, and the
+  app polls at the server-driven interval instead. The footer shows
+  "Shared server cache · refreshes every Nmin across all devices."
+
+The value is the refresh interval in **seconds**. Since the Free plan allows 30
+requests/hour, keep it **≥ 120** (one request per 120 s = 30/hr); the default
+when you set it to `true` is **180** (~20/hr, leaving headroom for the one-off
+`me`/projects connect calls). Setting it to `1`/`true`/`on` uses that default;
+a number sets an explicit interval (clamped to a 30 s minimum).
+
+> The cache is **in-memory, per server instance** — the right, simplest fit for
+> this private single-user app, where traffic is tiny and a single long-running
+> server (`next start`, or a warm Vercel instance) backs every request. On a
+> heavily fan-out serverless deployment with many cold instances it degrades
+> gracefully to best-effort (each instance keeps its own cache), never worse
+> than the un-cached behavior.
 
 ## Tunable constants
 
