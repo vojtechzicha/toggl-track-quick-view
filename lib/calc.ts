@@ -146,6 +146,28 @@ export function dailyTargetSeconds(
 }
 
 /**
+ * The fixed, nominal target for a weekday assuming every day hits its goal —
+ * i.e. the plain 40h plan (regular 8/8/8/8/8, short 9/9/9/8/5). Friday is fixed
+ * (8h regular, 5h short) and Thursday is "the rest" (8h in both). Used to show a
+ * stable target for days that haven't happened yet, where the adaptive
+ * dailyTargetSeconds would otherwise swing to the clamp for want of logged time.
+ */
+export function plannedTargetSeconds(dayOfWeek: number, shortFriday: boolean): number {
+  switch (dayOfWeek) {
+    case 1: // Mon
+    case 2: // Tue
+    case 3: // Wed
+      return (shortFriday ? SHORT_MIDWEEK_HOURS : STANDARD_DAY_HOURS) * HOUR;
+    case 4: // Thu — the rest, which nets to 8h in both the regular and short plan
+      return (shortFriday ? SHORT_THU_MIN_HOURS : STANDARD_DAY_HOURS) * HOUR;
+    case 5: // Fri — fixed
+      return (shortFriday ? FRIDAY_MIN_HOURS : STANDARD_DAY_HOURS) * HOUR;
+    default: // weekend fallback
+      return STANDARD_DAY_HOURS * HOUR;
+  }
+}
+
+/**
  * How long you've been continuously working on `projectId` right now.
  *
  * Returns `working: false` unless an entry for this project is currently
