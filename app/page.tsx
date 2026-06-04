@@ -17,6 +17,7 @@ import {
 } from '@/lib/toggl';
 import {
   TimeEntry,
+  NormEntry,
   Gap,
   normalize,
   projectSecondsInRange,
@@ -532,7 +533,13 @@ export default function Page() {
   // 9/9/9/8/5) rather than the adaptive figure, which would otherwise swing to
   // the clamp before earlier days are logged. The one exception is from Thursday
   // on: by then the adaptive numbers are meaningful, so a future Friday is shown
-  // adaptively too — it shrinks live as Thursday's time accrues.
+  // adaptively too.
+  //
+  // When projecting that future Friday, today (Thursday) is still in progress, so
+  // its logged time is only partial. Using it raw would dump every Thursday hour
+  // you haven't worked *yet* onto Friday, ballooning it. Instead we credit today
+  // with at least its own committed target, so Friday only starts shrinking once
+  // you work past Thursday's target.
   const weekSummary = useMemo(() => {
     if (!settings.projectId || !nowMs) return null;
     const norm = normalize(entries, nowMs);
@@ -540,6 +547,31 @@ export default function Page() {
     const weekStart = startOfWeekMonday(new Date(nowMs)).getTime();
     const todayStart = startOfDay(new Date(nowMs)).getTime();
     const beforeThursday = new Date(nowMs).getDay() < 4; // Mon–Wed (Sun=0 counts as before)
+
+    // Entries used only when projecting a still-future day's target: today's
+    // project time is topped up to today's target (if it's short of it) so the
+    // unworked remainder of today isn't charged to the future day.
+    const todayTarget = dailyTargetSeconds(
+      new Date(todayStart),
+      norm,
+      settings.projectId,
+      settings.shortFriday
+    );
+    const todayLogged = projectSecondsInRange(norm, settings.projectId, todayStart, nowMs);
+    const shortfall = Math.max(0, todayTarget - todayLogged);
+    const projected: NormEntry[] =
+      shortfall > 0
+        ? [
+            ...norm,
+            {
+              id: -1,
+              startMs: todayStart,
+              stopMs: todayStart + shortfall * 1000,
+              projectId: settings.projectId,
+              running: false,
+            },
+          ]
+        : norm;
 
     const days: {
       key: number;
@@ -561,10 +593,16 @@ export default function Page() {
       if (isWeekend && logged === 0) continue; // hide untouched weekend days
       // Static plan only for genuinely-ahead days while we're still Mon–Wed;
       // today, past days, and (from Thu on) the remaining days stay adaptive.
-      const useStaticPlan = dayStart > todayStart && beforeThursday;
-      const target = useStaticPlan
-        ? plannedTargetSeconds(date.getDay(), settings.shortFriday)
-        : dailyTargetSeconds(date, norm, settings.projectId, settings.shortFriday);
+      const isFuture = dayStart > todayStart;
+      const target =
+        isFuture && beforeThursday
+          ? plannedTargetSeconds(date.getDay(), settings.shortFriday)
+          : dailyTargetSeconds(
+              date,
+              isFuture ? projected : norm,
+              settings.projectId,
+              settings.shortFriday
+            );
       days.push({
         key: dayStart,
         label: date.toLocaleDateString(undefined, { weekday: 'short' }),
