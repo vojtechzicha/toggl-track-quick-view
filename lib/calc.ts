@@ -205,6 +205,41 @@ export interface Gap {
   seconds: number;
 }
 
+/** A half-open [a, b) interval in milliseconds. */
+export interface Interval {
+  a: number;
+  b: number;
+}
+
+/** Merge overlapping or touching intervals into disjoint spans, sorted by start. */
+export function mergeIntervals(spans: Interval[]): Interval[] {
+  const sorted = spans.filter((s) => s.b > s.a).sort((x, y) => x.a - y.a);
+  const out: Interval[] = [];
+  for (const s of sorted) {
+    const last = out[out.length - 1];
+    if (last && s.a <= last.b) last.b = Math.max(last.b, s.b);
+    else out.push({ ...s });
+  }
+  return out;
+}
+
+/** The parts of `base` intervals not covered by any `cut` interval. */
+export function subtractIntervals(base: Interval[], cut: Interval[]): Interval[] {
+  const cuts = mergeIntervals(cut);
+  const out: Interval[] = [];
+  for (const span of mergeIntervals(base)) {
+    let start = span.a;
+    for (const c of cuts) {
+      if (c.b <= start || c.a >= span.b) continue; // no overlap with what's left
+      if (c.a > start) out.push({ a: start, b: c.a });
+      start = Math.max(start, c.b);
+      if (start >= span.b) break;
+    }
+    if (start < span.b) out.push({ a: start, b: span.b });
+  }
+  return out;
+}
+
 /**
  * Holes in the timeline within [fromMs, toMs) where *no* entry (any project) was
  * running — i.e. unreported time. Only gaps *between* entries count: time before
@@ -219,20 +254,11 @@ export function unreportedGaps(
   toMs: number,
   minMinutes = UNREPORTED_MIN_MINUTES
 ): Gap[] {
-  const spans = entries
-    .map((e) => ({ a: Math.max(e.startMs, fromMs), b: Math.min(e.stopMs, toMs) }))
-    .filter((s) => s.b > s.a)
-    .sort((s1, s2) => s1.a - s2.a);
-  if (spans.length === 0) return [];
-
-  // Merge overlapping / touching spans so a gap is a genuine hole, not just the
+  // Merge to genuine coverage spans so a gap is a real hole, not just the
   // boundary between two adjacent entries.
-  const merged: { a: number; b: number }[] = [{ ...spans[0] }];
-  for (let i = 1; i < spans.length; i++) {
-    const last = merged[merged.length - 1];
-    if (spans[i].a <= last.b) last.b = Math.max(last.b, spans[i].b);
-    else merged.push({ ...spans[i] });
-  }
+  const merged = mergeIntervals(
+    entries.map((e) => ({ a: Math.max(e.startMs, fromMs), b: Math.min(e.stopMs, toMs) }))
+  );
 
   const minMs = minMinutes * 60 * MS;
   const gaps: Gap[] = [];
