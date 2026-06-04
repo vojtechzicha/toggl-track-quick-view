@@ -3,7 +3,18 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import ProgressRing from '@/components/ProgressRing';
 import SettingsPanel, { SettingsValue } from '@/components/SettingsPanel';
-import { getConfig, getMe, getProjects, getEntries, isRateLimit, Project } from '@/lib/toggl';
+import PasswordGate from '@/components/PasswordGate';
+import {
+  getConfig,
+  getMe,
+  getProjects,
+  getEntries,
+  isRateLimit,
+  isAuthRequired,
+  hasValidAuth,
+  login,
+  Project,
+} from '@/lib/toggl';
 import {
   TimeEntry,
   Gap,
@@ -106,6 +117,12 @@ export default function Page() {
 
   const [projects, setProjects] = useState<Project[]>([]);
   const [serverManaged, setServerManaged] = useState<boolean | null>(null); // null = unknown
+  // Password gate (server-managed deploy with APP_PASSWORD set). `authed` tracks
+  // whether we hold a valid session token; the password itself is never stored.
+  const [passwordRequired, setPasswordRequired] = useState(false);
+  const [authed, setAuthed] = useState(false);
+  const [pwError, setPwError] = useState<string | null>(null);
+  const [pwBusy, setPwBusy] = useState(false);
   // Shared server-side cache. When enabled, the refresh cadence is driven by
   // the server (not the per-device picker), so all devices share its budget.
   const [serverCache, setServerCache] = useState<{ enabled: boolean; intervalSec: number | null }>(
@@ -133,10 +150,12 @@ export default function Page() {
     setSettings(loadSettings());
     setNowMs(Date.now());
     setReqThisHour(pruneLoad().length);
+    setAuthed(hasValidAuth());
     setHydrated(true);
     getConfig()
       .then((c) => {
         setServerManaged(!!c.serverToken);
+        setPasswordRequired(!!c.passwordRequired);
         setServerCache(c.cache ?? { enabled: false, intervalSec: null });
       })
       .catch(() => setServerManaged(false));
@@ -173,6 +192,23 @@ export default function Page() {
     }
   }, []);
 
+  // Exchange the entered password for a session token, then let the connect
+  // effect proceed. The password is never stored — only the returned token is.
+  const submitPassword = useCallback(async (password: string) => {
+    setPwBusy(true);
+    setPwError(null);
+    try {
+      await login(password);
+      setAuthed(true);
+    } catch (e) {
+      setPwError(
+        isRateLimit(e) ? 'Too many attempts — wait a moment and try again.' : 'Incorrect password.'
+      );
+    } finally {
+      setPwBusy(false);
+    }
+  }, []);
+
   // Verify token, resolve workspace, load project list. Uses the cache unless
   // forced (e.g. the user clicks Connect/Reconnect), to conserve requests.
   const connect = useCallback(
@@ -203,6 +239,12 @@ export default function Page() {
       } catch (e) {
         setReady(false);
         setProjects([]);
+        // Session missing/expired (or password rotated): drop back to the gate
+        // instead of showing a Toggl auth error.
+        if (isAuthRequired(e)) {
+          setAuthed(false);
+          return;
+        }
         setAuthError(
           isRateLimit(e)
             ? 'Toggl rate limit reached — wait a bit, then try again.'
@@ -222,6 +264,9 @@ export default function Page() {
   useEffect(() => {
     if (!hydrated || serverManaged === null || ready) return;
     if (serverManaged) {
+      // When a password gate is active, wait until we hold a session before
+      // connecting — the proxy would reject the fetch anyway.
+      if (passwordRequired && !authed) return;
       connect(''); // server holds the token; ignore any stored browser token
     } else if (settings.token) {
       connect(settings.token);
@@ -229,7 +274,7 @@ export default function Page() {
       setShowSettings(true);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [hydrated, serverManaged]);
+  }, [hydrated, serverManaged, passwordRequired, authed]);
 
   // After a successful connection, prompt for a project if none is chosen yet.
   useEffect(() => {
@@ -268,6 +313,12 @@ export default function Page() {
         backoffUntilRef.current = 0;
       } catch (e) {
         if (cancelled) return;
+        if (isAuthRequired(e)) {
+          // Session expired mid-session — fall back to the password gate.
+          setReady(false);
+          setAuthed(false);
+          return;
+        }
         if (isRateLimit(e)) {
           backoffStepRef.current = Math.min(backoffStepRef.current + 1, 5);
           const wait = Math.min(intervalMs * 2 ** backoffStepRef.current, 15 * 60_000);
@@ -499,6 +550,10 @@ export default function Page() {
     return <div className="center-msg">Loading…</div>;
   }
 
+  // Block everything behind a password prompt when the deploy is gated and we
+  // don't yet hold a valid session.
+  const needsPassword = serverManaged === true && passwordRequired && !authed;
+
   const done = view ? view.remaining <= 0 : false;
   const timeline = dayTab === 'today' ? timelines.today : timelines.yesterday;
   const budgetClass =
@@ -703,7 +758,11 @@ export default function Page() {
         </footer>
       </div>
 
-      {showSettings && (
+      {needsPassword && (
+        <PasswordGate onSubmit={submitPassword} error={pwError} busy={pwBusy} />
+      )}
+
+      {!needsPassword && showSettings && (
         <SettingsPanel
           initial={{
             token: settings.token,
