@@ -1,10 +1,14 @@
 // Pure calculation helpers for the quick view. Kept free of React / DOM so the
 // logic is easy to reason about (and unit-test) in isolation.
 
-export const STANDARD_DAY_HOURS = 8; // plain target when "short Friday" is off
-export const WEEKLY_HOURS = 40; // weekly goal used by the short-Friday model
-export const MIDWEEK_TARGET_HOURS = 9; // Mon/Tue/Wed target with short Friday on
-export const DESIRED_FRIDAY_HOURS = 5; // amount Thursday tries to leave for Friday
+export const WEEKLY_HOURS = 40; // weekly goal both modes aim for
+export const STANDARD_DAY_HOURS = 8; // regular-week Mon–Wed target, and weekend fallback (both modes)
+export const SHORT_MIDWEEK_HOURS = 9; // short-week Mon/Tue/Wed target
+export const REGULAR_THU_FLOOR_HOURS = 7; // regular-week Thursday never below this
+export const SHORT_THU_MIN_HOURS = 8; // short-week Thursday clamp floor
+export const SHORT_THU_MAX_HOURS = 9; // short-week Thursday clamp ceiling
+export const FRIDAY_RESERVE_HOURS = 5; // short-week Thursday leaves this much for Friday
+export const FRIDAY_MIN_HOURS = 5; // Friday target never below this (both modes)
 export const BREAK_AFTER_HOURS = 4.5; // remind to take a break after this much
 export const BREAK_GAP_MINUTES = 10; // a gap >= this counts as a real break
 export const MAX_DAILY_TARGET_HOURS = 12; // clamp so a bad week can't demand 16h
@@ -87,15 +91,24 @@ export function projectSecondsInRange(
 /**
  * Today's target in seconds.
  *
- * Without short Friday: a flat 8h every day.
+ * Both modes aim for a 40h week in three stages — Mon–Wed, Thursday, Friday —
+ * and a day's target is fixed for the whole day: it depends only on the selected
+ * project's hours logged *before* today (Mon 00:00 → today 00:00), so it does not
+ * shrink as you work today.
  *
- * With short Friday (weekly goal 40h):
+ * Regular week (shortFriday = false):
+ *   - Mon/Tue/Wed: 8h each.
+ *   - Thursday: half of the time remaining to reach 40h, but no less than 7h.
+ *   - Friday: whatever remains to reach 40h, but no less than 5h.
+ *
+ * Short week (shortFriday = true):
  *   - Mon/Tue/Wed: 9h each.
- *   - Thursday: recalculated to leave ~5h for Friday, i.e.
- *       40h - (project hours already logged Mon–Wed) - 5h.
- *   - Friday: simply whatever remains to reach 40h for the week.
- *   - Weekend: falls back to 8h.
- * Thursday/Friday are clamped to [0, 12h] so an unusual week stays sane.
+ *   - Thursday: the time remaining to reach 40h minus a reserved 5h for Friday,
+ *       clamped to [8h, 9h].
+ *   - Friday: whatever remains to reach 40h, but no less than 5h.
+ *
+ * In both modes the weekend falls back to 8h, and every day is finally clamped
+ * to at most 12h so an unusual week stays sane.
  */
 export function dailyTargetSeconds(
   now: Date,
@@ -103,24 +116,29 @@ export function dailyTargetSeconds(
   projectId: number,
   shortFriday: boolean
 ): number {
-  if (!shortFriday) return STANDARD_DAY_HOURS * HOUR;
-
   const day = now.getDay();
-  if (day === 1 || day === 2 || day === 3) return MIDWEEK_TARGET_HOURS * HOUR;
-
-  const weekStart = startOfWeekMonday(now).getTime();
-  const todayStart = startOfDay(now).getTime();
   const max = MAX_DAILY_TARGET_HOURS * HOUR;
 
-  if (day === 4) {
-    const loggedThroughWed = projectSecondsInRange(entries, projectId, weekStart, todayStart);
-    const target = WEEKLY_HOURS * HOUR - loggedThroughWed - DESIRED_FRIDAY_HOURS * HOUR;
-    return clamp(target, 0, max);
+  if (day === 1 || day === 2 || day === 3) {
+    const midweek = shortFriday ? SHORT_MIDWEEK_HOURS : STANDARD_DAY_HOURS;
+    return midweek * HOUR;
   }
 
-  if (day === 5) {
-    const loggedThroughThu = projectSecondsInRange(entries, projectId, weekStart, todayStart);
-    const target = WEEKLY_HOURS * HOUR - loggedThroughThu;
+  if (day === 4 || day === 5) {
+    const weekStart = startOfWeekMonday(now).getTime();
+    const todayStart = startOfDay(now).getTime();
+    const loggedSoFar = projectSecondsInRange(entries, projectId, weekStart, todayStart);
+    const remaining = WEEKLY_HOURS * HOUR - loggedSoFar;
+
+    if (day === 4) {
+      const target = shortFriday
+        ? clamp(remaining - FRIDAY_RESERVE_HOURS * HOUR, SHORT_THU_MIN_HOURS * HOUR, SHORT_THU_MAX_HOURS * HOUR)
+        : Math.max(remaining / 2, REGULAR_THU_FLOOR_HOURS * HOUR);
+      return clamp(target, 0, max);
+    }
+
+    // Friday (both modes): whatever's left to reach 40h, floored at 5h.
+    const target = Math.max(remaining, FRIDAY_MIN_HOURS * HOUR);
     return clamp(target, 0, max);
   }
 
