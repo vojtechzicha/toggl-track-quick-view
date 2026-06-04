@@ -47,6 +47,40 @@ click **Connect**, pick your project, and optionally enable **Short Friday**.
    Next.js — no extra config).
 2. (Optional) Set `TOGGL_API_TOKEN` in Vercel's environment variables to skip
    entering the token in the UI. Otherwise the token stays in your browser.
+3. (Optional) Set `APP_PASSWORD` to put the whole dashboard behind a password —
+   see below.
+
+## Password protection
+
+A server-managed deploy (`TOGGL_API_TOKEN` set) is otherwise readable by anyone
+who knows the URL. Set **`APP_PASSWORD`** to gate it:
+
+- On first visit the app shows a password prompt; **no Toggl data is fetched or
+  shown until the password is accepted.**
+- The check is enforced **server-side** — the Toggl proxy refuses to serve the
+  server token's data without a valid session — so it can't be bypassed by
+  calling the API directly or editing the page.
+- The **password is never stored** anywhere. On success the server returns a
+  signed, expiring **session token**; the browser keeps only that token (in
+  `localStorage`), so each device is asked for the password **at most once a
+  week**.
+- The session token is an HMAC signed with a key **derived from the password**,
+  so **changing `APP_PASSWORD` instantly invalidates every existing session**.
+- The gate only applies in server-managed mode. If `TOGGL_API_TOKEN` is unset,
+  each user brings their own browser token and there's no shared secret to
+  protect, so `APP_PASSWORD` has no effect.
+
+Security notes:
+
+- Use a **long, random** password and serve over **HTTPS** (Vercel is HTTPS by
+  default) so neither the password nor the token can be sniffed.
+- `localStorage` is readable by any JavaScript on the page; this app loads no
+  third-party scripts, so the main residual risk is XSS. (An httpOnly cookie
+  would be immune to that but can't be read by JS at all — `localStorage` is the
+  deliberate, simple fit for this single-user tool.)
+- A wrong-password guess is met with a small, escalating delay to slow brute
+  force. This throttle is per server instance, so on a fanned-out serverless
+  deploy it's best-effort — your password strength is the real defense.
 
 ## The targets model
 

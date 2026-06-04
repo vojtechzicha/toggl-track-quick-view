@@ -18,6 +18,7 @@ import { NextRequest } from 'next/server';
 // interval instead of each spending from Toggl's hourly budget.
 
 import { cacheIntervalSec, cachedToggl } from '@/lib/serverCache';
+import { gateEnabled, verifyToken } from '@/lib/serverAuth';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -37,6 +38,19 @@ export async function GET(
 ) {
   const { path } = await params;
   const headerToken = req.headers.get('x-toggl-token');
+
+  // Password gate: requests that would fall back to the SERVER token must carry
+  // a valid app session token. Requests bringing their own browser token use
+  // that user's own Toggl account, so they aren't gated. The `x-app-auth:
+  // required` header lets the client tell "log in" apart from a Toggl 401 and
+  // re-prompt for the password.
+  if (gateEnabled() && !headerToken && !verifyToken(req.headers.get('x-app-auth'))) {
+    return new Response(JSON.stringify({ error: 'auth_required' }), {
+      status: 401,
+      headers: { 'content-type': 'application/json', 'x-app-auth': 'required' },
+    });
+  }
+
   const token = headerToken || process.env.TOGGL_API_TOKEN;
 
   if (!token) {

@@ -6,10 +6,13 @@
 //    both a server token and TOGGL_CACHE_INTERVAL) and its refresh interval.
 //    When enabled, the client hides the refresh-frequency picker and polls at
 //    the server-driven interval instead.
+//  - passwordRequired: whether a password gate (TOGGL_API_TOKEN + APP_PASSWORD)
+//    is active, so the client knows to prompt for the password before fetching.
 //
-// The token value itself is never exposed — only its presence.
+// Neither the token nor the password is ever exposed — only their presence.
 
 import { cacheIntervalSec } from '@/lib/serverCache';
+import { gateEnabled } from '@/lib/serverAuth';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -20,6 +23,7 @@ export async function GET() {
   const cacheEnabled = serverToken && interval !== null;
   return Response.json({
     serverToken,
+    passwordRequired: gateEnabled(),
     cache: {
       enabled: cacheEnabled,
       intervalSec: cacheEnabled ? interval : null,
