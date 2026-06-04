@@ -25,6 +25,8 @@ import {
   plannedTargetSeconds,
   continuousWorkSeconds,
   unreportedGaps,
+  mergeIntervals,
+  subtractIntervals,
   startOfDay,
   startOfWeekMonday,
   fmtHM,
@@ -465,35 +467,48 @@ export default function Page() {
         .sort((a, b) => a.startMs - b.startMs);
 
       const items: TLItem[] = [];
+
+      // Selected-project entries are listed individually; their merged spans also
+      // mark when you were really working, so overlapping time on other projects
+      // (parallel tracking) doesn't get mistaken for a break.
+      const projectCoverage = mergeIntervals(
+        dayEntries
+          .filter((e) => e.projectId === settings.projectId)
+          .map((e) => ({ a: e.startMs, b: e.stopMs }))
+      );
       for (const e of dayEntries) {
-        if (e.projectId === settings.projectId) {
-          items.push({
-            key: `e${e.id}`,
-            kind: 'project',
-            desc: e.desc,
-            startMs: e.startMs,
-            stopMs: e.stopMs,
-            running: e.running,
-            dur: Math.max(0, (e.stopMs - e.startMs) / 1000),
-          });
-        } else {
-          const last = items[items.length - 1];
-          if (last && last.kind === 'break') {
-            last.stopMs = e.stopMs; // extend the current break across this entry
-            last.running = last.running || e.running;
-            last.dur = Math.max(0, (last.stopMs - last.startMs) / 1000);
-          } else {
-            items.push({
-              key: `b${e.id}`,
-              kind: 'break',
-              desc: 'Break',
-              startMs: e.startMs,
-              stopMs: e.stopMs,
-              running: e.running,
-              dur: Math.max(0, (e.stopMs - e.startMs) / 1000),
-            });
-          }
-        }
+        if (e.projectId !== settings.projectId) continue;
+        items.push({
+          key: `e${e.id}`,
+          kind: 'project',
+          desc: e.desc,
+          startMs: e.startMs,
+          stopMs: e.stopMs,
+          running: e.running,
+          dur: Math.max(0, (e.stopMs - e.startMs) / 1000),
+        });
+      }
+
+      // A break is only the other-project time *not* covered by the selected
+      // project — i.e. when you were genuinely working elsewhere, not tracking
+      // two projects at once. Sub-minute slivers from partial overlaps are noise.
+      const breakSpans = subtractIntervals(
+        dayEntries
+          .filter((e) => e.projectId !== settings.projectId)
+          .map((e) => ({ a: e.startMs, b: e.stopMs })),
+        projectCoverage
+      );
+      for (const b of breakSpans) {
+        if (b.b - b.a < 60_000) continue;
+        items.push({
+          key: `b${b.a}`,
+          kind: 'break',
+          desc: 'Break',
+          startMs: b.a,
+          stopMs: b.b,
+          running: isToday && b.b >= cap, // reaches "now" ⇒ still on the other project
+          dur: (b.b - b.a) / 1000,
+        });
       }
 
       // Interleave genuine unreported gaps, computed independently of the
