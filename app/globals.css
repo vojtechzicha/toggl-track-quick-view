@@ -486,6 +486,41 @@ body {
   font-variant-numeric: tabular-nums;
 }
 
+/* ---------- Week summary card ---------- */
+.week-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.week-row {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 3px 2px;
+}
+.week-day {
+  font-size: clamp(12px, 1.7vmin, 14px);
+  font-weight: 600;
+}
+.week-vals {
+  font-size: clamp(11px, 1.6vmin, 13px);
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.week-logged {
+  color: var(--text);
+  font-weight: 700;
+}
+.week-logged.met {
+  color: var(--green);
+}
+.week-sep {
+  margin: 0 4px;
+  opacity: 0.5;
+}
+
 /* ---------- Unreported-time card ---------- */
 .unrep-card {
   border-color: rgba(245, 158, 11, 0.35);

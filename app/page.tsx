@@ -521,6 +521,48 @@ export default function Page() {
     };
   }, [entries, nowMs, settings.projectId]);
 
+  // Week summary for the side panel: logged vs target for each weekday. Mon–Fri
+  // always show; Sat/Sun appear only when the selected project was tracked then.
+  // Both numbers come from the same week fetch (no extra API calls). Each day's
+  // target uses the daily model "as of" that day — so past days reflect what was
+  // actually asked of them, today matches the main ring, and later days in the
+  // week show a live projection based on what's been logged so far.
+  const weekSummary = useMemo(() => {
+    if (!settings.projectId || !nowMs) return null;
+    const norm = normalize(entries, nowMs);
+    const dayMs = 24 * 3600 * 1000;
+    const weekStart = startOfWeekMonday(new Date(nowMs)).getTime();
+
+    const days: {
+      key: number;
+      label: string;
+      logged: number;
+      target: number;
+      met: boolean;
+    }[] = [];
+    for (let i = 0; i < 7; i++) {
+      const dayStart = weekStart + i * dayMs;
+      const date = new Date(dayStart);
+      const isWeekend = i >= 5;
+      const logged = projectSecondsInRange(
+        norm,
+        settings.projectId,
+        dayStart,
+        Math.min(dayStart + dayMs, nowMs)
+      );
+      if (isWeekend && logged === 0) continue; // hide untouched weekend days
+      const target = dailyTargetSeconds(date, norm, settings.projectId, settings.shortFriday);
+      days.push({
+        key: dayStart,
+        label: date.toLocaleDateString(undefined, { weekday: 'short' }),
+        logged,
+        target,
+        met: logged >= target,
+      });
+    }
+    return days;
+  }, [entries, nowMs, settings.projectId, settings.shortFriday]);
+
   // Unreported time (no entry at all) for the side card — today and yesterday.
   const unreported = useMemo(() => {
     if (!nowMs) return null;
@@ -676,6 +718,26 @@ export default function Page() {
                     />
                   </div>
                 )}
+
+              {weekSummary && weekSummary.length > 0 && (
+                <div className="side-card week-card">
+                  <div className="side-title">This week</div>
+                  <div className="week-list">
+                    {weekSummary.map((d) => (
+                      <div key={d.key} className="week-row">
+                        <span className="week-day">{d.label}</span>
+                        <span className="week-vals">
+                          <span className={`week-logged ${d.met ? 'met' : ''}`}>
+                            {fmtHM(d.logged)}
+                          </span>
+                          <span className="week-sep">/</span>
+                          <span className="week-target">{fmtHM(d.target)}</span>
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
 
               <div className="side-card history-card">
                 <div className="day-tabs" role="tablist">
