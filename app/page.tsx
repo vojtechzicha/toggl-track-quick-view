@@ -21,6 +21,7 @@ import {
   normalize,
   projectSecondsInRange,
   dailyTargetSeconds,
+  plannedTargetSeconds,
   continuousWorkSeconds,
   unreportedGaps,
   startOfDay,
@@ -525,13 +526,20 @@ export default function Page() {
   // always show; Sat/Sun appear only when the selected project was tracked then.
   // Both numbers come from the same week fetch (no extra API calls). Each day's
   // target uses the daily model "as of" that day — so past days reflect what was
-  // actually asked of them, today matches the main ring, and later days in the
-  // week show a live projection based on what's been logged so far.
+  // actually asked of them and today matches the main ring.
+  //
+  // Days still to come show the fixed weekly plan (regular 8/8/8/8/8, short
+  // 9/9/9/8/5) rather than the adaptive figure, which would otherwise swing to
+  // the clamp before earlier days are logged. The one exception is from Thursday
+  // on: by then the adaptive numbers are meaningful, so a future Friday is shown
+  // adaptively too — it shrinks live as Thursday's time accrues.
   const weekSummary = useMemo(() => {
     if (!settings.projectId || !nowMs) return null;
     const norm = normalize(entries, nowMs);
     const dayMs = 24 * 3600 * 1000;
     const weekStart = startOfWeekMonday(new Date(nowMs)).getTime();
+    const todayStart = startOfDay(new Date(nowMs)).getTime();
+    const beforeThursday = new Date(nowMs).getDay() < 4; // Mon–Wed (Sun=0 counts as before)
 
     const days: {
       key: number;
@@ -551,7 +559,12 @@ export default function Page() {
         Math.min(dayStart + dayMs, nowMs)
       );
       if (isWeekend && logged === 0) continue; // hide untouched weekend days
-      const target = dailyTargetSeconds(date, norm, settings.projectId, settings.shortFriday);
+      // Static plan only for genuinely-ahead days while we're still Mon–Wed;
+      // today, past days, and (from Thu on) the remaining days stay adaptive.
+      const useStaticPlan = dayStart > todayStart && beforeThursday;
+      const target = useStaticPlan
+        ? plannedTargetSeconds(date.getDay(), settings.shortFriday)
+        : dailyTargetSeconds(date, norm, settings.projectId, settings.shortFriday);
       days.push({
         key: dayStart,
         label: date.toLocaleDateString(undefined, { weekday: 'short' }),
