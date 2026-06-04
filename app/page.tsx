@@ -511,7 +511,7 @@ export default function Page() {
           <div className="brand">
             <h1>{settings.projectName || 'Toggl Quick View'}</h1>
             <p>
-              {settings.shortFriday ? 'Short-Friday week · 40h goal' : '8h work day'}
+              {settings.shortFriday ? 'Short week · 40h goal' : 'Regular week · 40h goal'}
               {' · '}
               {new Date(nowMs || Date.now()).toLocaleDateString(undefined, {
                 weekday: 'long',

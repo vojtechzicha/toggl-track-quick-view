@@ -137,8 +137,8 @@ export default function SettingsPanel({
 
         <div className="toggle">
           <div className="t-text">
-            <strong>Short Friday</strong>
-            <span>9h Mon–Wed, then Thu/Fri rebalance toward a ~5h Friday (40h/week).</span>
+            <strong>Short week</strong>
+            <span>Front-load the week: 9h Mon–Wed for a lighter Friday. Off keeps an even 8h. Both aim for 40h/week.</span>
           </div>
           <label className="switch">
             <input
