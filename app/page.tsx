@@ -21,6 +21,8 @@ import {
   Gap,
   normalize,
   projectSecondsInRange,
+  scheduledLaterSeconds,
+  coveringEntry,
   dailyTargetSeconds,
   plannedTargetSeconds,
   continuousWorkSeconds,
@@ -33,6 +35,7 @@ import {
   fmtClock,
   fmtTimeOfDay,
   BREAK_AFTER_HOURS,
+  WEEKLY_HOURS,
 } from '@/lib/calc';
 
 const LS_KEY = 'tqv.settings.v1';
@@ -307,8 +310,11 @@ export default function Page() {
         const weekStart = startOfWeekMonday(new Date()).getTime();
         const yesterdayStart = startOfDay(new Date()).getTime() - 24 * 3600 * 1000;
         const start = new Date(Math.min(weekStart, yesterdayStart)).toISOString();
-        // Up to "now" only — avoids pulling any future-dated (e.g. tomorrow) entries.
-        const end = new Date(Date.now() + 60 * 1000).toISOString();
+        // Through the end of this week so pre-entered ("scheduled") future entries
+        // — later today or later this week — are included. They never count toward
+        // worked time (the ring clamps at now); they only inform the leave-sooner
+        // math and the weekly projection.
+        const end = new Date(weekStart + 7 * 24 * 3600 * 1000).toISOString();
         const ent = await getEntries(settings.token, start, end);
         if (cancelled) return;
         setEntries(ent ?? []);
@@ -372,17 +378,35 @@ export default function Page() {
     const norm = normalize(entries, nowMs);
     const now = new Date(nowMs);
     const dayStart = startOfDay(now).getTime();
+    const dayEnd = dayStart + 24 * 3600 * 1000;
 
     const trackedToday = projectSecondsInRange(norm, settings.projectId, dayStart, nowMs);
     const target = dailyTargetSeconds(now, norm, settings.projectId, settings.shortFriday);
     const remaining = Math.max(0, target - trackedToday);
     const fraction = target > 0 ? trackedToday / target : 1;
-    // Projected wall-clock time you hit the target (if still working toward it).
-    const leaveAtMs = remaining > 0 ? nowMs + remaining * 1000 : null;
+
+    // Time you've scheduled for later today: counts toward the day's target but is
+    // not yet worked, so it lets you stop the live work sooner. The ring is left
+    // alone (worked time only); only the live work still required shrinks.
+    const scheduledLater = scheduledLaterSeconds(norm, settings.projectId, nowMs, dayEnd);
+    const remainingLive = Math.max(0, remaining - scheduledLater);
+    // Projected wall-clock time you can stop working live (the rest is covered by
+    // scheduled blocks). Null once no more live work is needed.
+    const leaveAtMs = remainingLive > 0 ? nowMs + remainingLive * 1000 : null;
+    // Target not yet worked, but scheduled time covers the gap → free to leave now.
+    const coveredByScheduled = remaining > 0 && remainingLive <= 0;
 
     const runningEntry = norm.find((e) => e.running) ?? null;
     const trackingProject = !!runningEntry && runningEntry.projectId === settings.projectId;
     const trackingOther = !!runningEntry && runningEntry.projectId !== settings.projectId;
+    // "On plan": no live timer, but a pre-entered block covers this moment. We're
+    // working per the plan even though nothing is ticking in Toggl.
+    const covering = !runningEntry ? coveringEntry(norm, settings.projectId, nowMs) : null;
+    const onPlan = !!covering;
+    const coveringRaw = covering ? entries.find((e) => e.id === covering.id) ?? null : null;
+    const coveringDesc = coveringRaw?.description?.trim() || '';
+    const coveringEndsMs = covering?.stopMs ?? null;
+    const coveringCountdown = covering ? Math.max(0, (covering.stopMs - nowMs) / 1000) : 0;
     // Working on a different project never surfaces that project's name. Before
     // the daily target is reached it counts as a "Break"; once it's reached,
     // any other work is just "No tracking".
@@ -414,9 +438,16 @@ export default function Page() {
       remaining,
       fraction,
       leaveAtMs,
+      scheduledLater,
+      remainingLive,
+      coveredByScheduled,
       trackingProject,
       trackingOther,
       otherLabel,
+      onPlan,
+      coveringDesc,
+      coveringEndsMs,
+      coveringCountdown,
       currentDescription,
       currentSeconds,
       continuous: cont.seconds,
@@ -434,7 +465,7 @@ export default function Page() {
   // project) are interleaved as their own markers.
   type TLItem = {
     key: string;
-    kind: 'project' | 'break' | 'unreported';
+    kind: 'project' | 'scheduled' | 'break' | 'unreported';
     desc: string;
     startMs: number;
     stopMs: number;
@@ -447,8 +478,11 @@ export default function Page() {
     const norm = normalize(entries, nowMs);
     const dayMs = 24 * 3600 * 1000;
 
-    const build = (dayStart: number, cap: number, isToday: boolean): TLItem[] => {
+    const build = (dayStart: number, isToday: boolean): TLItem[] => {
       const dayEnd = dayStart + dayMs;
+      // "now" within this day: the boundary past which time is the future. For
+      // past days it's the day's end (everything already happened).
+      const liveCap = isToday ? Math.min(nowMs, dayEnd) : dayEnd;
       const dayEntries = entries
         .map((e) => {
           const startMs = new Date(e.start).getTime();
@@ -459,7 +493,7 @@ export default function Page() {
             desc: e.description?.trim() || '(no description)',
             projectId: e.project_id,
             startMs,
-            stopMs: Math.min(rawStop, cap), // clip a midnight-crossing timer to the day
+            stopMs: Math.min(rawStop, dayEnd), // clip a day-crossing entry to the day
             running: running && isToday,
           };
         })
@@ -478,9 +512,12 @@ export default function Page() {
       );
       for (const e of dayEntries) {
         if (e.projectId !== settings.projectId) continue;
+        // A pre-entered block that extends past "now" (covering or fully future)
+        // is shown as planned, not worked — the ring still only credits time ≤ now.
+        const scheduled = !e.running && e.stopMs > liveCap;
         items.push({
           key: `e${e.id}`,
-          kind: 'project',
+          kind: scheduled ? 'scheduled' : 'project',
           desc: e.desc,
           startMs: e.startMs,
           stopMs: e.stopMs,
@@ -491,11 +528,12 @@ export default function Page() {
 
       // A break is only the other-project time *not* covered by the selected
       // project — i.e. when you were genuinely working elsewhere, not tracking
-      // two projects at once. Sub-minute slivers from partial overlaps are noise.
+      // two projects at once. Bounded at "now" so future other-project entries
+      // aren't drawn as breaks. Sub-minute slivers from partial overlaps are noise.
       const breakSpans = subtractIntervals(
         dayEntries
           .filter((e) => e.projectId !== settings.projectId)
-          .map((e) => ({ a: e.startMs, b: e.stopMs })),
+          .map((e) => ({ a: e.startMs, b: Math.min(e.stopMs, liveCap) })),
         projectCoverage
       );
       for (const b of breakSpans) {
@@ -506,15 +544,15 @@ export default function Page() {
           desc: 'Break',
           startMs: b.a,
           stopMs: b.b,
-          running: isToday && b.b >= cap, // reaches "now" ⇒ still on the other project
+          running: isToday && b.b >= liveCap, // reaches "now" ⇒ still on the other project
           dur: (b.b - b.a) / 1000,
         });
       }
 
       // Interleave genuine unreported gaps, computed independently of the
       // project/break grouping so a gap hidden between two other-project
-      // entries still surfaces.
-      for (const g of unreportedGaps(norm, dayStart, cap)) {
+      // entries still surfaces. Only up to "now" — the future isn't unreported.
+      for (const g of unreportedGaps(norm, dayStart, liveCap)) {
         items.push({
           key: `u${g.startMs}`,
           kind: 'unreported',
@@ -533,8 +571,8 @@ export default function Page() {
     const todayStart = startOfDay(new Date(nowMs)).getTime();
     const yesterdayStart = todayStart - dayMs;
     return {
-      today: build(todayStart, nowMs, true),
-      yesterday: build(yesterdayStart, todayStart, false),
+      today: build(todayStart, true),
+      yesterday: build(yesterdayStart, false),
     };
   }, [entries, nowMs, settings.projectId]);
 
@@ -592,20 +630,22 @@ export default function Page() {
       key: number;
       label: string;
       logged: number;
+      scheduled: number;
       target: number;
       met: boolean;
+      onTrack: boolean;
     }[] = [];
     for (let i = 0; i < 7; i++) {
       const dayStart = weekStart + i * dayMs;
+      const dayEnd = dayStart + dayMs;
       const date = new Date(dayStart);
       const isWeekend = i >= 5;
-      const logged = projectSecondsInRange(
-        norm,
-        settings.projectId,
-        dayStart,
-        Math.min(dayStart + dayMs, nowMs)
-      );
-      if (isWeekend && logged === 0) continue; // hide untouched weekend days
+      // Worked = project time up to now; scheduled = project time in the future
+      // part of the day (covering tail + fully-future blocks). The two partition
+      // the day's project time at "now", so there's no double count.
+      const logged = projectSecondsInRange(norm, settings.projectId, dayStart, Math.min(dayEnd, nowMs));
+      const scheduled = projectSecondsInRange(norm, settings.projectId, Math.max(dayStart, nowMs), dayEnd);
+      if (isWeekend && logged === 0 && scheduled === 0) continue; // hide untouched weekend days
       // Static plan only for genuinely-ahead days while we're still Mon–Wed;
       // today, past days, and (from Thu on) the remaining days stay adaptive.
       const isFuture = dayStart > todayStart;
@@ -622,11 +662,15 @@ export default function Page() {
         key: dayStart,
         label: date.toLocaleDateString(undefined, { weekday: 'short' }),
         logged,
+        scheduled,
         target,
         met: logged >= target,
+        onTrack: logged + scheduled >= target,
       });
     }
-    return days;
+    const totalLogged = days.reduce((s, d) => s + d.logged, 0);
+    const totalScheduled = days.reduce((s, d) => s + d.scheduled, 0);
+    return { days, totalLogged, totalScheduled, projected: totalLogged + totalScheduled };
   }, [entries, nowMs, settings.projectId, settings.shortFriday]);
 
   // Unreported time (no entry at all) for the side card — today and yesterday.
@@ -706,16 +750,38 @@ export default function Page() {
               <>
                 <StatusBadge view={view} />
 
-                <ProgressRing fraction={view.fraction} color={ringColor}>
+                <ProgressRing
+                  fraction={view.fraction}
+                  color={ringColor}
+                  projectedFraction={
+                    view.target > 0
+                      ? (view.trackedToday + view.scheduledLater) / view.target
+                      : 1
+                  }
+                  scheduledColor="var(--accent-soft)"
+                >
                   <div className="clock">{fmtClock(view.trackedToday)}</div>
                   <div className="pct">{Math.round(view.fraction * 100)}%</div>
-                  <div className="of">of {fmtHM(view.target)} target</div>
+                  <div className="of">
+                    of {fmtHM(view.target)} target
+                    {view.scheduledLater > 0 && (
+                      <span className="of-sched"> · +{fmtHM(view.scheduledLater)} scheduled</span>
+                    )}
+                  </div>
                 </ProgressRing>
 
                 {view.nextMilestone ? (
                   <div className={`next-time ${view.nextMilestone.kind}`}>
                     {view.nextMilestone.kind === 'break' ? '☕ Break at ' : '🏁 Leave at '}
                     <strong>{fmtTimeOfDay(view.nextMilestone.at)}</strong>
+                    {view.nextMilestone.kind === 'leave' && view.scheduledLater > 0 && (
+                      <span className="sched-note"> · {fmtHM(view.scheduledLater)} scheduled later</span>
+                    )}
+                  </div>
+                ) : view.coveredByScheduled ? (
+                  <div className="next-time leave">
+                    🏁 You can leave now
+                    <span className="sched-note"> · {fmtHM(view.scheduledLater)} scheduled later</span>
                   </div>
                 ) : (
                   <div className="next-time done">🎉 Target reached — you can leave</div>
@@ -731,6 +797,11 @@ export default function Page() {
                     <div className={`value ${done ? 'green' : ''}`}>
                       {done ? `+${fmtHM(view.trackedToday - view.target)}` : fmtHM(view.remaining)}
                     </div>
+                    {!done && view.scheduledLater > 0 && (
+                      <div className="value-sub">
+                        {fmtHM(view.scheduledLater)} scheduled · {fmtHM(view.remainingLive)} to work
+                      </div>
+                    )}
                   </div>
                   <div className="stat">
                     <div className="label">Continuous</div>
@@ -761,6 +832,15 @@ export default function Page() {
                     <div className="now-meta">{settings.projectName}</div>
                     <div className="now-time">{fmtClock(view.currentSeconds)}</div>
                   </>
+                ) : view.onPlan ? (
+                  <>
+                    <div className="now-desc">{view.coveringDesc || '(no description)'}</div>
+                    <div className="now-meta">
+                      {settings.projectName} · on plan
+                      {view.coveringEndsMs ? ` · ends ${fmtTimeOfDay(view.coveringEndsMs)}` : ''}
+                    </div>
+                    <div className="now-time plan">{fmtClock(view.coveringCountdown)} left</div>
+                  </>
                 ) : view.trackingOther ? (
                   <div className="now-idle">{view.otherLabel}</div>
                 ) : (
@@ -785,17 +865,34 @@ export default function Page() {
                   </div>
                 )}
 
-              {weekSummary && weekSummary.length > 0 && (
+              {weekSummary && weekSummary.days.length > 0 && (
                 <div className="side-card week-card">
                   <div className="side-title">This week</div>
+                  {weekSummary.totalScheduled > 0 && (
+                    <div className="week-proj">
+                      <div className="week-proj-main">
+                        Projected <strong>{fmtHM(weekSummary.projected)}</strong> / {WEEKLY_HOURS}h
+                      </div>
+                      <div className="week-proj-sub">
+                        <span>{fmtHM(weekSummary.totalLogged)} worked</span>
+                        <span> · {fmtHM(weekSummary.totalScheduled)} scheduled</span>
+                      </div>
+                    </div>
+                  )}
                   <div className="week-list">
-                    {weekSummary.map((d) => (
+                    {weekSummary.days.map((d) => (
                       <div key={d.key} className="week-row">
                         <span className="week-day">{d.label}</span>
                         <span className="week-vals">
                           <span className={`week-logged ${d.met ? 'met' : ''}`}>
-                            {fmtHM(d.logged)}
+                            {d.logged > 0 || d.scheduled === 0 ? fmtHM(d.logged) : '—'}
                           </span>
+                          {d.scheduled > 0 && (
+                            <span className={`week-sched ${d.onTrack ? 'on-track' : ''}`}>
+                              {' '}
+                              +{fmtHM(d.scheduled)}
+                            </span>
+                          )}
                           <span className="week-sep">/</span>
                           <span className="week-target">{fmtHM(d.target)}</span>
                         </span>
@@ -843,11 +940,11 @@ export default function Page() {
                           key={h.key}
                           className={`hist-item ${h.running ? 'live' : ''} ${
                             h.kind === 'break' ? 'brk' : ''
-                          }`}
+                          } ${h.kind === 'scheduled' ? 'sched' : ''}`}
                         >
                           <div className="hist-top">
                             <span className="hist-desc">
-                              {h.kind === 'break' ? '☕ Break' : h.desc}
+                              {h.kind === 'break' ? '☕ Break' : h.kind === 'scheduled' ? `📅 ${h.desc}` : h.desc}
                             </span>
                             <span className="hist-dur">{fmtHM(h.dur)}</span>
                           </div>
@@ -949,12 +1046,19 @@ function UnreportedGroup({
 function StatusBadge({
   view,
 }: {
-  view: { trackingProject: boolean; trackingOther: boolean; otherLabel: string };
+  view: { trackingProject: boolean; trackingOther: boolean; otherLabel: string; onPlan: boolean };
 }) {
   if (view.trackingProject) {
     return (
       <span className="badge live">
         <span className="dot" /> Tracking now
+      </span>
+    );
+  }
+  if (view.onPlan) {
+    return (
+      <span className="badge plan">
+        <span className="dot" /> 📅 On plan
       </span>
     );
   }

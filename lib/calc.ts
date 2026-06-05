@@ -89,6 +89,49 @@ export function projectSecondsInRange(
 }
 
 /**
+ * Project time (seconds) scheduled *strictly after* `nowMs` within [nowMs, untilMs).
+ *
+ * "Scheduled later" = entries on `projectId` whose start is in the future — work
+ * you've planned but not done yet. An entry that merely *covers* now (started in
+ * the past, ends in the future) is deliberately excluded: its remaining tail is
+ * live work-in-progress, not separately-bankable scheduled time, and counting it
+ * here would double-discount the day's remaining live work.
+ */
+export function scheduledLaterSeconds(
+  entries: NormEntry[],
+  projectId: number,
+  nowMs: number,
+  untilMs: number
+): number {
+  let total = 0;
+  for (const e of entries) {
+    if (e.projectId !== projectId) continue;
+    if (e.startMs <= nowMs) continue; // covering-now or already past — not "later"
+    const b = Math.min(e.stopMs, untilMs);
+    if (b > e.startMs) total += (b - e.startMs) / MS;
+  }
+  return total;
+}
+
+/**
+ * The selected-project entry whose span contains `nowMs` but that isn't the live
+ * running timer — i.e. a pre-entered ("planned") block you're currently inside.
+ * Running entries are excluded (normalize() clamps their stop to now, so they
+ * never satisfy stop > now) since the live-tracking path already handles those.
+ */
+export function coveringEntry(
+  entries: NormEntry[],
+  projectId: number,
+  nowMs: number
+): NormEntry | null {
+  return (
+    entries.find(
+      (e) => e.projectId === projectId && !e.running && e.startMs <= nowMs && e.stopMs > nowMs
+    ) ?? null
+  );
+}
+
+/**
  * Today's target in seconds.
  *
  * Both modes aim for a 40h week in three stages — Mon–Wed, Thursday, Friday —
