@@ -3,12 +3,15 @@
 import { useState } from 'react';
 import type { Project } from '@/lib/toggl';
 
+export type TimesheetMode = 'summary' | 'individual';
+
 export interface SettingsValue {
   token: string;
   projectId: number | null;
   projectName: string;
   shortFriday: boolean;
   refreshSec: number;
+  timesheetMode: TimesheetMode;
 }
 
 // Each option's implied requests/hour, so the user can see the budget impact
@@ -54,6 +57,7 @@ export default function SettingsPanel({
   const [projectId, setProjectId] = useState<number | null>(initial.projectId);
   const [shortFriday, setShortFriday] = useState(initial.shortFriday);
   const [refreshSec, setRefreshSec] = useState(initial.refreshSec);
+  const [timesheetMode, setTimesheetMode] = useState<TimesheetMode>(initial.timesheetMode);
 
   const tokenConnected = projects.length > 0;
   const showProjects = serverManaged || tokenConnected;
@@ -68,6 +72,7 @@ export default function SettingsPanel({
       projectName: proj?.name ?? initial.projectName,
       shortFriday,
       refreshSec,
+      timesheetMode,
     });
   };
 
@@ -132,6 +137,24 @@ export default function SettingsPanel({
                 </option>
               ))}
             </select>
+          </div>
+        )}
+
+        {showProjects && (
+          <div className="field">
+            <label htmlFor="timesheet-mode">Timesheet view</label>
+            <select
+              id="timesheet-mode"
+              value={timesheetMode}
+              onChange={(e) => setTimesheetMode(e.target.value as TimesheetMode)}
+            >
+              <option value="summary">Summary — combined per billing tag</option>
+              <option value="individual">Individual — one row per entry</option>
+            </select>
+            <p className="hint">
+              Which view the Timesheet button opens. Summary groups each day&apos;s entries by
+              billing tag and rounds to 15 minutes; Individual lists entries one by one.
+            </p>
           </div>
         )}
 

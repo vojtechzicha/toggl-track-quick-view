@@ -44,6 +44,7 @@ export const DEFAULTS: StoredSettings = {
   projectName: '',
   shortFriday: false,
   refreshSec: DEFAULT_REFRESH_SEC,
+  timesheetMode: 'summary',
 };
 
 function loadSettings(): StoredSettings {

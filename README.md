@@ -145,21 +145,37 @@ The prefix lives in [`lib/calc.ts`](lib/calc.ts) as `BILLING_TAG_PREFIX`.
 
 ## Timesheet
 
-The **Timesheet** page (top-right button, or `/timesheet`) turns the current
-week into a copy-paste-ready grid for filling in an external timesheet:
+The **Timesheet** button (top-right of the dashboard, or `/timesheet`) opens a
+copy-paste-ready view of the current week for filling in an external timesheet.
+Which view it opens is chosen in **Settings → Timesheet view**:
+
+- **Summary** (default) — the implemented view, described below.
+- **Individual** — one row per entry. _Placeholder for now._
+
+Both views are built from the same single week fetch the dashboard already makes,
+so they add **no API requests**.
+
+### Summary timesheet
 
 - **Days are columns** (Mon–Fri always; Sat/Sun appear only when the project was
   tracked then) and **billing tags are rows**.
 - Each day's entries for a tag are **combined into one cell**: their durations
-  are summed and their descriptions merged with **duplicates removed**. Cells
-  show **duration only** — no clock times.
+  are summed and their descriptions merged (`; `-separated) with **duplicates
+  removed**. Cells show **duration only** — no clock times.
+- Durations are shown as **decimal hours** (e.g. `8.33h`) and **rounded to the
+  nearest 15 minutes**. The rounding is apportioned per day so each day's cells
+  still **add up to that day's rounded total** — the error is spread evenly
+  across tags rather than accumulating (largest-remainder method).
 - A **copy button** on each cell copies that combined description to the
   clipboard. Per-day, per-tag, and grand-total hours are shown.
-- Any entry **without** a billing tag collects in a **"No billing tag"** row,
-  flagged in **amber** ⚠ so you go add the tag in Toggl.
+- An entry **without** a billing tag collects in a **"No billing tag"** row, and
+  one carrying **more than one** billing tag collects in a **"Multiple billing
+  tags"** row — both flagged in **amber** ⚠ so you go fix the tag in Toggl.
 
-It's built from the same single week fetch the dashboard already makes, so it
-adds **no API requests**.
+Each view lives in its own component under
+[`components/timesheet/`](components/timesheet); the page
+([`app/timesheet/page.tsx`](app/timesheet/page.tsx)) is a thin shell that picks
+one from a small registry, so adding a view is a component plus one entry.
 
 ## Staying within Toggl's rate limits
 

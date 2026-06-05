@@ -659,6 +659,7 @@ export default function Page() {
             projectName: settings.projectName,
             shortFriday: settings.shortFriday,
             refreshSec: settings.refreshSec,
+            timesheetMode: settings.timesheetMode,
           }}
           projects={projects}
           serverManaged={!!serverManaged}
