@@ -340,6 +340,37 @@ export function unreportedGaps(
   return gaps;
 }
 
+export const QUARTER_SECONDS = 15 * 60; // timesheet rounding granularity
+
+/**
+ * Round a set of second-durations to whole 15-minute units so that the rounded
+ * values still **sum to the rounded total** of the originals — i.e. rounding the
+ * parts never drifts away from rounding the whole.
+ *
+ * The total is rounded to the nearest quarter-hour; each value is floored to a
+ * quarter; then the leftover quarters needed to reach the total are handed out
+ * one-by-one to the values with the largest fractional remainder (the
+ * largest-remainder / Hamilton method). That spreads the unavoidable rounding
+ * error as evenly as possible — the parts closest to rounding up are the ones
+ * bumped up. Returns rounded seconds in the input order.
+ */
+export function roundQuartersPreservingTotal(secs: number[]): number[] {
+  const quarters = secs.map((s) => Math.max(0, s) / QUARTER_SECONDS);
+  const floors = quarters.map((q) => Math.floor(q));
+  const target = Math.round(quarters.reduce((a, b) => a + b, 0)); // whole quarters in the total
+  let extra = target - floors.reduce((a, b) => a + b, 0); // spare quarters to distribute (>= 0)
+
+  const byRemainder = quarters
+    .map((q, i) => ({ i, r: q - Math.floor(q) }))
+    .sort((a, b) => b.r - a.r);
+
+  const out = floors.slice();
+  for (let k = 0; k < byRemainder.length && extra > 0; k++, extra--) {
+    out[byRemainder[k].i] += 1;
+  }
+  return out.map((q) => q * QUARTER_SECONDS);
+}
+
 /** Duration as decimal hours, e.g. 30000s → "8.33h" (for the timesheet). */
 export function fmtHours(seconds: number): string {
   return `${(Math.max(0, seconds) / 3600).toFixed(2)}h`;

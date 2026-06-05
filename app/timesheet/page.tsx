@@ -5,7 +5,12 @@ import Link from 'next/link';
 import SettingsPanel from '@/components/SettingsPanel';
 import PasswordGate from '@/components/PasswordGate';
 import { useToggl } from '@/lib/useToggl';
-import { billingTagsOf, startOfWeekMonday, fmtHours } from '@/lib/calc';
+import {
+  billingTagsOf,
+  startOfWeekMonday,
+  fmtHours,
+  roundQuartersPreservingTotal,
+} from '@/lib/calc';
 
 const DAY_LABELS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
 const DAY_MS = 24 * 3600 * 1000;
@@ -120,15 +125,26 @@ export default function TimesheetPage() {
     if (multiplePresent) rows.push(MULTIPLE);
     if (untaggedPresent) rows.push(UNTAGGED);
 
+    // Round to 15-minute units per day: each billing-tag cell is rounded so the
+    // cells still add up to the day's rounded total (no accumulated drift), with
+    // the rounding error spread evenly across the tags. Totals are then summed
+    // from these rounded cells, so every figure shown is a clean quarter-hour.
+    const rounded = new Map<string, number>(); // key: `${dayIdx}|${tag}`
+    for (const d of dayCols) {
+      const raw = rows.map((r) => cells.get(`${d}|${r}`)?.seconds ?? 0);
+      const adj = roundQuartersPreservingTotal(raw);
+      rows.forEach((r, ri) => rounded.set(`${d}|${r}`, adj[ri]));
+    }
+
     const dayTotals = dayCols.map((d) =>
-      rows.reduce((s, r) => s + (cells.get(`${d}|${r}`)?.seconds ?? 0), 0)
+      rows.reduce((s, r) => s + (rounded.get(`${d}|${r}`) ?? 0), 0)
     );
     const rowTotals = rows.map((r) =>
-      dayCols.reduce((s, d) => s + (cells.get(`${d}|${r}`)?.seconds ?? 0), 0)
+      dayCols.reduce((s, d) => s + (rounded.get(`${d}|${r}`) ?? 0), 0)
     );
     const grandTotal = rowTotals.reduce((s, v) => s + v, 0);
 
-    return { weekStart, dayCols, rows, cells, dayTotals, rowTotals, grandTotal };
+    return { weekStart, dayCols, rows, cells, rounded, dayTotals, rowTotals, grandTotal };
   }, [entries, nowMs, settings.projectId]);
 
   const needsPassword = serverManaged === true && passwordRequired && !authed;
@@ -218,19 +234,19 @@ export default function TimesheetPage() {
                         )}
                       </th>
                       {grid.dayCols.map((d) => {
-                        const cell = grid.cells.get(`${d}|${row}`);
-                        if (!cell || cell.seconds === 0) {
+                        const secs = grid.rounded.get(`${d}|${row}`) ?? 0;
+                        if (secs === 0) {
                           return (
                             <td key={d} className="ts-cell ts-empty">
                               —
                             </td>
                           );
                         }
-                        const combined = cell.descs.join('; ');
+                        const combined = (grid.cells.get(`${d}|${row}`)?.descs ?? []).join('; ');
                         return (
                           <td key={d} className="ts-cell">
                             <div className="ts-cell-head">
-                              <span className="ts-dur">{fmtHours(cell.seconds)}</span>
+                              <span className="ts-dur">{fmtHours(secs)}</span>
                               {combined && <CopyButton text={combined} />}
                             </div>
                             {combined && <div className="ts-desc">{combined}</div>}
