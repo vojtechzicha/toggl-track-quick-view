@@ -149,8 +149,8 @@ The **Timesheet** button (top-right of the dashboard, or `/timesheet`) opens a
 copy-paste-ready view of the current week for filling in an external timesheet.
 Which view it opens is chosen in **Settings → Timesheet view**:
 
-- **Summary** (default) — the implemented view, described below.
-- **Individual** — one row per entry. _Placeholder for now._
+- **Summary** (default) — the week combined per billing tag, described below.
+- **Individual** — one row per entry, with times, described below.
 
 Both views are built from the same single week fetch the dashboard already makes,
 so they add **no API requests**.
@@ -171,6 +171,28 @@ so they add **no API requests**.
 - An entry **without** a billing tag collects in a **"No billing tag"** row, and
   one carrying **more than one** billing tag collects in a **"Multiple billing
   tags"** row — both flagged in **amber** ⚠ so you go fix the tag in Toggl.
+
+### Individual timesheet
+
+- The week is a **list of day sections**; each lists that day's entries on their
+  own rows showing **start–end time, rounded hours, billing tag and description**
+  (the summary view shows hours only). A **copy button** copies the row's
+  description.
+- **Times are rounded too:** each row's start is snapped to the nearest 15
+  minutes and the end is start + the rounded duration, and rows are **packed
+  forward so they never overlap** even after rounding.
+- **Adjacent same-tag entries combine** into one row — but only when they sit
+  **within an hour** of each other and the combined time stays **≤ 4h**. So
+  `D-1, D-2, D-1` stays three rows, while the first two of `D-1, D-1, D-2, D-1`
+  merge (unless that would exceed 4h, in which case they split).
+- Rounding uses the same 15-minute, day-total-preserving method as the summary,
+  with one tweak: it **biases small entries to surface** rather than vanish, and
+  only drops a billable row if it _still_ rounds to zero.
+- **Warnings** (amber): a **No billing tag** and **Multiple billing tags** row
+  as in the summary, plus a **Too long to bill individually (> 4h)** row for any
+  single entry over four hours (it can't be split), and an **Overlapping
+  entries** notice when two entries overlap in time. The over-4h case also shows
+  the same quiet ⚠ on the dashboard timeline.
 
 Each view lives in its own component under
 [`components/timesheet/`](components/timesheet); the page
