@@ -341,6 +341,7 @@ export function unreportedGaps(
 }
 
 export const QUARTER_SECONDS = 15 * 60; // timesheet rounding granularity
+export const MAX_BILLABLE_HOURS = 4; // a single billable line item can't exceed this
 
 /**
  * Round a set of second-durations to whole 15-minute units so that the rounded
@@ -353,20 +354,33 @@ export const QUARTER_SECONDS = 15 * 60; // timesheet rounding granularity
  * largest-remainder / Hamilton method). That spreads the unavoidable rounding
  * error as evenly as possible — the parts closest to rounding up are the ones
  * bumped up. Returns rounded seconds in the input order.
+ *
+ * With `biasZero`, the spare quarters go **first** to values that would
+ * otherwise floor to zero (a small entry the summary would silently drop),
+ * so the individual view can surface them; the largest-remainder order only
+ * breaks ties among that group and orders the rest. A value can still end up at
+ * zero when there aren't enough spare quarters to reach it — the caller decides
+ * whether to keep or drop it.
  */
-export function roundQuartersPreservingTotal(secs: number[]): number[] {
+export function roundQuartersPreservingTotal(
+  secs: number[],
+  opts: { biasZero?: boolean } = {}
+): number[] {
   const quarters = secs.map((s) => Math.max(0, s) / QUARTER_SECONDS);
   const floors = quarters.map((q) => Math.floor(q));
   const target = Math.round(quarters.reduce((a, b) => a + b, 0)); // whole quarters in the total
   let extra = target - floors.reduce((a, b) => a + b, 0); // spare quarters to distribute (>= 0)
 
-  const byRemainder = quarters
-    .map((q, i) => ({ i, r: q - Math.floor(q) }))
-    .sort((a, b) => b.r - a.r);
+  const order = quarters
+    .map((q, i) => ({ i, r: q - floors[i], surface: opts.biasZero === true && floors[i] === 0 && q > 0 }))
+    .sort((a, b) => {
+      if (a.surface !== b.surface) return a.surface ? -1 : 1; // rescue would-be-zeros first
+      return b.r - a.r; // then largest-remainder
+    });
 
   const out = floors.slice();
-  for (let k = 0; k < byRemainder.length && extra > 0; k++, extra--) {
-    out[byRemainder[k].i] += 1;
+  for (let k = 0; k < order.length && extra > 0; k++, extra--) {
+    out[order[k].i] += 1;
   }
   return out.map((q) => q * QUARTER_SECONDS);
 }

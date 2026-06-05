@@ -20,7 +20,7 @@ const VIEWS: Record<TimesheetMode, { note: string; Component: ComponentType<Time
     Component: SummaryTimesheet,
   },
   individual: {
-    note: 'One row per entry',
+    note: 'One row per entry, with times · same-code neighbours combined, rounded to 15 min',
     Component: IndividualTimesheet,
   },
 };

@@ -1,6 +1,6 @@
 'use client';
 
-import { useMemo, useState } from 'react';
+import { useMemo } from 'react';
 import {
   billingTagsOf,
   startOfWeekMonday,
@@ -8,6 +8,7 @@ import {
   roundQuartersPreservingTotal,
 } from '@/lib/calc';
 import type { TimesheetViewProps } from './types';
+import CopyButton from './CopyButton';
 
 const DAY_LABELS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
 const DAY_MS = 24 * 3600 * 1000;
@@ -205,28 +206,5 @@ export default function SummaryTimesheet({
         </tfoot>
       </table>
     </div>
-  );
-}
-
-function CopyButton({ text }: { text: string }) {
-  const [copied, setCopied] = useState(false);
-  const copy = async () => {
-    try {
-      await navigator.clipboard.writeText(text);
-      setCopied(true);
-      setTimeout(() => setCopied(false), 1400);
-    } catch {
-      /* clipboard blocked (e.g. insecure context) — silently ignore */
-    }
-  };
-  return (
-    <button
-      className={`ts-copy ${copied ? 'copied' : ''}`}
-      onClick={copy}
-      aria-label="Copy description"
-      title="Copy description"
-    >
-      {copied ? '✓' : '⧉'}
-    </button>
   );
 }

@@ -27,6 +27,7 @@ import {
   fmtTimeOfDay,
   BREAK_AFTER_HOURS,
   WEEKLY_HOURS,
+  MAX_BILLABLE_HOURS,
 } from '@/lib/calc';
 
 const SNOOZE_MS = 15 * 60_000;
@@ -152,6 +153,7 @@ export default function Page() {
     running: boolean;
     dur: number;
     missingTag: boolean;
+    tooLong: boolean;
   };
   const timelines = useMemo(() => {
     const empty = { today: [] as TLItem[], yesterday: [] as TLItem[] };
@@ -190,6 +192,7 @@ export default function Page() {
       for (const e of dayEntries) {
         if (e.projectId !== settings.projectId) continue;
         const scheduled = !e.running && e.stopMs > liveCap;
+        const dur = Math.max(0, (e.stopMs - e.startMs) / 1000);
         items.push({
           key: `e${e.id}`,
           kind: scheduled ? 'scheduled' : 'project',
@@ -197,8 +200,9 @@ export default function Page() {
           startMs: e.startMs,
           stopMs: e.stopMs,
           running: e.running,
-          dur: Math.max(0, (e.stopMs - e.startMs) / 1000),
+          dur,
           missingTag: !hasBillingTag(e.tags),
+          tooLong: dur > MAX_BILLABLE_HOURS * 3600,
         });
       }
 
@@ -219,6 +223,7 @@ export default function Page() {
           running: isToday && b.b >= liveCap,
           dur: (b.b - b.a) / 1000,
           missingTag: false,
+          tooLong: false,
         });
       }
 
@@ -232,6 +237,7 @@ export default function Page() {
           running: false,
           dur: g.seconds,
           missingTag: false,
+          tooLong: false,
         });
       }
 
@@ -606,6 +612,14 @@ export default function Page() {
                               <span
                                 className="tag-warn"
                                 title="No billing tag — add one in Toggl"
+                              >
+                                ⚠
+                              </span>
+                            )}
+                            {h.tooLong && (
+                              <span
+                                className="tag-warn"
+                                title="Longer than 4h — can't be billed individually; split it in Toggl"
                               >
                                 ⚠
                               </span>

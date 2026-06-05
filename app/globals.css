@@ -1007,3 +1007,89 @@ body:has(.ts-page) {
   color: var(--green);
   border-color: var(--green);
 }
+
+/* ---------- Individual timesheet ---------- */
+/* The individual view is a list of day sections rather than one grid, so it
+   scrolls as a flex column of cards instead of a single table. */
+.ind-scroll {
+  display: flex;
+  flex-direction: column;
+  gap: clamp(12px, 2vmin, 18px);
+  padding: clamp(12px, 2vmin, 18px);
+}
+.ind-day {
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  overflow: hidden;
+  background: var(--bg);
+}
+.ind-day-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 14px;
+  background: var(--card2);
+  border-bottom: 1px solid var(--line);
+}
+.ind-day-name {
+  font-weight: 700;
+}
+.ind-day-total {
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  color: var(--accent-soft);
+}
+.ind-table thead th {
+  position: static; /* not sticky inside a per-day card */
+}
+.ind-table th,
+.ind-table td {
+  border-right: none;
+}
+.ind-time {
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+  color: var(--muted);
+  width: 1%;
+}
+.ind-hours {
+  white-space: nowrap;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  width: 1%;
+}
+.ind-code {
+  white-space: normal;
+  overflow-wrap: anywhere;
+  font-weight: 600;
+}
+.ind-desc {
+  color: var(--muted);
+  line-height: 1.35;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+.ind-th-time,
+.ind-th-hours,
+.ind-th-code,
+.ind-th-copy {
+  white-space: nowrap;
+}
+.ind-empty {
+  color: var(--muted);
+  opacity: 0.5;
+}
+.ind-copy {
+  width: 1%;
+  text-align: right;
+}
+.ind-grand {
+  align-self: flex-end;
+  padding: 4px 6px 0;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+.ind-grand strong {
+  color: var(--accent-soft);
+}
