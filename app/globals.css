@@ -486,6 +486,8 @@ body {
   align-items: baseline;
 }
 .hist-desc {
+  flex: 1 1 auto;
+  min-width: 0;
   font-size: clamp(12px, 1.7vmin, 14px);
   font-weight: 600;
   overflow: hidden;
@@ -808,4 +810,200 @@ body {
   place-items: center;
   color: var(--muted);
   font-size: 16px;
+}
+
+/* ---------- Topbar actions / nav ---------- */
+.topbar-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex: 0 0 auto;
+}
+.navbtn {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  background: var(--card);
+  border: 1px solid var(--line);
+  color: var(--text);
+  height: clamp(40px, 5.4vmin, 52px);
+  padding: 0 clamp(12px, 1.8vmin, 18px);
+  border-radius: 14px;
+  font-size: clamp(13px, 1.7vmin, 15px);
+  font-weight: 600;
+  text-decoration: none;
+  transition: background 0.15s, border-color 0.15s, transform 0.1s;
+}
+.navbtn:hover {
+  background: var(--card2);
+  border-color: var(--accent);
+}
+.navbtn:active {
+  transform: scale(0.97);
+}
+.navbtn-icon {
+  font-size: clamp(15px, 2vmin, 18px);
+  line-height: 1;
+}
+@media (max-width: 560px) {
+  .navbtn-text {
+    display: none;
+  }
+}
+
+/* ---------- Missing-billing-tag warning ---------- */
+/* On the dashboard timeline it's a quiet, *non-amber* nudge: visible but not
+   alarming. On the timesheet the same idea turns amber to demand a fix. */
+.tag-warn {
+  flex: 0 0 auto;
+  color: var(--accent-soft);
+  font-size: clamp(12px, 1.6vmin, 14px);
+  cursor: help;
+}
+.tag-warn.amber {
+  color: var(--amber);
+  font-weight: 700;
+  cursor: help;
+}
+
+/* ---------- Timesheet page ---------- */
+.ts-page {
+  min-height: 100vh;
+  min-height: 100dvh;
+  display: flex;
+  flex-direction: column;
+  padding: clamp(14px, 2.4vmin, 28px);
+  gap: clamp(12px, 2vmin, 20px);
+}
+/* The timesheet, unlike the single-screen dashboard, may exceed the viewport —
+   allow the page (and the table) to scroll. */
+body:has(.ts-page) {
+  overflow: auto;
+}
+.ts-scroll {
+  flex: 1;
+  overflow: auto;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: var(--card);
+}
+.ts-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: clamp(12px, 1.6vmin, 14px);
+}
+.ts-table th,
+.ts-table td {
+  border-bottom: 1px solid var(--line);
+  border-right: 1px solid var(--line);
+  text-align: left;
+  vertical-align: top;
+  padding: 10px 12px;
+}
+.ts-table thead th {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  background: var(--card2);
+  color: var(--muted);
+  font-weight: 600;
+  white-space: nowrap;
+}
+.ts-corner {
+  left: 0;
+  z-index: 3 !important;
+}
+.ts-day-head {
+  text-align: center;
+}
+.ts-total-head {
+  text-align: right;
+}
+/* Sticky first column so the billing tag stays visible while scrolling days. */
+.ts-tag {
+  position: sticky;
+  left: 0;
+  z-index: 1;
+  background: var(--card2);
+  font-weight: 600;
+  width: 160px;
+  max-width: 200px;
+  white-space: normal;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+.ts-cell {
+  min-width: 150px;
+}
+.ts-empty {
+  text-align: center;
+  color: var(--muted);
+  opacity: 0.5;
+}
+.ts-cell-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+.ts-dur {
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+.ts-desc {
+  margin-top: 5px;
+  color: var(--muted);
+  line-height: 1.35;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+.ts-rowtotal,
+.ts-coltotal {
+  text-align: right;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+.ts-row-warn .ts-tag {
+  background: rgba(245, 158, 11, 0.12);
+}
+.tag-warn.amber {
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+.ts-table tfoot td,
+.ts-table tfoot th {
+  position: sticky;
+  bottom: 0;
+  background: var(--card2);
+  border-top: 2px solid var(--line);
+  font-weight: 700;
+}
+.ts-table tfoot .ts-tag {
+  z-index: 1;
+}
+.ts-grandtotal {
+  text-align: right;
+  color: var(--accent-soft);
+}
+.ts-copy {
+  flex: 0 0 auto;
+  background: var(--bg);
+  border: 1px solid var(--line);
+  color: var(--text);
+  border-radius: 8px;
+  width: 26px;
+  height: 26px;
+  font-size: 14px;
+  cursor: pointer;
+  display: grid;
+  place-items: center;
+  transition: background 0.15s, border-color 0.15s, color 0.15s;
+}
+.ts-copy:hover {
+  border-color: var(--accent);
+  background: var(--card2);
+}
+.ts-copy.copied {
+  color: var(--green);
+  border-color: var(--green);
 }
