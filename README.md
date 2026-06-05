@@ -129,6 +129,38 @@ as a **red dashed divider** (not a card), so it clearly reads as a hole rather
 than another entry. A summary "Unreported time" card lists both days' gaps with
 per-day totals.
 
+## Billing tags
+
+Every entry on the selected project is expected to carry a **billing tag** — a
+Toggl tag whose name starts with **`D`** (e.g. `D123`) that says which line the
+time bills to.
+
+- On the dashboard's **Today / Yesterday** timeline, any selected-project entry
+  **missing** a billing tag gets a small ⚠ marker. It's deliberately a quiet,
+  **non-amber** nudge — visible, but not alarming.
+- It reads the tag names Toggl already returns on each time entry, so this costs
+  **no extra API calls**.
+
+The prefix lives in [`lib/calc.ts`](lib/calc.ts) as `BILLING_TAG_PREFIX`.
+
+## Timesheet
+
+The **Timesheet** page (top-right button, or `/timesheet`) turns the current
+week into a copy-paste-ready grid for filling in an external timesheet:
+
+- **Days are columns** (Mon–Fri always; Sat/Sun appear only when the project was
+  tracked then) and **billing tags are rows**.
+- Each day's entries for a tag are **combined into one cell**: their durations
+  are summed and their descriptions merged with **duplicates removed**. Cells
+  show **duration only** — no clock times.
+- A **copy button** on each cell copies that combined description to the
+  clipboard. Per-day, per-tag, and grand-total hours are shown.
+- Any entry **without** a billing tag collects in a **"No billing tag"** row,
+  flagged in **amber** ⚠ so you go add the tag in Toggl.
+
+It's built from the same single week fetch the dashboard already makes, so it
+adds **no API requests**.
+
 ## Staying within Toggl's rate limits
 
 Toggl's **Free** plan allows only **30 API requests per hour** (per user, per
