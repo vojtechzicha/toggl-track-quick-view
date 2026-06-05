@@ -18,6 +18,7 @@ const DAY_MS = 24 * 3600 * 1000;
 const QUARTER_MS = QUARTER_SECONDS * 1000;
 const MAX_BILLABLE_SECONDS = MAX_BILLABLE_HOURS * 3600;
 const COMBINE_GAP_SECONDS = 60 * 60; // combine same-code entries only within this gap
+const OVERLAP_MIN_MS = 60 * 1000; // ignore sub-minute touches (display/manual-entry noise)
 
 // Warning buckets — entries that can't become a normal billable line and are
 // surfaced as amber aggregate rows (mirrors the summary view's warning rows).
@@ -88,6 +89,10 @@ function buildDay(dayEntries: DayEntry[]) {
   for (let i = 0; i < sorted.length; i++) {
     for (let j = i + 1; j < sorted.length; j++) {
       if (sorted[j].startMs >= sorted[i].stopMs) break;
+      // Entries that merely touch (or overlap by seconds, which the minute-level
+      // display can't even show) aren't worth flagging — only a real overlap is.
+      const overlapMs = Math.min(sorted[i].stopMs, sorted[j].stopMs) - sorted[j].startMs;
+      if (overlapMs < OVERLAP_MIN_MS) continue;
       overlaps.push(
         `${fmtTimeOfDay(sorted[i].startMs)}–${fmtTimeOfDay(sorted[i].stopMs)} ⨯ ` +
           `${fmtTimeOfDay(sorted[j].startMs)}–${fmtTimeOfDay(sorted[j].stopMs)}`
