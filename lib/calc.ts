@@ -1,21 +1,111 @@
 // Pure calculation helpers for the quick view. Kept free of React / DOM so the
 // logic is easy to reason about (and unit-test) in isolation.
 
-export const WEEKLY_HOURS = 40; // weekly goal both modes aim for
-export const STANDARD_DAY_HOURS = 8; // regular-week Mon–Wed target, and weekend fallback (both modes)
-export const SHORT_MIDWEEK_HOURS = 9; // short-week Mon/Tue/Wed target
-export const REGULAR_THU_FLOOR_HOURS = 7; // regular-week Thursday never below this
-export const SHORT_THU_MIN_HOURS = 8; // short-week Thursday clamp floor
-export const SHORT_THU_MAX_HOURS = 9; // short-week Thursday clamp ceiling
-export const FRIDAY_RESERVE_HOURS = 5; // short-week Thursday leaves this much for Friday
-export const FRIDAY_MIN_HOURS = 5; // Friday target never below this (both modes)
-export const BREAK_AFTER_HOURS = 4.5; // remind to take a break after this much
+// ---- Weekly workload model ----
+// The whole targets model is tuned around a baseline 40h week. Every hour value
+// below is expressed at that baseline and scaled linearly by weeklyHours / 40
+// (see resolveTargets), so a shorter (or longer) week keeps the exact same shape
+// — e.g. a 20h week becomes an even 4/4/4/4/4 or a short 4.5/4.5/4.5/4/2.5. Two
+// of these values are also directly user-overridable via WeekConfig: the Friday
+// floor ("minimal target working day") and the timesheet cap ("maximal
+// individually billed timesheet"). When their override is null they fall back to
+// the proportional default.
+export const BASELINE_WEEKLY_HOURS = 40; // the week these base values were tuned for
+export const DEFAULT_WEEKLY_HOURS = 40; // default for a fresh install
+
+// Baseline (40h-week) hour values — private; always read through resolveTargets.
+const BASE_STANDARD_DAY_HOURS = 8; // regular-week Mon–Wed, and weekend fallback (= week / 5)
+const BASE_SHORT_MIDWEEK_HOURS = 9; // short-week Mon/Tue/Wed target
+const BASE_REGULAR_THU_FLOOR_HOURS = 7; // regular-week Thursday never below this
+const BASE_SHORT_THU_MIN_HOURS = 8; // short-week Thursday clamp floor
+const BASE_SHORT_THU_MAX_HOURS = 9; // short-week Thursday clamp ceiling
+const BASE_FRIDAY_RESERVE_HOURS = 5; // short-week Thursday leaves this much for Friday
+const BASE_FRIDAY_MIN_HOURS = 5; // Friday target floor (both modes) — overridable
+const BASE_MAX_DAILY_TARGET_HOURS = 12; // clamp so a bad week can't demand 16h
+const BASE_MAX_BILLABLE_HOURS = 4; // a single billable line item can't exceed this — overridable
+
+// Fixed thresholds — deliberately NOT scaled by the weekly load. The break
+// reminder is an ergonomic limit (you shouldn't work this long straight no
+// matter the week's size); the others are detection/rounding granularities.
+export const BREAK_AFTER_HOURS = 4.5; // remind to take a break after this much continuous work
 export const BREAK_GAP_MINUTES = 10; // a gap >= this counts as a real break
-export const MAX_DAILY_TARGET_HOURS = 12; // clamp so a bad week can't demand 16h
 export const UNREPORTED_MIN_MINUTES = 1; // ignore gaps shorter than this as noise
 
 const HOUR = 3600;
 const MS = 1000;
+
+/**
+ * The user-facing workload settings that drive every target. `weeklyHours` is
+ * the master dial that scales the whole model. The two override values default
+ * (when null) to their proportional value, but once set they stay at the
+ * absolute hours given — they do not move when weeklyHours later changes.
+ */
+export interface WeekConfig {
+  weeklyHours: number;
+  maxBillableHours: number | null; // null → proportional default
+  minWorkingDayHours: number | null; // null → proportional default (the Friday floor)
+}
+
+export const DEFAULT_WEEK_CONFIG: WeekConfig = {
+  weeklyHours: DEFAULT_WEEKLY_HOURS,
+  maxBillableHours: null,
+  minWorkingDayHours: null,
+};
+
+/** A baseline (40h-week) hour value scaled to the configured weekly load. */
+function scaleHours(baseHours: number, weeklyHours: number): number {
+  return (baseHours * weeklyHours) / BASELINE_WEEKLY_HOURS;
+}
+
+/** The proportional default for the timesheet cap at a given weekly load. */
+export function defaultMaxBillableHours(weeklyHours: number): number {
+  return scaleHours(BASE_MAX_BILLABLE_HOURS, weeklyHours);
+}
+
+/** The proportional default for the Friday floor at a given weekly load. */
+export function defaultMinWorkingDayHours(weeklyHours: number): number {
+  return scaleHours(BASE_FRIDAY_MIN_HOURS, weeklyHours);
+}
+
+/** Resolved timesheet cap in hours: the override if set, else the proportional default. */
+export function effectiveMaxBillableHours(cfg: WeekConfig): number {
+  return cfg.maxBillableHours ?? defaultMaxBillableHours(cfg.weeklyHours);
+}
+
+/** Resolved Friday floor in hours: the override if set, else the proportional default. */
+export function effectiveMinWorkingDayHours(cfg: WeekConfig): number {
+  return cfg.minWorkingDayHours ?? defaultMinWorkingDayHours(cfg.weeklyHours);
+}
+
+/** Every target threshold the daily/weekly model needs, resolved to seconds. */
+interface ResolvedTargets {
+  weekly: number;
+  standardDay: number;
+  shortMidweek: number;
+  regularThuFloor: number;
+  shortThuMin: number;
+  shortThuMax: number;
+  fridayReserve: number;
+  fridayMin: number;
+  maxDaily: number;
+}
+
+function resolveTargets(cfg: WeekConfig): ResolvedTargets {
+  const w = cfg.weeklyHours;
+  return {
+    weekly: w * HOUR,
+    standardDay: scaleHours(BASE_STANDARD_DAY_HOURS, w) * HOUR,
+    shortMidweek: scaleHours(BASE_SHORT_MIDWEEK_HOURS, w) * HOUR,
+    regularThuFloor: scaleHours(BASE_REGULAR_THU_FLOOR_HOURS, w) * HOUR,
+    shortThuMin: scaleHours(BASE_SHORT_THU_MIN_HOURS, w) * HOUR,
+    shortThuMax: scaleHours(BASE_SHORT_THU_MAX_HOURS, w) * HOUR,
+    // The short-week Thursday reserve scales purely with the weekly load; the
+    // user's "minimal target working day" override governs only the Friday floor.
+    fridayReserve: scaleHours(BASE_FRIDAY_RESERVE_HOURS, w) * HOUR,
+    fridayMin: effectiveMinWorkingDayHours(cfg) * HOUR,
+    maxDaily: scaleHours(BASE_MAX_DAILY_TARGET_HOURS, w) * HOUR,
+  };
+}
 
 /** Raw shape of a Toggl time entry (only the fields we use). */
 export interface TimeEntry {
@@ -159,79 +249,86 @@ export function coveringEntry(
 /**
  * Today's target in seconds.
  *
- * Both modes aim for a 40h week in three stages — Mon–Wed, Thursday, Friday —
- * and a day's target is fixed for the whole day: it depends only on the selected
- * project's hours logged *before* today (Mon 00:00 → today 00:00), so it does not
- * shrink as you work today.
+ * Both modes aim for the configured weekly total in three stages — Mon–Wed,
+ * Thursday, Friday — and a day's target is fixed for the whole day: it depends
+ * only on the selected project's hours logged *before* today (Mon 00:00 → today
+ * 00:00), so it does not shrink as you work today. Every hour figure below is the
+ * 40h-week baseline scaled by weeklyHours / 40 (the Friday floor can be overridden).
  *
  * Regular week (shortFriday = false):
- *   - Mon/Tue/Wed: 8h each.
- *   - Thursday: half of the time remaining to reach 40h, but no less than 7h.
- *   - Friday: whatever remains to reach 40h, but no less than 5h.
+ *   - Mon/Tue/Wed: 8h each (week / 5).
+ *   - Thursday: half of the time remaining to reach the weekly total, never below 7h.
+ *   - Friday: whatever remains to reach the weekly total, but no less than the floor (5h).
  *
  * Short week (shortFriday = true):
  *   - Mon/Tue/Wed: 9h each.
- *   - Thursday: the time remaining to reach 40h minus a reserved 5h for Friday,
- *       clamped to [8h, 9h].
- *   - Friday: whatever remains to reach 40h, but no less than 5h.
+ *   - Thursday: the time remaining minus a reserved 5h for Friday, clamped to [8h, 9h].
+ *   - Friday: whatever remains, but no less than the floor (5h).
  *
- * In both modes the weekend falls back to 8h, and every day is finally clamped
- * to at most 12h so an unusual week stays sane.
+ * In both modes the weekend falls back to the standard day, and every day is
+ * finally clamped to at most 12h (scaled) so an unusual week stays sane.
  */
 export function dailyTargetSeconds(
   now: Date,
   entries: NormEntry[],
   projectId: number,
-  shortFriday: boolean
+  shortFriday: boolean,
+  cfg: WeekConfig
 ): number {
+  const t = resolveTargets(cfg);
   const day = now.getDay();
-  const max = MAX_DAILY_TARGET_HOURS * HOUR;
+  const max = t.maxDaily;
 
   if (day === 1 || day === 2 || day === 3) {
-    const midweek = shortFriday ? SHORT_MIDWEEK_HOURS : STANDARD_DAY_HOURS;
-    return midweek * HOUR;
+    return shortFriday ? t.shortMidweek : t.standardDay;
   }
 
   if (day === 4 || day === 5) {
     const weekStart = startOfWeekMonday(now).getTime();
     const todayStart = startOfDay(now).getTime();
     const loggedSoFar = projectSecondsInRange(entries, projectId, weekStart, todayStart);
-    const remaining = WEEKLY_HOURS * HOUR - loggedSoFar;
+    const remaining = t.weekly - loggedSoFar;
 
     if (day === 4) {
       const target = shortFriday
-        ? clamp(remaining - FRIDAY_RESERVE_HOURS * HOUR, SHORT_THU_MIN_HOURS * HOUR, SHORT_THU_MAX_HOURS * HOUR)
-        : Math.max(remaining / 2, REGULAR_THU_FLOOR_HOURS * HOUR);
+        ? clamp(remaining - t.fridayReserve, t.shortThuMin, t.shortThuMax)
+        : Math.max(remaining / 2, t.regularThuFloor);
       return clamp(target, 0, max);
     }
 
-    // Friday (both modes): whatever's left to reach 40h, floored at 5h.
-    const target = Math.max(remaining, FRIDAY_MIN_HOURS * HOUR);
+    // Friday (both modes): whatever's left to reach the weekly total, floored.
+    const target = Math.max(remaining, t.fridayMin);
     return clamp(target, 0, max);
   }
 
-  return STANDARD_DAY_HOURS * HOUR; // weekend
+  return t.standardDay; // weekend
 }
 
 /**
  * The fixed, nominal target for a weekday assuming every day hits its goal —
- * i.e. the plain 40h plan (regular 8/8/8/8/8, short 9/9/9/8/5). Friday is fixed
- * (8h regular, 5h short) and Thursday is "the rest" (8h in both). Used to show a
- * stable target for days that haven't happened yet, where the adaptive
- * dailyTargetSeconds would otherwise swing to the clamp for want of logged time.
+ * i.e. the plain weekly plan (regular 8/8/8/8/8, short 9/9/9/8/5, all scaled).
+ * Friday is fixed (standard day regular, floor short) and Thursday is "the rest"
+ * (standard day regular, short floor). Used to show a stable target for days that
+ * haven't happened yet, where the adaptive dailyTargetSeconds would otherwise
+ * swing to the clamp for want of logged time.
  */
-export function plannedTargetSeconds(dayOfWeek: number, shortFriday: boolean): number {
+export function plannedTargetSeconds(
+  dayOfWeek: number,
+  shortFriday: boolean,
+  cfg: WeekConfig
+): number {
+  const t = resolveTargets(cfg);
   switch (dayOfWeek) {
     case 1: // Mon
     case 2: // Tue
     case 3: // Wed
-      return (shortFriday ? SHORT_MIDWEEK_HOURS : STANDARD_DAY_HOURS) * HOUR;
-    case 4: // Thu — the rest, which nets to 8h in both the regular and short plan
-      return (shortFriday ? SHORT_THU_MIN_HOURS : STANDARD_DAY_HOURS) * HOUR;
+      return shortFriday ? t.shortMidweek : t.standardDay;
+    case 4: // Thu — the rest, which nets to the standard day in both plans
+      return shortFriday ? t.shortThuMin : t.standardDay;
     case 5: // Fri — fixed
-      return (shortFriday ? FRIDAY_MIN_HOURS : STANDARD_DAY_HOURS) * HOUR;
+      return shortFriday ? t.fridayMin : t.standardDay;
     default: // weekend fallback
-      return STANDARD_DAY_HOURS * HOUR;
+      return t.standardDay;
   }
 }
 
@@ -341,7 +438,7 @@ export function unreportedGaps(
 }
 
 export const QUARTER_SECONDS = 15 * 60; // timesheet rounding granularity
-export const MAX_BILLABLE_HOURS = 4; // a single billable line item can't exceed this
+// The billable cap is per-config now; see effectiveMaxBillableHours / WeekConfig.
 
 /**
  * Round a set of second-durations to whole 15-minute units so that the rounded
@@ -383,6 +480,11 @@ export function roundQuartersPreservingTotal(
     out[order[k].i] += 1;
   }
   return out.map((q) => q * QUARTER_SECONDS);
+}
+
+/** Compact hours label, e.g. 40 → "40h", 37.5 → "37.5h", 2.25 → "2.25h". */
+export function fmtHoursLabel(hours: number): string {
+  return `${Number(hours.toFixed(2))}h`;
 }
 
 /** Duration as decimal hours, e.g. 30000s → "8.33h" (for the timesheet). */

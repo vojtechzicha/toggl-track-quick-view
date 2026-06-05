@@ -23,7 +23,7 @@ import {
   Project,
 } from '@/lib/toggl';
 import type { SettingsValue } from '@/components/SettingsPanel';
-import { TimeEntry, startOfDay, startOfWeekMonday } from '@/lib/calc';
+import { TimeEntry, startOfDay, startOfWeekMonday, DEFAULT_WEEKLY_HOURS } from '@/lib/calc';
 
 const LS_KEY = 'tqv.settings.v1';
 const CACHE_KEY = 'tqv.cache.v1';
@@ -43,6 +43,9 @@ export const DEFAULTS: StoredSettings = {
   projectId: null,
   projectName: '',
   shortFriday: false,
+  weeklyHours: DEFAULT_WEEKLY_HOURS,
+  maxBillableHours: null,
+  minWorkingDayHours: null,
   refreshSec: DEFAULT_REFRESH_SEC,
   timesheetMode: 'summary',
 };

@@ -8,7 +8,7 @@ import SummaryTimesheet from '@/components/timesheet/SummaryTimesheet';
 import IndividualTimesheet from '@/components/timesheet/IndividualTimesheet';
 import type { TimesheetViewProps } from '@/components/timesheet/types';
 import { useToggl } from '@/lib/useToggl';
-import { startOfWeekMonday } from '@/lib/calc';
+import { startOfWeekMonday, effectiveMaxBillableHours } from '@/lib/calc';
 
 const DAY_MS = 24 * 3600 * 1000;
 
@@ -94,6 +94,7 @@ export default function TimesheetPage() {
             nowMs={nowMs}
             projectId={settings.projectId}
             projectName={settings.projectName}
+            maxBillableHours={effectiveMaxBillableHours(settings)}
           />
         )}
 
@@ -113,6 +114,9 @@ export default function TimesheetPage() {
             projectId: settings.projectId,
             projectName: settings.projectName,
             shortFriday: settings.shortFriday,
+            weeklyHours: settings.weeklyHours,
+            maxBillableHours: settings.maxBillableHours,
+            minWorkingDayHours: settings.minWorkingDayHours,
             refreshSec: settings.refreshSec,
             timesheetMode: settings.timesheetMode,
           }}

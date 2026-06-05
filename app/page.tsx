@@ -25,9 +25,9 @@ import {
   fmtHM,
   fmtClock,
   fmtTimeOfDay,
+  fmtHoursLabel,
   BREAK_AFTER_HOURS,
-  WEEKLY_HOURS,
-  MAX_BILLABLE_HOURS,
+  effectiveMaxBillableHours,
 } from '@/lib/calc';
 
 const SNOOZE_MS = 15 * 60_000;
@@ -75,7 +75,7 @@ export default function Page() {
     const dayEnd = dayStart + 24 * 3600 * 1000;
 
     const trackedToday = projectSecondsInRange(norm, settings.projectId, dayStart, nowMs);
-    const target = dailyTargetSeconds(now, norm, settings.projectId, settings.shortFriday);
+    const target = dailyTargetSeconds(now, norm, settings.projectId, settings.shortFriday, settings);
     const remaining = Math.max(0, target - trackedToday);
     const fraction = target > 0 ? trackedToday / target : 1;
 
@@ -138,7 +138,14 @@ export default function Page() {
       breakAtMs,
       nextMilestone,
     };
-  }, [entries, nowMs, settings.projectId, settings.shortFriday]);
+  }, [
+    entries,
+    nowMs,
+    settings.projectId,
+    settings.shortFriday,
+    settings.weeklyHours,
+    settings.minWorkingDayHours,
+  ]);
 
   // Day timelines for the side panel (no extra API calls — both days come from
   // the same week fetch). Selected-project entries are listed individually and
@@ -160,6 +167,7 @@ export default function Page() {
     if (!nowMs) return empty;
     const norm = normalize(entries, nowMs);
     const dayMs = 24 * 3600 * 1000;
+    const maxBillSec = effectiveMaxBillableHours(settings) * 3600;
 
     const build = (dayStart: number, isToday: boolean): TLItem[] => {
       const dayEnd = dayStart + dayMs;
@@ -202,7 +210,7 @@ export default function Page() {
           running: e.running,
           dur,
           missingTag: !hasBillingTag(e.tags),
-          tooLong: dur > MAX_BILLABLE_HOURS * 3600,
+          tooLong: dur > maxBillSec,
         });
       }
 
@@ -251,7 +259,7 @@ export default function Page() {
       today: build(todayStart, true),
       yesterday: build(yesterdayStart, false),
     };
-  }, [entries, nowMs, settings.projectId]);
+  }, [entries, nowMs, settings.projectId, settings.weeklyHours, settings.maxBillableHours]);
 
   // Week summary for the side panel: logged vs target for each weekday. Mon–Fri
   // always show; Sat/Sun appear only when the selected project was tracked then.
@@ -267,7 +275,8 @@ export default function Page() {
       new Date(todayStart),
       norm,
       settings.projectId,
-      settings.shortFriday
+      settings.shortFriday,
+      settings
     );
     const todayLogged = projectSecondsInRange(norm, settings.projectId, todayStart, nowMs);
     const shortfall = Math.max(0, todayTarget - todayLogged);
@@ -305,12 +314,13 @@ export default function Page() {
       const isFuture = dayStart > todayStart;
       const target =
         isFuture && beforeThursday
-          ? plannedTargetSeconds(date.getDay(), settings.shortFriday)
+          ? plannedTargetSeconds(date.getDay(), settings.shortFriday, settings)
           : dailyTargetSeconds(
               date,
               isFuture ? projected : norm,
               settings.projectId,
-              settings.shortFriday
+              settings.shortFriday,
+              settings
             );
       days.push({
         key: dayStart,
@@ -325,7 +335,14 @@ export default function Page() {
     const totalLogged = days.reduce((s, d) => s + d.logged, 0);
     const totalScheduled = days.reduce((s, d) => s + d.scheduled, 0);
     return { days, totalLogged, totalScheduled, projected: totalLogged + totalScheduled };
-  }, [entries, nowMs, settings.projectId, settings.shortFriday]);
+  }, [
+    entries,
+    nowMs,
+    settings.projectId,
+    settings.shortFriday,
+    settings.weeklyHours,
+    settings.minWorkingDayHours,
+  ]);
 
   // Unreported time (no entry at all) for the side card — today and yesterday.
   const unreported = useMemo(() => {
@@ -359,6 +376,7 @@ export default function Page() {
   const needsPassword = serverManaged === true && passwordRequired && !authed;
 
   const done = view ? view.remaining <= 0 : false;
+  const maxBillableLabel = fmtHoursLabel(effectiveMaxBillableHours(settings));
   const timeline = dayTab === 'today' ? timelines.today : timelines.yesterday;
   const budgetClass =
     reqThisHour >= HOURLY_LIMIT ? 'over' : reqThisHour >= HOURLY_LIMIT - 6 ? 'warn' : '';
@@ -370,7 +388,8 @@ export default function Page() {
           <div className="brand">
             <h1>{settings.projectName || 'Toggl Quick View'}</h1>
             <p>
-              {settings.shortFriday ? 'Short week · 40h goal' : 'Regular week · 40h goal'}
+              {settings.shortFriday ? 'Short week' : 'Regular week'} ·{' '}
+              {fmtHoursLabel(settings.weeklyHours)} goal
               {' · '}
               {new Date(nowMs || Date.now()).toLocaleDateString(undefined, {
                 weekday: 'long',
@@ -529,7 +548,8 @@ export default function Page() {
                   {weekSummary.totalScheduled > 0 && (
                     <div className="week-proj">
                       <div className="week-proj-main">
-                        Projected <strong>{fmtHM(weekSummary.projected)}</strong> / {WEEKLY_HOURS}h
+                        Projected <strong>{fmtHM(weekSummary.projected)}</strong> /{' '}
+                        {fmtHoursLabel(settings.weeklyHours)}
                       </div>
                       <div className="week-proj-sub">
                         <span>{fmtHM(weekSummary.totalLogged)} worked</span>
@@ -619,7 +639,7 @@ export default function Page() {
                             {h.tooLong && (
                               <span
                                 className="tag-warn"
-                                title="Longer than 4h — can't be billed individually; split it in Toggl"
+                                title={`Longer than ${maxBillableLabel} — can't be billed individually; split it in Toggl`}
                               >
                                 ⚠
                               </span>
@@ -672,6 +692,9 @@ export default function Page() {
             projectId: settings.projectId,
             projectName: settings.projectName,
             shortFriday: settings.shortFriday,
+            weeklyHours: settings.weeklyHours,
+            maxBillableHours: settings.maxBillableHours,
+            minWorkingDayHours: settings.minWorkingDayHours,
             refreshSec: settings.refreshSec,
             timesheetMode: settings.timesheetMode,
           }}

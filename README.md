@@ -39,7 +39,8 @@ npm run dev      # http://localhost:3000
 
 Then open Settings (⚙), paste your API token from
 [track.toggl.com/profile](https://track.toggl.com/profile) (bottom of the page),
-click **Connect**, pick your project, and optionally enable **Short Friday**.
+click **Connect**, pick your project, and optionally enable **Short Friday** or
+adjust **Hours worked per week** (40h by default) for a part-time commitment.
 
 ## Deploying to Vercel
 
@@ -84,11 +85,18 @@ Security notes:
 
 ## The targets model
 
+The whole model aims for a configurable weekly total — **Hours worked per week**
+in Settings, **40h** by default. Every figure below is the 40h-week baseline; set
+the weekly hours lower (a part-time project) or higher and _all_ targets, floors
+and caps rescale linearly. For example a **20h** week becomes an even **4h/day**,
+or a short week of `4.5 / 4.5 / 4.5 / 4 / 2.5`. The break reminder is deliberately
+**not** scaled (see below).
+
 ### Standard (Short Friday off)
 
-A flat **8h** target every day.
+A flat target every day of **week ÷ 5** (8h at 40h).
 
-### Short Friday on (40h / week)
+### Short Friday on (40h / week shown; scales with the weekly total)
 
 | Day     | Target                                                                  |
 | ------- | ----------------------------------------------------------------------- |
@@ -98,7 +106,22 @@ A flat **8h** target every day.
 | Sat/Sun | 8h (fallback)                                                           |
 
 Thursday and Friday adapt to what you actually logged earlier in the week, so an
-over- or under-run mid-week is absorbed sensibly. Both are clamped to ≤ 12h.
+over- or under-run mid-week is absorbed sensibly. Both are clamped to ≤ 12h (also
+scaled).
+
+### Advanced overrides
+
+Two values under **Advanced targets** in Settings can be pinned independently of
+the weekly figure. Each pre-fills with its proportional default; leave it blank to
+keep auto-scaling, or type a value to fix it (it then stays put when you later
+change the weekly hours):
+
+- **Maximal individually billed timesheet** — the longest a single entry can be
+  and still bill as one line (4h at 40h). Longer entries are flagged to split.
+- **Minimal target working day** — the Friday floor: once the week is nearly done,
+  the day's target never drops below this (5h at 40h), so a stray hour isn't worth
+  a trip in. (The short-week Thursday reserve still scales purely with the weekly
+  total, so the default shape is unchanged.)
 
 ## Break detection
 
@@ -265,6 +288,15 @@ a number sets an explicit interval (clamped to a 30 s minimum).
 
 ## Tunable constants
 
-All thresholds live at the top of [`lib/calc.ts`](lib/calc.ts):
-`WEEKLY_HOURS`, `MIDWEEK_TARGET_HOURS`, `DESIRED_FRIDAY_HOURS`,
-`BREAK_AFTER_HOURS`, `BREAK_GAP_MINUTES`, `UNREPORTED_MIN_MINUTES`, etc.
+The workload thresholds live at the top of [`lib/calc.ts`](lib/calc.ts) as
+private `BASE_*` values tuned for a **40h** baseline (`BASELINE_WEEKLY_HOURS`).
+They are read through `resolveTargets(cfg)`, which scales each one by
+`weeklyHours / 40` from the user's `WeekConfig` (weekly hours plus the two
+optional overrides). The Friday floor and the billable cap resolve through
+`effectiveMinWorkingDayHours` / `effectiveMaxBillableHours` (override if set,
+else the proportional default).
+
+The fixed, deliberately **un-scaled** thresholds stay exported:
+`BREAK_AFTER_HOURS` (ergonomic — same regardless of the week's size),
+`BREAK_GAP_MINUTES`, `UNREPORTED_MIN_MINUTES`, and the timesheet's
+`QUARTER_SECONDS` rounding granularity.
