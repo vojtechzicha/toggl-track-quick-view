@@ -220,6 +220,11 @@ body {
   stroke-linecap: round;
   transition: stroke-dashoffset 0.6s ease, stroke 0.4s ease;
 }
+/* Scheduled (planned) arc: a fainter band sitting just outside the worked arc. */
+.ring-sched {
+  opacity: 0.38;
+  stroke-width: 10;
+}
 .ring-center {
   position: absolute;
   inset: 0;
@@ -245,6 +250,9 @@ body {
 .ring-center .of {
   font-size: clamp(11px, 1.6vmin, 15px);
   color: var(--muted);
+}
+.ring-center .of-sched {
+  color: var(--accent-soft);
 }
 
 /* ---------- Single next-milestone time ---------- */
@@ -555,18 +563,26 @@ body {
   opacity: 0.5;
 }
 .week-proj {
-  font-size: clamp(11px, 1.5vmin, 13px);
-  color: var(--muted);
   margin: -2px 0 10px;
   font-variant-numeric: tabular-nums;
 }
-.week-proj strong {
+.week-proj-main {
+  font-size: clamp(11px, 1.5vmin, 13px);
+  color: var(--muted);
+  white-space: nowrap;
+}
+.week-proj-main strong {
   color: var(--text);
   font-weight: 700;
 }
 .week-proj-sub {
+  margin-top: 1px;
+  font-size: clamp(10px, 1.35vmin, 12px);
   color: var(--muted);
   opacity: 0.85;
+}
+.week-proj-sub span {
+  white-space: nowrap;
 }
 
 /* ---------- Unreported-time card ---------- */

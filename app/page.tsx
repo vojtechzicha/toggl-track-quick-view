@@ -750,10 +750,24 @@ export default function Page() {
               <>
                 <StatusBadge view={view} />
 
-                <ProgressRing fraction={view.fraction} color={ringColor}>
+                <ProgressRing
+                  fraction={view.fraction}
+                  color={ringColor}
+                  projectedFraction={
+                    view.target > 0
+                      ? (view.trackedToday + view.scheduledLater) / view.target
+                      : 1
+                  }
+                  scheduledColor="var(--accent-soft)"
+                >
                   <div className="clock">{fmtClock(view.trackedToday)}</div>
                   <div className="pct">{Math.round(view.fraction * 100)}%</div>
-                  <div className="of">of {fmtHM(view.target)} target</div>
+                  <div className="of">
+                    of {fmtHM(view.target)} target
+                    {view.scheduledLater > 0 && (
+                      <span className="of-sched"> · +{fmtHM(view.scheduledLater)} scheduled</span>
+                    )}
+                  </div>
                 </ProgressRing>
 
                 {view.nextMilestone ? (
@@ -856,12 +870,13 @@ export default function Page() {
                   <div className="side-title">This week</div>
                   {weekSummary.totalScheduled > 0 && (
                     <div className="week-proj">
-                      Projected <strong>{fmtHM(weekSummary.projected)}</strong> / {WEEKLY_HOURS}h
-                      <span className="week-proj-sub">
-                        {' '}
-                        ({fmtHM(weekSummary.totalLogged)} worked + {fmtHM(weekSummary.totalScheduled)}{' '}
-                        scheduled)
-                      </span>
+                      <div className="week-proj-main">
+                        Projected <strong>{fmtHM(weekSummary.projected)}</strong> / {WEEKLY_HOURS}h
+                      </div>
+                      <div className="week-proj-sub">
+                        <span>{fmtHM(weekSummary.totalLogged)} worked</span>
+                        <span> · {fmtHM(weekSummary.totalScheduled)} scheduled</span>
+                      </div>
                     </div>
                   )}
                   <div className="week-list">
