@@ -748,9 +748,24 @@ function UnreportedGroup({
 function StatusBadge({
   view,
 }: {
-  view: { trackingProject: boolean; trackingOther: boolean; otherLabel: string; onPlan: boolean };
+  view: {
+    trackingProject: boolean;
+    trackingOther: boolean;
+    otherLabel: string;
+    onPlan: boolean;
+    remaining: number;
+    trackedToday: number;
+    target: number;
+  };
 }) {
   if (view.trackingProject) {
+    if (view.remaining <= 0 && view.target > 0) {
+      return (
+        <span className="badge live overtime">
+          <span className="dot" /> 🏁 Over target · +{fmtHM(view.trackedToday - view.target)} overtime
+        </span>
+      );
+    }
     return (
       <span className="badge live">
         <span className="dot" /> Tracking now
