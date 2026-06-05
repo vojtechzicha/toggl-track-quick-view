@@ -112,12 +112,14 @@ export default function SettingsPanel({
   const handleSave = () => {
     const proj = projects.find((p) => p.id === projectId);
     const weeklyHours = previewWeekly;
-    // An empty (or unparseable) advanced field is "auto"; otherwise clamp the
-    // override to a quarter-hour within [STEP, weeklyHours].
-    const parseOverride = (s: string): number | null => {
+    // An empty (or unparseable) advanced field is "auto" (null); otherwise clamp
+    // the override to a quarter-hour within [min, weeklyHours]. The Friday floor
+    // may be set to 0 ("no floor — show whatever's actually left, even nothing"),
+    // but the billable cap keeps a quarter-hour minimum (a 0h cap is meaningless).
+    const parseOverride = (s: string, min: number): number | null => {
       const n = parseFloat(s);
       if (s.trim() === '' || !Number.isFinite(n)) return null;
-      return clampQuarter(n, STEP, weeklyHours);
+      return clampQuarter(n, min, weeklyHours);
     };
     onSave({
       // In server-managed mode the token always stays empty so the proxy uses
@@ -127,8 +129,8 @@ export default function SettingsPanel({
       projectName: proj?.name ?? initial.projectName,
       shortFriday,
       weeklyHours,
-      maxBillableHours: parseOverride(maxBillStr),
-      minWorkingDayHours: parseOverride(minDayStr),
+      maxBillableHours: parseOverride(maxBillStr, STEP),
+      minWorkingDayHours: parseOverride(minDayStr, 0),
       refreshSec,
       timesheetMode,
     });
@@ -283,7 +285,7 @@ export default function SettingsPanel({
               id="min-working-day"
               type="number"
               inputMode="decimal"
-              min={STEP}
+              min={0}
               max={previewWeekly}
               step={STEP}
               value={minDayStr}
@@ -292,8 +294,10 @@ export default function SettingsPanel({
             />
             <p className="hint">
               The Friday floor: once the week is nearly done, the day&apos;s target never drops
-              below this (so a stray hour isn&apos;t worth a trip in). Leave blank to auto-scale with
-              the week (currently <strong>{fmtHoursLabel(defaultMinWorkingDayHours(previewWeekly))}</strong>).
+              below this (so a stray hour isn&apos;t worth a trip in). Set <strong>0</strong> for no
+              floor — Friday then shows exactly what&apos;s left, or nothing once you&apos;re over.
+              Leave blank to auto-scale with the week (currently{' '}
+              <strong>{fmtHoursLabel(defaultMinWorkingDayHours(previewWeekly))}</strong>).
             </p>
           </div>
         </details>
