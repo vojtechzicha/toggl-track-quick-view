@@ -748,9 +748,37 @@ function UnreportedGroup({
 function StatusBadge({
   view,
 }: {
-  view: { trackingProject: boolean; trackingOther: boolean; otherLabel: string; onPlan: boolean };
+  view: {
+    trackingProject: boolean;
+    trackingOther: boolean;
+    otherLabel: string;
+    onPlan: boolean;
+    remaining: number;
+    remainingLive: number;
+    scheduledLater: number;
+    trackedToday: number;
+    target: number;
+  };
 }) {
   if (view.trackingProject) {
+    // Worked past the target itself — genuine overtime.
+    if (view.remaining <= 0 && view.target > 0) {
+      return (
+        <span className="badge live overtime">
+          <span className="dot" /> 🏁 Over target · +{fmtHM(view.trackedToday - view.target)} overtime
+        </span>
+      );
+    }
+    // Not over by worked time, but your scheduled-later blocks already cover the
+    // rest of the target — you can leave now even though a break is still queued.
+    if (view.remainingLive <= 0 && view.target > 0) {
+      return (
+        <span className="badge live ready">
+          <span className="dot" /> 🏁 Ready to leave
+          {view.scheduledLater > 0 && ` · ${fmtHM(view.scheduledLater)} scheduled later`}
+        </span>
+      );
+    }
     return (
       <span className="badge live">
         <span className="dot" /> Tracking now
