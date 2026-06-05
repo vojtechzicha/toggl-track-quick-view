@@ -14,17 +14,12 @@ const DAY_MS = 24 * 3600 * 1000;
 
 // One entry per timesheet view. Adding a new view is just another row here plus
 // its component — the shell below stays untouched.
-const VIEWS: Record<
-  TimesheetMode,
-  { title: string; note: string; Component: ComponentType<TimesheetViewProps> }
-> = {
+const VIEWS: Record<TimesheetMode, { note: string; Component: ComponentType<TimesheetViewProps> }> = {
   summary: {
-    title: 'Summary timesheet',
     note: 'Combined per billing tag, rounded to 15 min · copy a cell to paste into your timesheet',
     Component: SummaryTimesheet,
   },
   individual: {
-    title: 'Individual timesheet',
     note: 'One row per entry',
     Component: IndividualTimesheet,
   },
@@ -72,7 +67,7 @@ export default function TimesheetPage() {
       <div className="ts-page">
         <header className="topbar">
           <div className="brand">
-            <h1>{view.title}</h1>
+            <h1>Timesheet</h1>
             <p>
               {settings.projectName || 'No project'}
               {weekRange ? ` · ${weekRange}` : ''}
