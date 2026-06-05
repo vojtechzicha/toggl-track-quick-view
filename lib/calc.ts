@@ -42,6 +42,12 @@ export function billingTagOf(tags?: string[]): string | null {
   return tags.find((t) => t.startsWith(BILLING_TAG_PREFIX)) ?? null;
 }
 
+/** All billing tags (names starting with the prefix) on an entry. */
+export function billingTagsOf(tags?: string[]): string[] {
+  if (!tags) return [];
+  return tags.filter((t) => t.startsWith(BILLING_TAG_PREFIX));
+}
+
 /** True when an entry carries at least one billing tag. */
 export function hasBillingTag(tags?: string[]): boolean {
   return billingTagOf(tags) !== null;
@@ -332,6 +338,11 @@ export function unreportedGaps(
     }
   }
   return gaps;
+}
+
+/** Duration as decimal hours, e.g. 30000s → "8.33h" (for the timesheet). */
+export function fmtHours(seconds: number): string {
+  return `${(Math.max(0, seconds) / 3600).toFixed(2)}h`;
 }
 
 export function fmtHM(seconds: number): string {

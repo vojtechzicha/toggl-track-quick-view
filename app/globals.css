@@ -926,8 +926,11 @@ body:has(.ts-page) {
   z-index: 1;
   background: var(--card2);
   font-weight: 600;
-  white-space: nowrap;
-  max-width: 220px;
+  width: 160px;
+  max-width: 200px;
+  white-space: normal;
+  overflow-wrap: anywhere;
+  word-break: break-word;
 }
 .ts-cell {
   min-width: 150px;
@@ -960,8 +963,12 @@ body:has(.ts-page) {
   font-weight: 700;
   font-variant-numeric: tabular-nums;
 }
-.ts-row-untagged .ts-tag {
+.ts-row-warn .ts-tag {
   background: rgba(245, 158, 11, 0.12);
+}
+.tag-warn.amber {
+  white-space: normal;
+  overflow-wrap: anywhere;
 }
 .ts-table tfoot td,
 .ts-table tfoot th {
