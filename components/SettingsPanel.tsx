@@ -2,6 +2,12 @@
 
 import { useState } from 'react';
 import type { Project } from '@/lib/toggl';
+import {
+  DEFAULT_WEEKLY_HOURS,
+  defaultMaxBillableHours,
+  defaultMinWorkingDayHours,
+  fmtHoursLabel,
+} from '@/lib/calc';
 
 export type TimesheetMode = 'summary' | 'individual';
 
@@ -10,8 +16,28 @@ export interface SettingsValue {
   projectId: number | null;
   projectName: string;
   shortFriday: boolean;
+  // The master weekly target (hours). Scales the whole targets model; default 40.
+  weeklyHours: number;
+  // Advanced overrides. null = follow the weekly value proportionally; a number =
+  // that absolute hours value, which stays put when weeklyHours later changes.
+  maxBillableHours: number | null;
+  minWorkingDayHours: number | null;
   refreshSec: number;
   timesheetMode: TimesheetMode;
+}
+
+const WEEKLY_MIN = 1;
+const WEEKLY_MAX = 80;
+const STEP = 0.25; // 15-minute granularity for every hours field
+
+/** Round to the nearest quarter-hour and keep it within [min, max]. */
+function clampQuarter(n: number, min: number, max: number): number {
+  return Math.min(max, Math.max(min, Math.round(n / STEP) * STEP));
+}
+
+/** A compact numeric label without a trailing "h", e.g. 4 → "4", 2.5 → "2.5". */
+function numLabel(n: number): string {
+  return String(Number(n.toFixed(2)));
 }
 
 // Each option's implied requests/hour, so the user can see the budget impact
@@ -59,11 +85,40 @@ export default function SettingsPanel({
   const [refreshSec, setRefreshSec] = useState(initial.refreshSec);
   const [timesheetMode, setTimesheetMode] = useState<TimesheetMode>(initial.timesheetMode);
 
+  // Hours fields are kept as raw strings so a half-typed value (e.g. "3.") never
+  // snaps mid-edit; they're parsed and clamped on save. An empty advanced field
+  // means "auto" (null) — it then follows the weekly value proportionally.
+  const [weeklyStr, setWeeklyStr] = useState(numLabel(initial.weeklyHours));
+  const [maxBillStr, setMaxBillStr] = useState(
+    initial.maxBillableHours === null ? '' : numLabel(initial.maxBillableHours)
+  );
+  const [minDayStr, setMinDayStr] = useState(
+    initial.minWorkingDayHours === null ? '' : numLabel(initial.minWorkingDayHours)
+  );
+  const [showAdvanced, setShowAdvanced] = useState(
+    initial.maxBillableHours !== null || initial.minWorkingDayHours !== null
+  );
+
   const tokenConnected = projects.length > 0;
   const showProjects = serverManaged || tokenConnected;
 
+  // The weekly value currently being edited (clamped), used to live-preview the
+  // proportional defaults shown as placeholders in the advanced fields.
+  const parsedWeekly = parseFloat(weeklyStr);
+  const previewWeekly = Number.isFinite(parsedWeekly)
+    ? clampQuarter(parsedWeekly, WEEKLY_MIN, WEEKLY_MAX)
+    : DEFAULT_WEEKLY_HOURS;
+
   const handleSave = () => {
     const proj = projects.find((p) => p.id === projectId);
+    const weeklyHours = previewWeekly;
+    // An empty (or unparseable) advanced field is "auto"; otherwise clamp the
+    // override to a quarter-hour within [STEP, weeklyHours].
+    const parseOverride = (s: string): number | null => {
+      const n = parseFloat(s);
+      if (s.trim() === '' || !Number.isFinite(n)) return null;
+      return clampQuarter(n, STEP, weeklyHours);
+    };
     onSave({
       // In server-managed mode the token always stays empty so the proxy uses
       // the server's TOGGL_API_TOKEN.
@@ -71,6 +126,9 @@ export default function SettingsPanel({
       projectId,
       projectName: proj?.name ?? initial.projectName,
       shortFriday,
+      weeklyHours,
+      maxBillableHours: parseOverride(maxBillStr),
+      minWorkingDayHours: parseOverride(minDayStr),
       refreshSec,
       timesheetMode,
     });
@@ -161,7 +219,11 @@ export default function SettingsPanel({
         <div className="toggle">
           <div className="t-text">
             <strong>Short week</strong>
-            <span>Front-load the week: 9h Mon–Wed for a lighter Friday. Off keeps an even 8h. Both aim for 40h/week.</span>
+            <span>
+              Front-load the week: {fmtHoursLabel((9 * previewWeekly) / 40)} Mon–Wed for a lighter
+              Friday. Off keeps an even {fmtHoursLabel(previewWeekly / 5)}. Both aim for{' '}
+              {fmtHoursLabel(previewWeekly)}/week.
+            </span>
           </div>
           <label className="switch">
             <input
@@ -172,6 +234,69 @@ export default function SettingsPanel({
             <span className="slider" />
           </label>
         </div>
+
+        <div className="field">
+          <label htmlFor="weekly-hours">Hours worked per week</label>
+          <input
+            id="weekly-hours"
+            type="number"
+            inputMode="decimal"
+            min={WEEKLY_MIN}
+            max={WEEKLY_MAX}
+            step={STEP}
+            value={weeklyStr}
+            onChange={(e) => setWeeklyStr(e.target.value)}
+          />
+          <p className="hint">
+            The whole week&apos;s target. Defaults to 40h; set it lower for a part-time project (or
+            higher) and every target, floor and cap rescales proportionally — e.g. a 20h week
+            becomes an even 4h/day. The break reminder is unaffected.
+          </p>
+        </div>
+
+        <details className="advanced" open={showAdvanced} onToggle={(e) => setShowAdvanced((e.target as HTMLDetailsElement).open)}>
+          <summary>Advanced targets</summary>
+
+          <div className="field">
+            <label htmlFor="max-billable">Maximal individually billed timesheet</label>
+            <input
+              id="max-billable"
+              type="number"
+              inputMode="decimal"
+              min={STEP}
+              max={previewWeekly}
+              step={STEP}
+              value={maxBillStr}
+              placeholder={numLabel(defaultMaxBillableHours(previewWeekly))}
+              onChange={(e) => setMaxBillStr(e.target.value)}
+            />
+            <p className="hint">
+              A single entry longer than this can&apos;t be billed as one line — the timesheet flags
+              it to split in Toggl. Leave blank to auto-scale with the week (currently{' '}
+              <strong>{fmtHoursLabel(defaultMaxBillableHours(previewWeekly))}</strong>).
+            </p>
+          </div>
+
+          <div className="field">
+            <label htmlFor="min-working-day">Minimal target working day</label>
+            <input
+              id="min-working-day"
+              type="number"
+              inputMode="decimal"
+              min={STEP}
+              max={previewWeekly}
+              step={STEP}
+              value={minDayStr}
+              placeholder={numLabel(defaultMinWorkingDayHours(previewWeekly))}
+              onChange={(e) => setMinDayStr(e.target.value)}
+            />
+            <p className="hint">
+              The Friday floor: once the week is nearly done, the day&apos;s target never drops
+              below this (so a stray hour isn&apos;t worth a trip in). Leave blank to auto-scale with
+              the week (currently <strong>{fmtHoursLabel(defaultMinWorkingDayHours(previewWeekly))}</strong>).
+            </p>
+          </div>
+        </details>
 
         {cacheInterval !== null ? (
           <div className="field">

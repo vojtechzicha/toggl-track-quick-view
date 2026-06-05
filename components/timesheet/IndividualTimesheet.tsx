@@ -5,10 +5,10 @@ import {
   billingTagsOf,
   startOfWeekMonday,
   fmtHours,
+  fmtHoursLabel,
   fmtTimeOfDay,
   roundQuartersPreservingTotal,
   QUARTER_SECONDS,
-  MAX_BILLABLE_HOURS,
 } from '@/lib/calc';
 import type { TimesheetViewProps } from './types';
 import CopyButton from './CopyButton';
@@ -16,7 +16,6 @@ import CopyButton from './CopyButton';
 const DAY_LABELS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
 const DAY_MS = 24 * 3600 * 1000;
 const QUARTER_MS = QUARTER_SECONDS * 1000;
-const MAX_BILLABLE_SECONDS = MAX_BILLABLE_HOURS * 3600;
 const COMBINE_GAP_SECONDS = 60 * 60; // combine same-code entries only within this gap
 const OVERLAP_MIN_MS = 60 * 1000; // ignore sub-minute touches (display/manual-entry noise)
 
@@ -24,7 +23,7 @@ const OVERLAP_MIN_MS = 60 * 1000; // ignore sub-minute touches (display/manual-e
 // surfaced as amber aggregate rows (mirrors the summary view's warning rows).
 const UNTAGGED = 'untagged'; // no billing tag
 const MULTIPLE = 'multiple'; // more than one billing tag — ambiguous
-const TOOLONG = 'toolong'; // a single entry longer than 4h — can't be billed individually
+const TOOLONG = 'toolong'; // a single entry longer than the cap — can't be billed individually
 
 /** A raw selected-project entry for one day, normalised to ms bounds. */
 interface DayEntry {
@@ -51,11 +50,16 @@ interface Row {
   groupStartMs: number; // first raw start, used to anchor the display time
 }
 
-const WARN_LABEL: Record<WarnKind, string> = {
-  [UNTAGGED]: 'No billing tag',
-  [MULTIPLE]: 'Multiple billing tags',
-  [TOOLONG]: 'Too long to bill individually (> 4h)',
-};
+function warnLabel(kind: WarnKind, maxBillableHours: number): string {
+  switch (kind) {
+    case UNTAGGED:
+      return 'No billing tag';
+    case MULTIPLE:
+      return 'Multiple billing tags';
+    case TOOLONG:
+      return `Too long to bill individually (> ${fmtHoursLabel(maxBillableHours)})`;
+  }
+}
 
 function mergeDesc(into: string[], desc: string) {
   const text = desc.trim();
@@ -73,13 +77,13 @@ function snapQuarter(ms: number): number {
  * Build one day's rows from its selected-project entries.
  *
  * Entries are classified, then consecutive same-code entries are combined while
- * the gap stays within an hour and the combined duration stays billable (<= 4h).
- * Durations are rounded to 15-minute units preserving the day total (biased so a
- * tiny entry surfaces rather than vanishing; a billable line still at zero is
- * dropped). Finally each billable line's start is snapped to the nearest quarter
- * and packed forward so the displayed blocks never overlap.
+ * the gap stays within an hour and the combined duration stays billable (within
+ * the cap). Durations are rounded to 15-minute units preserving the day total
+ * (biased so a tiny entry surfaces rather than vanishing; a billable line still
+ * at zero is dropped). Finally each billable line's start is snapped to the
+ * nearest quarter and packed forward so the displayed blocks never overlap.
  */
-function buildDay(dayEntries: DayEntry[]) {
+function buildDay(dayEntries: DayEntry[], maxBillableSeconds: number) {
   const sorted = [...dayEntries].sort((a, b) => a.startMs - b.startMs);
 
   // Overlaps in the raw data (you can't bill two entries running at once). Sorted
@@ -134,7 +138,7 @@ function buildDay(dayEntries: DayEntry[]) {
       addWarn(MULTIPLE, e);
       continue;
     }
-    if (e.seconds > MAX_BILLABLE_SECONDS) {
+    if (e.seconds > maxBillableSeconds) {
       flush();
       addWarn(TOOLONG, e); // a single oversize entry can't be split
       continue;
@@ -145,7 +149,7 @@ function buildDay(dayEntries: DayEntry[]) {
       current !== null &&
       current.code === code &&
       e.startMs - lastStopMs <= COMBINE_GAP_SECONDS * 1000 &&
-      current.seconds + e.seconds <= MAX_BILLABLE_SECONDS;
+      current.seconds + e.seconds <= maxBillableSeconds;
 
     if (canCombine && current) {
       current.seconds += e.seconds;
@@ -204,18 +208,20 @@ function buildDay(dayEntries: DayEntry[]) {
 /**
  * Individual view: the week as a list of days, each listing its selected-project
  * entries on their own rows with start–end time, rounded hours and description.
- * Consecutive same-code entries combine (within an hour, capped at 4h); tag and
- * length problems surface as amber warning rows, and raw-time overlaps are
- * flagged so they can be fixed in Toggl.
+ * Consecutive same-code entries combine (within an hour, capped at the billable
+ * limit); tag and length problems surface as amber warning rows, and raw-time
+ * overlaps are flagged so they can be fixed in Toggl.
  */
 export default function IndividualTimesheet({
   entries,
   nowMs,
   projectId,
   projectName,
+  maxBillableHours,
 }: TimesheetViewProps) {
   const week = useMemo(() => {
     if (!nowMs) return null;
+    const maxBillableSeconds = maxBillableHours * 3600;
     const weekStart = startOfWeekMonday(new Date(nowMs)).getTime();
     const weekEnd = weekStart + 7 * DAY_MS;
 
@@ -239,12 +245,16 @@ export default function IndividualTimesheet({
     }
 
     const days = byDay
-      .map((dayEntries, dayIdx) => ({ dayIdx, dateMs: weekStart + dayIdx * DAY_MS, ...buildDay(dayEntries) }))
+      .map((dayEntries, dayIdx) => ({
+        dayIdx,
+        dateMs: weekStart + dayIdx * DAY_MS,
+        ...buildDay(dayEntries, maxBillableSeconds),
+      }))
       .filter((d) => d.rows.length > 0 || d.overlaps.length > 0);
 
     const grandTotal = days.reduce((s, d) => s + d.total, 0);
     return { days, grandTotal };
-  }, [entries, nowMs, projectId]);
+  }, [entries, nowMs, projectId, maxBillableHours]);
 
   if (!week || week.days.length === 0) {
     return (
@@ -287,7 +297,7 @@ export default function IndividualTimesheet({
                         <td className="ind-hours">{fmtHours(row.rounded)}</td>
                         <td className="ind-code" colSpan={2}>
                           <span className="tag-warn amber" title="Fix this entry in Toggl">
-                            ⚠ {WARN_LABEL[row.warn as WarnKind]}
+                            ⚠ {warnLabel(row.warn as WarnKind, maxBillableHours)}
                           </span>
                           {desc && <div className="ind-desc">{desc}</div>}
                         </td>

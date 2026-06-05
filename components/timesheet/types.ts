@@ -10,4 +10,6 @@ export interface TimesheetViewProps {
   nowMs: number;
   projectId: number;
   projectName: string;
+  // The resolved per-line billable cap in hours (override or proportional default).
+  maxBillableHours: number;
 }

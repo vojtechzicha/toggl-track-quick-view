@@ -699,6 +699,7 @@ body {
 }
 .field input[type='text'],
 .field input[type='password'],
+.field input[type='number'],
 .field select {
   background: var(--bg);
   border: 1px solid var(--line);
@@ -712,6 +713,43 @@ body {
 .field select:focus {
   outline: none;
   border-color: var(--accent);
+}
+
+/* Collapsible "Advanced targets" block in the settings panel. */
+.advanced {
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  padding: 4px 14px;
+  background: var(--bg);
+}
+.advanced > summary {
+  cursor: pointer;
+  list-style: none;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--muted);
+  padding: 8px 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.advanced > summary::-webkit-details-marker {
+  display: none;
+}
+.advanced > summary::before {
+  content: '▸';
+  font-size: 11px;
+  transition: transform 0.15s ease;
+}
+.advanced[open] > summary::before {
+  transform: rotate(90deg);
+}
+.advanced > summary:focus-visible {
+  outline: none;
+  color: var(--text);
+}
+.advanced .field {
+  margin: 10px 0 14px;
 }
 .toggle {
   display: flex;
