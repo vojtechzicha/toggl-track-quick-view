@@ -41,11 +41,15 @@ const DEFAULT_REFRESH_SEC = 180; // ~20 requests/hour, well under the limit
 
 export interface StoredSettings extends SettingsValue {
   workspaceId: number | null;
+  // The Toggl account's display name, captured at connect time. Used as the
+  // default "name" on exports; not directly user-edited (see exportName).
+  accountName: string;
 }
 
 export const DEFAULTS: StoredSettings = {
   token: '',
   workspaceId: null,
+  accountName: '',
   selectedProjects: [],
   groupName: '',
   shortFriday: false,
@@ -55,6 +59,7 @@ export const DEFAULTS: StoredSettings = {
   billingTagPrefix: DEFAULT_BILLING_TAG_PREFIX,
   refreshSec: DEFAULT_REFRESH_SEC,
   timesheetMode: 'summary',
+  exportName: '',
 };
 
 function loadSettings(): StoredSettings {
@@ -82,6 +87,7 @@ function loadSettings(): StoredSettings {
 interface Cache {
   workspaceId: number;
   projects: Project[];
+  accountName?: string;
   at: number;
 }
 function loadCache(): Cache | null {
@@ -276,6 +282,7 @@ export function useToggl(): UseToggl {
               ...prev,
               token,
               workspaceId: c.workspaceId,
+              accountName: c.accountName ?? prev.accountName,
               selectedProjects: enrichSelected(prev.selectedProjects, c.projects),
             }));
             setReady(true);
@@ -294,9 +301,10 @@ export function useToggl(): UseToggl {
           ...prev,
           token,
           workspaceId,
+          accountName: me.fullname ?? prev.accountName,
           selectedProjects: enrichSelected(prev.selectedProjects, sorted),
         }));
-        saveCache({ workspaceId, projects: sorted, at: Date.now() });
+        saveCache({ workspaceId, projects: sorted, accountName: me.fullname, at: Date.now() });
         setReady(true);
       } catch (e) {
         setReady(false);

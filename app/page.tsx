@@ -734,6 +734,7 @@ export default function Page() {
             billingTagPrefix: settings.billingTagPrefix,
             refreshSec: settings.refreshSec,
             timesheetMode: settings.timesheetMode,
+            exportName: settings.exportName,
           }}
           projects={projects}
           serverManaged={!!serverManaged}
