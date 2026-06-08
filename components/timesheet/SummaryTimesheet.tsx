@@ -3,7 +3,6 @@
 import { useMemo } from 'react';
 import {
   billingTagsOf,
-  startOfWeek,
   fmtHours,
   roundQuartersPreservingTotal,
 } from '@/lib/calc';
@@ -42,16 +41,16 @@ interface RowMeta {
  */
 export default function SummaryTimesheet({
   entries,
+  weekStart,
   nowMs,
   projects,
   multi,
   billingTagPrefix,
 }: TimesheetViewProps) {
   const grid = useMemo(() => {
-    if (!nowMs) return null;
+    if (!weekStart) return null;
     const ids = new Set(projects.map((p) => p.id));
     const nameById = new Map(projects.map((p) => [p.id, p.name]));
-    const weekStart = startOfWeek(new Date(nowMs)).getTime();
     const weekEnd = weekStart + 7 * DAY_MS;
 
     const cells = new Map<string, Cell>(); // key: `${dayIdx}|${rowKey}`
@@ -148,12 +147,12 @@ export default function SummaryTimesheet({
     const grandTotal = rowTotals.reduce((s, v) => s + v, 0);
 
     return { dayCols, rows, rowMeta, cells, rounded, dayTotals, rowTotals, grandTotal };
-  }, [entries, nowMs, projects, billingTagPrefix]);
+  }, [entries, weekStart, nowMs, projects, billingTagPrefix]);
 
   if (!grid || grid.rows.length === 0) {
     return (
       <div className="center-msg" style={{ height: 'auto' }}>
-        No entries this week yet.
+        No entries for this week.
       </div>
     );
   }

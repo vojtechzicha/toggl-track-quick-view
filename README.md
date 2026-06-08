@@ -187,6 +187,22 @@ Which view it opens is chosen in **Settings → Timesheet view**:
 Both views are built from the same single week fetch the dashboard already makes,
 so they add **no API requests**.
 
+### Previous weeks
+
+Click **Previous weeks** (top-left of the timesheet) to step back in time. You
+first get a plain **list of recent weeks** — choosing this list costs **no API
+requests**. Only when you **select a week** is that week's data fetched (once),
+and the chosen view renders it with the **same layout and warnings** as the live
+current week.
+
+A past week is a **frozen snapshot**: it does **not** auto-refresh. A **↻
+Refresh** button re-fetches on demand, and — when the shared server cache is on —
+deliberately **bypasses** it to pull genuinely live data. Already-fetched weeks
+are kept **in memory for the session** (no `localStorage`), so re-opening one
+costs nothing; reloading the page clears them. While you're viewing a past week
+the live current-week poll is **paused**, so reading history never spends from
+the hourly budget — it resumes when you click **This week**.
+
 ### Summary timesheet
 
 - **Days are columns** (Mon–Fri always; Sat/Sun appear only when the project was

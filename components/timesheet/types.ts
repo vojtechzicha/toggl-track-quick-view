@@ -13,6 +13,12 @@ import type { SelectedProject } from '@/components/SettingsPanel';
  */
 export interface TimesheetViewProps {
   entries: TimeEntry[];
+  // Saturday 00:00 (local, ms) of the week being shown. Explicit rather than
+  // derived from `nowMs` so the same view renders any week — the current one
+  // (live) or a selected past one.
+  weekStart: number;
+  // Real wall-clock now (ms), used only to clamp a still-running entry's stop.
+  // A past week has none, so it has no effect there.
   nowMs: number;
   projects: SelectedProject[];
   // True when more than one project is selected → show the project-name prefix.

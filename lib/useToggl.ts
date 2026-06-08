@@ -162,6 +162,15 @@ export interface UseToggl {
   effectiveRefreshSec: number;
   showSettings: boolean;
   setShowSettings: React.Dispatch<React.SetStateAction<boolean>>;
+  // Pause the live current-week poll (e.g. while viewing a historical week, so
+  // we don't keep spending the budget on data that isn't on screen).
+  livePollPaused: boolean;
+  setLivePollPaused: React.Dispatch<React.SetStateAction<boolean>>;
+  // General on-demand fetch of any date range as raw entries — the primitive
+  // behind the historical timesheet (and, later, the weekly/monthly exports).
+  // Forced fetches bypass the shared server cache; budget is metered the same
+  // way the live poll is (skipped when a plain cache hit is expected).
+  loadRange: (startISO: string, endISO: string, opts?: { force?: boolean }) => Promise<TimeEntry[]>;
 }
 
 export function useToggl(): UseToggl {
@@ -186,6 +195,7 @@ export function useToggl(): UseToggl {
   const [entries, setEntries] = useState<TimeEntry[]>([]);
   const [nowMs, setNowMs] = useState(0);
   const [reqThisHour, setReqThisHour] = useState(0);
+  const [livePollPaused, setLivePollPaused] = useState(false);
 
   const lastFetchRef = useRef(0);
   const backoffUntilRef = useRef(0);
@@ -332,7 +342,7 @@ export function useToggl(): UseToggl {
   // running timer). Self-scheduling so we can pause while the tab is hidden and
   // back off on rate limits; the live counter ticks locally in between.
   useEffect(() => {
-    if (!ready) return;
+    if (!ready || livePollPaused) return;
     let cancelled = false;
     let timer: ReturnType<typeof setTimeout>;
     const intervalMs = Math.max(30, pollIntervalSec) * 1000;
@@ -409,7 +419,22 @@ export function useToggl(): UseToggl {
       clearTimeout(timer);
       document.removeEventListener('visibilitychange', onVisible);
     };
-  }, [ready, settings.token, pollIntervalSec, cacheEnabled]);
+  }, [ready, livePollPaused, settings.token, pollIntervalSec, cacheEnabled]);
+
+  // On-demand fetch of an arbitrary range (historical timesheet; future exports).
+  // A plain (unforced) fetch in shared-cache mode is normally a server cache hit,
+  // so — like the live poll — it isn't charged to the per-device meter; a forced
+  // refresh always hits Toggl, so it is. AuthRequired bubbles up so the caller can
+  // re-gate; other errors surface as thrown TogglErrors.
+  const loadRange = useCallback(
+    async (startISO: string, endISO: string, opts?: { force?: boolean }): Promise<TimeEntry[]> => {
+      const force = opts?.force === true;
+      if (!cacheEnabled || force) setReqThisHour(recordReqs(1));
+      const ent = await getEntries(settings.token, startISO, endISO, { force });
+      return ent ?? [];
+    },
+    [cacheEnabled, settings.token]
+  );
 
   return {
     hydrated,
@@ -435,5 +460,8 @@ export function useToggl(): UseToggl {
     effectiveRefreshSec,
     showSettings,
     setShowSettings,
+    livePollPaused,
+    setLivePollPaused,
+    loadRange,
   };
 }
