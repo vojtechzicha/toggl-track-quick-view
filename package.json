@@ -2,7 +2,7 @@
   "name": "toggl-track-quick-view",
   "version": "0.1.0",
   "private": true,
-  "description": "A single-screen quick view for tracking a work day (configurable weekly target) on one Toggl Track project.",
+  "description": "A single-screen quick view for tracking a work day (configurable weekly target) on one or more Toggl Track projects.",
   "scripts": {
     "dev": "next dev",
     "build": "next build",

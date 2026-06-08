@@ -22,7 +22,7 @@ import {
   login,
   Project,
 } from '@/lib/toggl';
-import type { SettingsValue } from '@/components/SettingsPanel';
+import type { SettingsValue, SelectedProject } from '@/components/SettingsPanel';
 import {
   TimeEntry,
   startOfDay,
@@ -46,8 +46,8 @@ export interface StoredSettings extends SettingsValue {
 export const DEFAULTS: StoredSettings = {
   token: '',
   workspaceId: null,
-  projectId: null,
-  projectName: '',
+  selectedProjects: [],
+  groupName: '',
   shortFriday: false,
   weeklyHours: DEFAULT_WEEKLY_HOURS,
   maxBillableHours: null,
@@ -61,7 +61,18 @@ function loadSettings(): StoredSettings {
   if (typeof window === 'undefined') return DEFAULTS;
   try {
     const raw = window.localStorage.getItem(LS_KEY);
-    return raw ? { ...DEFAULTS, ...JSON.parse(raw) } : DEFAULTS;
+    if (!raw) return DEFAULTS;
+    const parsed = JSON.parse(raw) as Record<string, unknown>;
+    // Migrate the v1 single-project shape ({ projectId, projectName }) to the
+    // selectedProjects array — in place, so every other stored setting survives.
+    if (!parsed.selectedProjects && parsed.projectId != null) {
+      parsed.selectedProjects = [
+        { id: parsed.projectId, name: (parsed.projectName as string) ?? '' },
+      ];
+    }
+    delete parsed.projectId;
+    delete parsed.projectName;
+    return { ...DEFAULTS, ...parsed };
   } catch {
     return DEFAULTS;
   }
@@ -81,6 +92,18 @@ function loadCache(): Cache | null {
     return null;
   }
 }
+/**
+ * Refresh each selected project's denormalised name/color from the freshly loaded
+ * list (names/colors can change in Toggl, and migrated v1 selections have no
+ * color yet). Unknown ids — e.g. an archived project — keep their stored copy.
+ */
+function enrichSelected(selected: SelectedProject[], projects: Project[]): SelectedProject[] {
+  return selected.map((sp) => {
+    const full = projects.find((p) => p.id === sp.id);
+    return full ? { id: full.id, name: full.name, color: full.color } : sp;
+  });
+}
+
 function saveCache(c: Cache) {
   try {
     window.localStorage.setItem(CACHE_KEY, JSON.stringify(c));
@@ -239,7 +262,12 @@ export function useToggl(): UseToggl {
           const c = loadCache();
           if (c && c.projects?.length && Date.now() - c.at < CACHE_TTL) {
             setProjects(c.projects);
-            setSettings((prev) => ({ ...prev, token, workspaceId: c.workspaceId }));
+            setSettings((prev) => ({
+              ...prev,
+              token,
+              workspaceId: c.workspaceId,
+              selectedProjects: enrichSelected(prev.selectedProjects, c.projects),
+            }));
             setReady(true);
             return;
           }
@@ -252,7 +280,12 @@ export function useToggl(): UseToggl {
           .filter((p) => p.active !== false)
           .sort((a, b) => a.name.localeCompare(b.name));
         setProjects(sorted);
-        setSettings((prev) => ({ ...prev, token, workspaceId }));
+        setSettings((prev) => ({
+          ...prev,
+          token,
+          workspaceId,
+          selectedProjects: enrichSelected(prev.selectedProjects, sorted),
+        }));
         saveCache({ workspaceId, projects: sorted, at: Date.now() });
         setReady(true);
       } catch (e) {

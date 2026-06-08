@@ -12,10 +12,25 @@ import {
 
 export type TimesheetMode = 'summary' | 'individual';
 
+/**
+ * A project the user has selected to track. Name and color are denormalised
+ * (copied from the Toggl project list) so chips and timesheet prefixes render
+ * before — or without — a fresh project fetch.
+ */
+export interface SelectedProject {
+  id: number;
+  name: string;
+  color?: string;
+}
+
 export interface SettingsValue {
   token: string;
-  projectId: number | null;
-  projectName: string;
+  // One or more projects that together count as "the project". A single
+  // selection behaves exactly as before; multiple are an advanced option.
+  selectedProjects: SelectedProject[];
+  // Optional label shown as the title when more than one project is selected
+  // (falls back to a generic title + initials chips when blank).
+  groupName: string;
   shortFriday: boolean;
   // The master weekly target (hours). Scales the whole targets model; default 40.
   weeklyHours: number;
@@ -83,7 +98,15 @@ export default function SettingsPanel({
   canClose: boolean;
 }) {
   const [token, setToken] = useState(initial.token);
-  const [projectId, setProjectId] = useState<number | null>(initial.projectId);
+  const [selectedIds, setSelectedIds] = useState<number[]>(
+    initial.selectedProjects.map((p) => p.id)
+  );
+  const [groupName, setGroupName] = useState(initial.groupName);
+  // The multiselect is an advanced affordance: it shows once the user opts in
+  // via "more than one", or whenever more than one project is already selected.
+  // It auto-collapses back to the plain dropdown the moment the selection drops
+  // to a single project.
+  const [multiExpanded, setMultiExpanded] = useState(initial.selectedProjects.length > 1);
   const [shortFriday, setShortFriday] = useState(initial.shortFriday);
   const [refreshSec, setRefreshSec] = useState(initial.refreshSec);
   const [timesheetMode, setTimesheetMode] = useState<TimesheetMode>(initial.timesheetMode);
@@ -108,6 +131,19 @@ export default function SettingsPanel({
   const tokenConnected = projects.length > 0;
   const showProjects = serverManaged || tokenConnected;
 
+  // Show the multiselect once opted into, or whenever more than one is selected.
+  // Staying open while editing is deliberate: collapsing the instant the count
+  // hits one would make it impossible to pick a second project. It returns to the
+  // plain dropdown when Settings is reopened with a single project saved (see the
+  // multiExpanded initial value).
+  const multiMode = multiExpanded || selectedIds.length > 1;
+
+  const toggleProject = (id: number) => {
+    setSelectedIds((prev) =>
+      prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]
+    );
+  };
+
   // The weekly value currently being edited (clamped), used to live-preview the
   // proportional defaults shown as placeholders in the advanced fields.
   const parsedWeekly = parseFloat(weeklyStr);
@@ -116,7 +152,14 @@ export default function SettingsPanel({
     : DEFAULT_WEEKLY_HOURS;
 
   const handleSave = () => {
-    const proj = projects.find((p) => p.id === projectId);
+    // Resolve each selected id to its full {id, name, color} from the loaded list,
+    // falling back to whatever we already had stored (covers an archived project
+    // that no longer appears in the active list).
+    const selectedProjects: SelectedProject[] = selectedIds.map((id) => {
+      const proj = projects.find((p) => p.id === id);
+      if (proj) return { id: proj.id, name: proj.name, color: proj.color };
+      return initial.selectedProjects.find((p) => p.id === id) ?? { id, name: '' };
+    });
     const weeklyHours = previewWeekly;
     // An empty (or unparseable) advanced field is "auto" (null); otherwise clamp
     // the override to a quarter-hour within [min, weeklyHours]. The Friday floor
@@ -131,8 +174,8 @@ export default function SettingsPanel({
       // In server-managed mode the token always stays empty so the proxy uses
       // the server's TOGGL_API_TOKEN.
       token: serverManaged ? '' : token,
-      projectId,
-      projectName: proj?.name ?? initial.projectName,
+      selectedProjects,
+      groupName: selectedProjects.length > 1 ? groupName.trim() : '',
       shortFriday,
       weeklyHours,
       maxBillableHours: parseOverride(maxBillStr, STEP),
@@ -152,7 +195,7 @@ export default function SettingsPanel({
         {serverManaged ? (
           <p className="hint">
             The Toggl API token is configured on the server, so there&apos;s nothing to enter
-            here. Just pick your project below.
+            here. Just pick your project (or projects) below.
           </p>
         ) : (
           <>
@@ -192,19 +235,82 @@ export default function SettingsPanel({
 
         {showProjects && (
           <div className="field">
-            <label htmlFor="project">Project</label>
-            <select
-              id="project"
-              value={projectId ?? ''}
-              onChange={(e) => setProjectId(e.target.value ? Number(e.target.value) : null)}
-            >
-              <option value="">Select a project…</option>
-              {projects.map((p) => (
-                <option key={p.id} value={p.id}>
-                  {p.name}
-                </option>
-              ))}
-            </select>
+            <label htmlFor="project">{multiMode ? 'Projects' : 'Project'}</label>
+            {multiMode ? (
+              <>
+                <div className="proj-checklist">
+                  {projects.map((p) => (
+                    <label key={p.id} className="proj-check">
+                      <input
+                        type="checkbox"
+                        checked={selectedIds.includes(p.id)}
+                        onChange={() => toggleProject(p.id)}
+                      />
+                      {p.color && (
+                        <span className="proj-swatch" style={{ background: p.color }} />
+                      )}
+                      <span className="proj-check-name">{p.name}</span>
+                    </label>
+                  ))}
+                </div>
+                <p className="hint">
+                  Every selected project counts as one — all of them together are
+                  &ldquo;the project&rdquo; for your targets and ring. They stay
+                  separate only in the timesheet, prefixed by project name.
+                </p>
+                <button
+                  type="button"
+                  className="linkbtn"
+                  onClick={() => {
+                    setSelectedIds((prev) => prev.slice(0, 1));
+                    setMultiExpanded(false);
+                  }}
+                >
+                  Back to a single project
+                </button>
+              </>
+            ) : (
+              <>
+                <select
+                  id="project"
+                  value={selectedIds[0] ?? ''}
+                  onChange={(e) =>
+                    setSelectedIds(e.target.value ? [Number(e.target.value)] : [])
+                  }
+                >
+                  <option value="">Select a project…</option>
+                  {projects.map((p) => (
+                    <option key={p.id} value={p.id}>
+                      {p.name}
+                    </option>
+                  ))}
+                </select>
+                <button
+                  type="button"
+                  className="linkbtn"
+                  onClick={() => setMultiExpanded(true)}
+                >
+                  Track more than one project
+                </button>
+              </>
+            )}
+          </div>
+        )}
+
+        {showProjects && multiMode && (
+          <div className="field">
+            <label htmlFor="group-name">Group name (optional)</label>
+            <input
+              id="group-name"
+              type="text"
+              value={groupName}
+              placeholder="e.g. Client work"
+              onChange={(e) => setGroupName(e.target.value)}
+            />
+            <p className="hint">
+              Shown as the title when several projects are tracked together. Leave
+              blank to just show their initials.
+            </p>
           </div>
         )}
 
@@ -364,7 +470,11 @@ export default function SettingsPanel({
               Cancel
             </button>
           )}
-          <button className="btn btn-primary" onClick={handleSave} disabled={!projectId}>
+          <button
+            className="btn btn-primary"
+            onClick={handleSave}
+            disabled={selectedIds.length === 0}
+          >
             Save
           </button>
         </div>

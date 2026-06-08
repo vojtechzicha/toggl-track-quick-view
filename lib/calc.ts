@@ -160,6 +160,18 @@ export interface NormEntry {
   running: boolean;
 }
 
+/**
+ * The set of project ids that count as "the project". Multiple selected projects
+ * behave as one for every tracking/target calculation — there's no distinction
+ * between them here (the per-project split only matters in the timesheet views).
+ */
+export type ProjectSet = ReadonlySet<number>;
+
+/** True when an entry's project (possibly null) is one of the selected ones. */
+function inSet(projectId: number | null, projects: ProjectSet): boolean {
+  return projectId != null && projects.has(projectId);
+}
+
 export function normalize(entries: TimeEntry[], nowMs: number): NormEntry[] {
   return entries
     .map((e) => {
@@ -192,18 +204,18 @@ export function startOfWeekMonday(d: Date): Date {
 }
 
 /**
- * Seconds spent on `projectId` that overlap [fromMs, toMs). Overlap-based so a
- * running entry contributes live time as `toMs` (now) advances.
+ * Seconds spent on any selected project that overlap [fromMs, toMs). Overlap-based
+ * so a running entry contributes live time as `toMs` (now) advances.
  */
 export function projectSecondsInRange(
   entries: NormEntry[],
-  projectId: number,
+  projects: ProjectSet,
   fromMs: number,
   toMs: number
 ): number {
   let total = 0;
   for (const e of entries) {
-    if (e.projectId !== projectId) continue;
+    if (!inSet(e.projectId, projects)) continue;
     const a = Math.max(e.startMs, fromMs);
     const b = Math.min(e.stopMs, toMs);
     if (b > a) total += (b - a) / MS;
@@ -214,7 +226,7 @@ export function projectSecondsInRange(
 /**
  * Project time (seconds) scheduled *strictly after* `nowMs` within [nowMs, untilMs).
  *
- * "Scheduled later" = entries on `projectId` whose start is in the future — work
+ * "Scheduled later" = selected-project entries whose start is in the future — work
  * you've planned but not done yet. An entry that merely *covers* now (started in
  * the past, ends in the future) is deliberately excluded: its remaining tail is
  * live work-in-progress, not separately-bankable scheduled time, and counting it
@@ -222,13 +234,13 @@ export function projectSecondsInRange(
  */
 export function scheduledLaterSeconds(
   entries: NormEntry[],
-  projectId: number,
+  projects: ProjectSet,
   nowMs: number,
   untilMs: number
 ): number {
   let total = 0;
   for (const e of entries) {
-    if (e.projectId !== projectId) continue;
+    if (!inSet(e.projectId, projects)) continue;
     if (e.startMs <= nowMs) continue; // covering-now or already past — not "later"
     const b = Math.min(e.stopMs, untilMs);
     if (b > e.startMs) total += (b - e.startMs) / MS;
@@ -237,19 +249,19 @@ export function scheduledLaterSeconds(
 }
 
 /**
- * The selected-project entry whose span contains `nowMs` but that isn't the live
+ * A selected-project entry whose span contains `nowMs` but that isn't the live
  * running timer — i.e. a pre-entered ("planned") block you're currently inside.
  * Running entries are excluded (normalize() clamps their stop to now, so they
  * never satisfy stop > now) since the live-tracking path already handles those.
  */
 export function coveringEntry(
   entries: NormEntry[],
-  projectId: number,
+  projects: ProjectSet,
   nowMs: number
 ): NormEntry | null {
   return (
     entries.find(
-      (e) => e.projectId === projectId && !e.running && e.startMs <= nowMs && e.stopMs > nowMs
+      (e) => inSet(e.projectId, projects) && !e.running && e.startMs <= nowMs && e.stopMs > nowMs
     ) ?? null
   );
 }
@@ -279,7 +291,7 @@ export function coveringEntry(
 export function dailyTargetSeconds(
   now: Date,
   entries: NormEntry[],
-  projectId: number,
+  projects: ProjectSet,
   shortFriday: boolean,
   cfg: WeekConfig
 ): number {
@@ -294,7 +306,7 @@ export function dailyTargetSeconds(
   if (day === 4 || day === 5) {
     const weekStart = startOfWeekMonday(now).getTime();
     const todayStart = startOfDay(now).getTime();
-    const loggedSoFar = projectSecondsInRange(entries, projectId, weekStart, todayStart);
+    const loggedSoFar = projectSecondsInRange(entries, projects, weekStart, todayStart);
     const remaining = t.weekly - loggedSoFar;
 
     if (day === 4) {
@@ -341,33 +353,35 @@ export function plannedTargetSeconds(
 }
 
 /**
- * How long you've been continuously working on `projectId` right now.
+ * How long you've been continuously working on the selected project(s) right now.
  *
- * Returns `working: false` unless an entry for this project is currently
- * running. The streak is determined purely by *this project's own* coverage:
- * starting from now it walks backwards through the project's entries and ends
- * (i.e. a break is detected) at the first real hole of >= BREAK_GAP_MINUTES.
+ * Returns `working: false` unless a selected-project entry is currently running.
+ * The streak is determined purely by the selected project(s)' own coverage:
+ * starting from now it walks backwards through their entries and ends (i.e. a
+ * break is detected) at the first real hole of >= BREAK_GAP_MINUTES.
  *
- * Entries on other projects are ignored entirely — a *parallel* timesheet that
- * merely overlaps yours is not a break (you never stopped working on this
- * project), and a *sequential* switch to another project already shows up as a
- * hole in this project's coverage, so the gap rule still catches it.
+ * Entries outside the selection are ignored entirely — a *parallel* timesheet
+ * that merely overlaps yours is not a break (you never stopped working on the
+ * project), and a *sequential* switch away already shows up as a hole in the
+ * selected coverage, so the gap rule still catches it. Because the selected
+ * projects pool together, working straight across two of them is one streak.
  */
 export function continuousWorkSeconds(
   entries: NormEntry[],
-  projectId: number,
+  projects: ProjectSet,
   nowMs: number
 ): { working: boolean; seconds: number } {
-  const working = entries.some((e) => e.running && e.projectId === projectId);
+  const working = entries.some((e) => e.running && inSet(e.projectId, projects));
   if (!working) return { working: false, seconds: 0 };
 
   const gapMs = BREAK_GAP_MINUTES * 60 * MS;
 
-  // Walk this project's entries from latest to earliest, extending the streak
-  // back as long as each entry's coverage reaches within gapMs of it. A running
-  // entry is clamped to now by normalize(), so coverage always reaches `nowMs`.
+  // Walk the selected project(s)' entries from latest to earliest, extending the
+  // streak back as long as each entry's coverage reaches within gapMs of it. A
+  // running entry is clamped to now by normalize(), so coverage always reaches
+  // `nowMs`.
   const spans = entries
-    .filter((e) => e.projectId === projectId)
+    .filter((e) => inSet(e.projectId, projects))
     .sort((a, b) => a.startMs - b.startMs);
 
   let streakStart = nowMs;
