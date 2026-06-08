@@ -3,6 +3,7 @@
 import type { ComponentType } from 'react';
 import Link from 'next/link';
 import SettingsPanel, { TimesheetMode } from '@/components/SettingsPanel';
+import ProjectChips from '@/components/ProjectChips';
 import PasswordGate from '@/components/PasswordGate';
 import SummaryTimesheet from '@/components/timesheet/SummaryTimesheet';
 import IndividualTimesheet from '@/components/timesheet/IndividualTimesheet';
@@ -51,6 +52,13 @@ export default function TimesheetPage() {
   const view = VIEWS[settings.timesheetMode];
   const needsPassword = serverManaged === true && passwordRequired && !authed;
 
+  const sel = settings.selectedProjects;
+  const multi = sel.length > 1;
+  const hasProject = sel.length > 0;
+  // Single project: its name. Multiple: the group name, or a generic title with
+  // the initials chips carrying the project identity.
+  const projectTitle = multi ? settings.groupName || 'Multiple projects' : sel[0]?.name || 'No project';
+
   if (!hydrated) {
     return <div className="center-msg">Loading…</div>;
   }
@@ -69,7 +77,8 @@ export default function TimesheetPage() {
           <div className="brand">
             <h1>Timesheet</h1>
             <p>
-              {settings.projectName || 'No project'}
+              {projectTitle}
+              {multi && <ProjectChips projects={sel} className="chips-inline" />}
               {weekRange ? ` · ${weekRange}` : ''}
             </p>
           </div>
@@ -84,7 +93,7 @@ export default function TimesheetPage() {
           </div>
         </header>
 
-        {!settings.projectId ? (
+        {!hasProject ? (
           <div className="center-msg" style={{ height: 'auto' }}>
             Pick a project in settings to build a timesheet.
           </div>
@@ -92,8 +101,8 @@ export default function TimesheetPage() {
           <Body
             entries={entries}
             nowMs={nowMs}
-            projectId={settings.projectId}
-            projectName={settings.projectName}
+            projects={sel}
+            multi={multi}
             maxBillableHours={effectiveMaxBillableHours(settings)}
             billingTagPrefix={settings.billingTagPrefix}
           />
@@ -112,8 +121,8 @@ export default function TimesheetPage() {
         <SettingsPanel
           initial={{
             token: settings.token,
-            projectId: settings.projectId,
-            projectName: settings.projectName,
+            selectedProjects: settings.selectedProjects,
+            groupName: settings.groupName,
             shortFriday: settings.shortFriday,
             weeklyHours: settings.weeklyHours,
             maxBillableHours: settings.maxBillableHours,
@@ -133,7 +142,7 @@ export default function TimesheetPage() {
             setShowSettings(false);
           }}
           onClose={() => setShowSettings(false)}
-          canClose={!!settings.projectId}
+          canClose={hasProject}
         />
       )}
     </>

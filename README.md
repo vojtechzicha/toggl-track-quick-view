@@ -1,7 +1,14 @@
 # toggl-track-quick-view
 
-A single-screen quick view for tracking your work day on **one** Toggl Track
+A single-screen quick view for tracking your work day on a Toggl Track
 client/project. Open it on a spare monitor and see, at a glance:
+
+You normally pick **one** project, but you can track **several at once** — in
+Settings, click _"Track more than one project"_ to multiselect. The selected
+projects then count as a single pool for every target, ring and break
+calculation; they stay distinct only in the timesheet, where each billing tag is
+grouped per project and prefixed with the project name. Tiny initials chips
+(colored by the Toggl project color) flag which projects are in the group.
 
 - **Am I tracking right now?** — a live status badge (this project / another
   project / not tracking).

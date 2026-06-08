@@ -12,8 +12,9 @@ import CopyButton from './CopyButton';
 
 const DAY_LABELS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
 const DAY_MS = 24 * 3600 * 1000;
-// Sentinel row keys for entries that need attention rather than a normal
-// billing line.
+// Sentinel row keys for entries that need attention rather than a normal billing
+// line. These stay global (not split per project) — a tagging problem is the same
+// problem to fix in Toggl whichever project it's on.
 const UNTAGGED = 'untagged'; // no billing tag at all
 const MULTIPLE = 'multiple'; // more than one billing tag — ambiguous
 
@@ -22,27 +23,38 @@ interface Cell {
   seconds: number;
 }
 
+// A normal row is one (project, billing-tag) pair; warning rows are the sentinels.
+interface RowMeta {
+  projectId: number;
+  projectName: string;
+  tag: string;
+}
+
 /**
- * Summary view: the week as a grid of days (columns) × billing tags (rows).
- * Each day's entries for a tag are combined into one cell — durations summed,
- * descriptions merged without repeats — and rounded to 15-minute units so each
- * day's cells still add up to that day's rounded total (no accumulated drift).
+ * Summary view: the week as a grid of days (columns) × rows. A row is normally a
+ * (project, billing-tag) pair — a project is a group of billing tags, so the same
+ * tag under two projects stays on two separate rows, each prefixed by its project
+ * name. With a single project selected the prefix is suppressed. Each day's
+ * entries for a row are combined into one cell — durations summed, descriptions
+ * merged without repeats — and rounded to 15-minute units so each day's cells
+ * still add up to that day's rounded total (no accumulated drift).
  */
 export default function SummaryTimesheet({
   entries,
   nowMs,
-  projectId,
-  projectName,
+  projects,
+  multi,
   billingTagPrefix,
 }: TimesheetViewProps) {
   const grid = useMemo(() => {
     if (!nowMs) return null;
+    const ids = new Set(projects.map((p) => p.id));
+    const nameById = new Map(projects.map((p) => [p.id, p.name]));
     const weekStart = startOfWeekMonday(new Date(nowMs)).getTime();
     const weekEnd = weekStart + 7 * DAY_MS;
 
-    const cells = new Map<string, Cell>(); // key: `${dayIdx}|${tag}`
-    const tagOrder: string[] = []; // billing tags in first-seen order
-    const tagSeen = new Set<string>();
+    const cells = new Map<string, Cell>(); // key: `${dayIdx}|${rowKey}`
+    const rowMeta = new Map<string, RowMeta>(); // rowKey -> meta (normal rows only)
     const dayHasEntries = new Array(7).fill(false);
     let untaggedPresent = false;
     let multiplePresent = false;
@@ -55,7 +67,7 @@ export default function SummaryTimesheet({
     };
 
     for (const e of entries) {
-      if (e.project_id !== projectId) continue;
+      if (e.project_id == null || !ids.has(e.project_id)) continue;
       const startMs = new Date(e.start).getTime();
       if (!Number.isFinite(startMs) || startMs < weekStart || startMs >= weekEnd) continue;
       const dayIdx = Math.floor((startMs - weekStart) / DAY_MS);
@@ -65,8 +77,8 @@ export default function SummaryTimesheet({
       const stopMs = running ? nowMs : new Date(e.stop as string).getTime();
       const seconds = Math.max(0, (stopMs - startMs) / 1000);
 
-      // Which row this entry lands in: its single billing tag, or a warning row
-      // when it has none / more than one (both need fixing in Toggl).
+      // Which row this entry lands in: its (project, single billing tag), or a
+      // warning row when it has none / more than one (both need fixing in Toggl).
       const tags = billingTagsOf(e.tags, billingTagPrefix);
       let rowKey: string;
       if (tags.length === 0) {
@@ -76,10 +88,13 @@ export default function SummaryTimesheet({
         rowKey = MULTIPLE;
         multiplePresent = true;
       } else {
-        rowKey = tags[0];
-        if (!tagSeen.has(rowKey)) {
-          tagSeen.add(rowKey);
-          tagOrder.push(rowKey);
+        rowKey = `p${e.project_id}|${tags[0]}`;
+        if (!rowMeta.has(rowKey)) {
+          rowMeta.set(rowKey, {
+            projectId: e.project_id,
+            projectName: nameById.get(e.project_id) ?? '',
+            tag: tags[0],
+          });
         }
       }
       dayHasEntries[dayIdx] = true;
@@ -100,17 +115,22 @@ export default function SummaryTimesheet({
       if (i < 5 || dayHasEntries[i]) dayCols.push(i);
     }
 
-    // Rows: billing tags (sorted), then the warning rows (multiple, untagged) last.
-    const tagRows = [...tagOrder].sort((a, b) => a.localeCompare(b));
+    // Rows: normal rows grouped by project, then tag (both alphabetical), then the
+    // warning rows (multiple, untagged) last.
+    const tagRows = [...rowMeta.keys()].sort((a, b) => {
+      const ma = rowMeta.get(a)!;
+      const mb = rowMeta.get(b)!;
+      return ma.projectName.localeCompare(mb.projectName) || ma.tag.localeCompare(mb.tag);
+    });
     const rows = [...tagRows];
     if (multiplePresent) rows.push(MULTIPLE);
     if (untaggedPresent) rows.push(UNTAGGED);
 
-    // Round to 15-minute units per day: each billing-tag cell is rounded so the
-    // cells still add up to the day's rounded total (no accumulated drift), with
-    // the rounding error spread evenly across the tags. Totals are then summed
-    // from these rounded cells, so every figure shown is a clean quarter-hour.
-    const rounded = new Map<string, number>(); // key: `${dayIdx}|${tag}`
+    // Round to 15-minute units per day: each cell is rounded so the cells still add
+    // up to the day's rounded total (no accumulated drift), with the rounding error
+    // spread evenly across the rows. Totals are then summed from these rounded
+    // cells, so every figure shown is a clean quarter-hour.
+    const rounded = new Map<string, number>(); // key: `${dayIdx}|${rowKey}`
     for (const d of dayCols) {
       const raw = rows.map((r) => cells.get(`${d}|${r}`)?.seconds ?? 0);
       const adj = roundQuartersPreservingTotal(raw);
@@ -125,13 +145,13 @@ export default function SummaryTimesheet({
     );
     const grandTotal = rowTotals.reduce((s, v) => s + v, 0);
 
-    return { weekStart, dayCols, rows, cells, rounded, dayTotals, rowTotals, grandTotal };
-  }, [entries, nowMs, projectId, billingTagPrefix]);
+    return { dayCols, rows, rowMeta, cells, rounded, dayTotals, rowTotals, grandTotal };
+  }, [entries, nowMs, projects, billingTagPrefix]);
 
   if (!grid || grid.rows.length === 0) {
     return (
       <div className="center-msg" style={{ height: 'auto' }}>
-        No entries on {projectName} this week yet.
+        No entries this week yet.
       </div>
     );
   }
@@ -158,6 +178,7 @@ export default function SummaryTimesheet({
                 : row === MULTIPLE
                 ? 'Multiple billing tags'
                 : null;
+            const meta = grid.rowMeta.get(row);
             return (
               <tr key={row} className={warn ? 'ts-row-warn' : ''}>
                 <th className="ts-tag" scope="row">
@@ -166,7 +187,10 @@ export default function SummaryTimesheet({
                       ⚠ {warn}
                     </span>
                   ) : (
-                    row
+                    <>
+                      {multi && meta && <span className="ts-proj">{meta.projectName}: </span>}
+                      {meta?.tag}
+                    </>
                   )}
                 </th>
                 {grid.dayCols.map((d) => {

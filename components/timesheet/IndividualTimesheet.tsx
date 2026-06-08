@@ -30,6 +30,7 @@ interface DayEntry {
   startMs: number;
   stopMs: number;
   seconds: number;
+  projId: number | null;
   tags?: string[];
   desc: string;
 }
@@ -42,6 +43,7 @@ interface Row {
   kind: 'bill' | 'warn';
   warn?: WarnKind;
   code?: string; // billing tag, for 'bill' rows
+  projId?: number | null; // owning project, for 'bill' rows
   seconds: number; // raw, pre-rounding
   rounded: number; // filled in after rounding
   startMs?: number; // anchored display start (bill rows, after rounding)
@@ -145,9 +147,12 @@ function buildDay(dayEntries: DayEntry[], maxBillableSeconds: number, billingTag
     }
 
     const code = tags[0];
+    // Same billing tag under two different projects stays separate: a project is a
+    // group of billing tags, so they're distinct lines even with an identical code.
     const canCombine =
       current !== null &&
       current.code === code &&
+      current.projId === e.projId &&
       e.startMs - lastStopMs <= COMBINE_GAP_SECONDS * 1000 &&
       current.seconds + e.seconds <= maxBillableSeconds;
 
@@ -159,6 +164,7 @@ function buildDay(dayEntries: DayEntry[], maxBillableSeconds: number, billingTag
         key: `b${e.startMs}`,
         kind: 'bill',
         code,
+        projId: e.projId,
         seconds: e.seconds,
         rounded: 0,
         descs: [],
@@ -215,20 +221,21 @@ function buildDay(dayEntries: DayEntry[], maxBillableSeconds: number, billingTag
 export default function IndividualTimesheet({
   entries,
   nowMs,
-  projectId,
-  projectName,
+  projects,
+  multi,
   maxBillableHours,
   billingTagPrefix,
 }: TimesheetViewProps) {
   const week = useMemo(() => {
     if (!nowMs) return null;
+    const ids = new Set(projects.map((p) => p.id));
     const maxBillableSeconds = maxBillableHours * 3600;
     const weekStart = startOfWeekMonday(new Date(nowMs)).getTime();
     const weekEnd = weekStart + 7 * DAY_MS;
 
     const byDay: DayEntry[][] = Array.from({ length: 7 }, () => []);
     for (const e of entries) {
-      if (e.project_id !== projectId) continue;
+      if (e.project_id == null || !ids.has(e.project_id)) continue;
       const startMs = new Date(e.start).getTime();
       if (!Number.isFinite(startMs) || startMs < weekStart || startMs >= weekEnd) continue;
       const dayIdx = Math.floor((startMs - weekStart) / DAY_MS);
@@ -240,6 +247,7 @@ export default function IndividualTimesheet({
         startMs,
         stopMs,
         seconds: Math.max(0, (stopMs - startMs) / 1000),
+        projId: e.project_id,
         tags: e.tags,
         desc: e.description ?? '',
       });
@@ -255,12 +263,14 @@ export default function IndividualTimesheet({
 
     const grandTotal = days.reduce((s, d) => s + d.total, 0);
     return { days, grandTotal };
-  }, [entries, nowMs, projectId, maxBillableHours, billingTagPrefix]);
+  }, [entries, nowMs, projects, maxBillableHours, billingTagPrefix]);
+
+  const nameById = new Map(projects.map((p) => [p.id, p.name]));
 
   if (!week || week.days.length === 0) {
     return (
       <div className="center-msg" style={{ height: 'auto' }}>
-        No entries on {projectName} this week yet.
+        No entries this week yet.
       </div>
     );
   }
@@ -312,7 +322,12 @@ export default function IndividualTimesheet({
                         {fmtTimeOfDay(row.startMs as number)}–{fmtTimeOfDay(row.endMs as number)}
                       </td>
                       <td className="ind-hours">{fmtHours(row.rounded)}</td>
-                      <td className="ind-code">{row.code}</td>
+                      <td className="ind-code">
+                        {multi && row.projId != null && (
+                          <span className="ts-proj">{nameById.get(row.projId) ?? ''}: </span>
+                        )}
+                        {row.code}
+                      </td>
                       <td className="ind-desc">{desc}</td>
                       <td className="ind-copy">{desc && <CopyButton text={desc} />}</td>
                     </tr>

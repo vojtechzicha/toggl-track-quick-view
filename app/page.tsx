@@ -4,6 +4,7 @@ import { useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
 import ProgressRing from '@/components/ProgressRing';
 import SettingsPanel from '@/components/SettingsPanel';
+import ProjectChips from '@/components/ProjectChips';
 import PasswordGate from '@/components/PasswordGate';
 import { useToggl, HOURLY_LIMIT, fmtInterval } from '@/lib/useToggl';
 import {
@@ -62,35 +63,45 @@ export default function Page() {
   const [snoozeUntil, setSnoozeUntil] = useState(0);
   const [dayTab, setDayTab] = useState<'today' | 'yesterday'>('today');
 
+  // The selected projects together count as "the project". The set drives every
+  // tracking/target calculation (they're indistinguishable there); the array keeps
+  // names/colors for the header chips and the running-entry label.
+  const sel = settings.selectedProjects;
+  const multi = sel.length > 1;
+  const projectIds = useMemo(() => new Set(sel.map((p) => p.id)), [sel]);
+  const nameOf = (id: number | null) =>
+    id != null ? sel.find((p) => p.id === id)?.name ?? '' : '';
+
   // After a successful connection, prompt for a project if none is chosen yet.
   useEffect(() => {
-    if (ready && !settings.projectId) setShowSettings(true);
-  }, [ready, settings.projectId, setShowSettings]);
+    if (ready && projectIds.size === 0) setShowSettings(true);
+  }, [ready, projectIds, setShowSettings]);
 
   const view = useMemo(() => {
-    if (!settings.projectId || !nowMs) return null;
+    if (projectIds.size === 0 || !nowMs) return null;
     const norm = normalize(entries, nowMs);
+    const inSel = (id: number | null) => id != null && projectIds.has(id);
     const now = new Date(nowMs);
     const dayStart = startOfDay(now).getTime();
     const dayEnd = dayStart + 24 * 3600 * 1000;
 
-    const trackedToday = projectSecondsInRange(norm, settings.projectId, dayStart, nowMs);
-    const target = dailyTargetSeconds(now, norm, settings.projectId, settings.shortFriday, settings);
+    const trackedToday = projectSecondsInRange(norm, projectIds, dayStart, nowMs);
+    const target = dailyTargetSeconds(now, norm, projectIds, settings.shortFriday, settings);
     const remaining = Math.max(0, target - trackedToday);
     const fraction = target > 0 ? trackedToday / target : 1;
 
     // Time you've scheduled for later today: counts toward the day's target but is
     // not yet worked, so it lets you stop the live work sooner. The ring is left
     // alone (worked time only); only the live work still required shrinks.
-    const scheduledLater = scheduledLaterSeconds(norm, settings.projectId, nowMs, dayEnd);
+    const scheduledLater = scheduledLaterSeconds(norm, projectIds, nowMs, dayEnd);
     const remainingLive = Math.max(0, remaining - scheduledLater);
     const leaveAtMs = remainingLive > 0 ? nowMs + remainingLive * 1000 : null;
     const coveredByScheduled = remaining > 0 && remainingLive <= 0;
 
     const runningEntry = norm.find((e) => e.running) ?? null;
-    const trackingProject = !!runningEntry && runningEntry.projectId === settings.projectId;
-    const trackingOther = !!runningEntry && runningEntry.projectId !== settings.projectId;
-    const covering = !runningEntry ? coveringEntry(norm, settings.projectId, nowMs) : null;
+    const trackingProject = !!runningEntry && inSel(runningEntry.projectId);
+    const trackingOther = !!runningEntry && !inSel(runningEntry.projectId);
+    const covering = !runningEntry ? coveringEntry(norm, projectIds, nowMs) : null;
     const onPlan = !!covering;
     const coveringRaw = covering ? entries.find((e) => e.id === covering.id) ?? null : null;
     const coveringDesc = coveringRaw?.description?.trim() || '';
@@ -103,7 +114,7 @@ export default function Page() {
       ? Math.max(0, (nowMs - new Date(runningRaw.start).getTime()) / 1000)
       : 0;
 
-    const cont = continuousWorkSeconds(norm, settings.projectId, nowMs);
+    const cont = continuousWorkSeconds(norm, projectIds, nowMs);
     const breakDue = cont.working && cont.seconds >= BREAK_AFTER_HOURS * 3600;
     const timeToBreak = cont.working ? Math.max(0, BREAK_AFTER_HOURS * 3600 - cont.seconds) : 0;
     const breakAtMs = cont.working && !breakDue ? nowMs + timeToBreak * 1000 : null;
@@ -127,6 +138,8 @@ export default function Page() {
       trackingOther,
       otherLabel,
       onPlan,
+      runningProjectId: runningEntry?.projectId ?? null,
+      coveringProjectId: covering?.projectId ?? null,
       coveringDesc,
       coveringEndsMs,
       coveringCountdown,
@@ -141,7 +154,7 @@ export default function Page() {
   }, [
     entries,
     nowMs,
-    settings.projectId,
+    projectIds,
     settings.shortFriday,
     settings.weeklyHours,
     settings.minWorkingDayHours,
@@ -161,6 +174,7 @@ export default function Page() {
     dur: number;
     missingTag: boolean;
     tooLong: boolean;
+    projId: number | null;
   };
   const timelines = useMemo(() => {
     const empty = { today: [] as TLItem[], yesterday: [] as TLItem[] };
@@ -192,13 +206,14 @@ export default function Page() {
 
       const items: TLItem[] = [];
 
+      const inSel = (id: number | null) => id != null && projectIds.has(id);
       const projectCoverage = mergeIntervals(
         dayEntries
-          .filter((e) => e.projectId === settings.projectId)
+          .filter((e) => inSel(e.projectId))
           .map((e) => ({ a: e.startMs, b: e.stopMs }))
       );
       for (const e of dayEntries) {
-        if (e.projectId !== settings.projectId) continue;
+        if (!inSel(e.projectId)) continue;
         const scheduled = !e.running && e.stopMs > liveCap;
         const dur = Math.max(0, (e.stopMs - e.startMs) / 1000);
         items.push({
@@ -211,12 +226,13 @@ export default function Page() {
           dur,
           missingTag: !hasBillingTag(e.tags, settings.billingTagPrefix),
           tooLong: dur > maxBillSec,
+          projId: e.projectId,
         });
       }
 
       const breakSpans = subtractIntervals(
         dayEntries
-          .filter((e) => e.projectId !== settings.projectId)
+          .filter((e) => !inSel(e.projectId))
           .map((e) => ({ a: e.startMs, b: Math.min(e.stopMs, liveCap) })),
         projectCoverage
       );
@@ -232,6 +248,7 @@ export default function Page() {
           dur: (b.b - b.a) / 1000,
           missingTag: false,
           tooLong: false,
+          projId: null,
         });
       }
 
@@ -246,6 +263,7 @@ export default function Page() {
           dur: g.seconds,
           missingTag: false,
           tooLong: false,
+          projId: null,
         });
       }
 
@@ -262,7 +280,7 @@ export default function Page() {
   }, [
     entries,
     nowMs,
-    settings.projectId,
+    projectIds,
     settings.weeklyHours,
     settings.maxBillableHours,
     settings.billingTagPrefix,
@@ -271,8 +289,9 @@ export default function Page() {
   // Week summary for the side panel: logged vs target for each weekday. Mon–Fri
   // always show; Sat/Sun appear only when the selected project was tracked then.
   const weekSummary = useMemo(() => {
-    if (!settings.projectId || !nowMs) return null;
+    if (projectIds.size === 0 || !nowMs) return null;
     const norm = normalize(entries, nowMs);
+    const repId = [...projectIds][0]; // a representative project for the projection
     const dayMs = 24 * 3600 * 1000;
     const weekStart = startOfWeekMonday(new Date(nowMs)).getTime();
     const todayStart = startOfDay(new Date(nowMs)).getTime();
@@ -281,11 +300,11 @@ export default function Page() {
     const todayTarget = dailyTargetSeconds(
       new Date(todayStart),
       norm,
-      settings.projectId,
+      projectIds,
       settings.shortFriday,
       settings
     );
-    const todayLogged = projectSecondsInRange(norm, settings.projectId, todayStart, nowMs);
+    const todayLogged = projectSecondsInRange(norm, projectIds, todayStart, nowMs);
     const shortfall = Math.max(0, todayTarget - todayLogged);
     const projected: NormEntry[] =
       shortfall > 0
@@ -295,7 +314,7 @@ export default function Page() {
               id: -1,
               startMs: todayStart,
               stopMs: todayStart + shortfall * 1000,
-              projectId: settings.projectId,
+              projectId: repId,
               running: false,
             },
           ]
@@ -315,8 +334,8 @@ export default function Page() {
       const dayEnd = dayStart + dayMs;
       const date = new Date(dayStart);
       const isWeekend = i >= 5;
-      const logged = projectSecondsInRange(norm, settings.projectId, dayStart, Math.min(dayEnd, nowMs));
-      const scheduled = projectSecondsInRange(norm, settings.projectId, Math.max(dayStart, nowMs), dayEnd);
+      const logged = projectSecondsInRange(norm, projectIds, dayStart, Math.min(dayEnd, nowMs));
+      const scheduled = projectSecondsInRange(norm, projectIds, Math.max(dayStart, nowMs), dayEnd);
       if (isWeekend && logged === 0 && scheduled === 0) continue; // hide untouched weekend days
       const isFuture = dayStart > todayStart;
       const target =
@@ -325,7 +344,7 @@ export default function Page() {
           : dailyTargetSeconds(
               date,
               isFuture ? projected : norm,
-              settings.projectId,
+              projectIds,
               settings.shortFriday,
               settings
             );
@@ -345,7 +364,7 @@ export default function Page() {
   }, [
     entries,
     nowMs,
-    settings.projectId,
+    projectIds,
     settings.shortFriday,
     settings.weeklyHours,
     settings.minWorkingDayHours,
@@ -393,7 +412,12 @@ export default function Page() {
       <div className="app">
         <header className="topbar">
           <div className="brand">
-            <h1>{settings.projectName || 'Toggl Quick View'}</h1>
+            <h1>
+              {multi
+                ? settings.groupName || 'Toggl Quick View'
+                : sel[0]?.name || 'Toggl Quick View'}
+              {multi && <ProjectChips projects={sel} className="chips-inline" />}
+            </h1>
             <p>
               {settings.shortFriday ? 'Short week' : 'Regular week'} ·{' '}
               {fmtHoursLabel(settings.weeklyHours)} goal
@@ -513,14 +537,16 @@ export default function Page() {
                     <div className="now-desc">
                       {view.currentDescription || '(no description)'}
                     </div>
-                    <div className="now-meta">{settings.projectName}</div>
+                    <div className="now-meta">
+                      {nameOf(view.runningProjectId) || sel[0]?.name || ''}
+                    </div>
                     <div className="now-time">{fmtClock(view.currentSeconds)}</div>
                   </>
                 ) : view.onPlan ? (
                   <>
                     <div className="now-desc">{view.coveringDesc || '(no description)'}</div>
                     <div className="now-meta">
-                      {settings.projectName} · on plan
+                      {nameOf(view.coveringProjectId) || sel[0]?.name || ''} · on plan
                       {view.coveringEndsMs ? ` · ends ${fmtTimeOfDay(view.coveringEndsMs)}` : ''}
                     </div>
                     <div className="now-time plan">{fmtClock(view.coveringCountdown)} left</div>
@@ -635,6 +661,9 @@ export default function Page() {
                                 ? `📅 ${h.desc}`
                                 : h.desc}
                             </span>
+                            {multi && h.projId != null && (
+                              <ProjectChips projects={sel.filter((p) => p.id === h.projId)} />
+                            )}
                             {h.missingTag && (
                               <span
                                 className="tag-warn"
@@ -696,8 +725,8 @@ export default function Page() {
         <SettingsPanel
           initial={{
             token: settings.token,
-            projectId: settings.projectId,
-            projectName: settings.projectName,
+            selectedProjects: settings.selectedProjects,
+            groupName: settings.groupName,
             shortFriday: settings.shortFriday,
             weeklyHours: settings.weeklyHours,
             maxBillableHours: settings.maxBillableHours,
@@ -717,7 +746,7 @@ export default function Page() {
             setShowSettings(false);
           }}
           onClose={() => setShowSettings(false)}
-          canClose={!!settings.projectId}
+          canClose={projectIds.size > 0}
         />
       )}
     </>
