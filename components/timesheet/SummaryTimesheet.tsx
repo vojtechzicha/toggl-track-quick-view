@@ -3,14 +3,15 @@
 import { useMemo } from 'react';
 import {
   billingTagsOf,
-  startOfWeekMonday,
+  startOfWeek,
   fmtHours,
   roundQuartersPreservingTotal,
 } from '@/lib/calc';
 import type { TimesheetViewProps } from './types';
 import CopyButton from './CopyButton';
 
-const DAY_LABELS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+// The week starts on Saturday, so the weekend leads the week (Sat/Sun, then Mon–Fri).
+const DAY_LABELS = ['Sat', 'Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri'];
 const DAY_MS = 24 * 3600 * 1000;
 // Sentinel row keys for entries that need attention rather than a normal billing
 // line. These stay global (not split per project) — a tagging problem is the same
@@ -50,7 +51,7 @@ export default function SummaryTimesheet({
     if (!nowMs) return null;
     const ids = new Set(projects.map((p) => p.id));
     const nameById = new Map(projects.map((p) => [p.id, p.name]));
-    const weekStart = startOfWeekMonday(new Date(nowMs)).getTime();
+    const weekStart = startOfWeek(new Date(nowMs)).getTime();
     const weekEnd = weekStart + 7 * DAY_MS;
 
     const cells = new Map<string, Cell>(); // key: `${dayIdx}|${rowKey}`
@@ -109,10 +110,11 @@ export default function SummaryTimesheet({
       addDesc(cell, e.description ?? '');
     }
 
-    // Columns: Mon–Fri always; Sat/Sun only when they actually have entries.
+    // Columns: Mon–Fri always; the leading Sat/Sun only when they have entries.
+    // With a Saturday-start week those are indices 0–1, so weekdays are 2–6.
     const dayCols: number[] = [];
     for (let i = 0; i < 7; i++) {
-      if (i < 5 || dayHasEntries[i]) dayCols.push(i);
+      if (i >= 2 || dayHasEntries[i]) dayCols.push(i);
     }
 
     // Rows: normal rows grouped by project, then tag (both alphabetical), then the

@@ -194,12 +194,17 @@ export function startOfDay(d: Date): Date {
   return x;
 }
 
-/** Monday 00:00 (local) of the week containing `d`. */
-export function startOfWeekMonday(d: Date): Date {
+/**
+ * Saturday 00:00 (local) of the week containing `d`. The week starts on Saturday,
+ * so a weekend leads the week it belongs to (Sat/Sun sit *before* the following
+ * Mon–Fri rather than trailing the preceding ones).
+ */
+export function startOfWeek(d: Date): Date {
   const x = startOfDay(d);
   const day = x.getDay(); // 0 Sun .. 6 Sat
-  const diff = day === 0 ? -6 : 1 - day;
-  x.setDate(x.getDate() + diff);
+  // Days since the most recent Saturday: Sat→0, Sun→1, Mon→2 … Fri→6.
+  const diff = (day + 1) % 7;
+  x.setDate(x.getDate() - diff);
   return x;
 }
 
@@ -271,8 +276,9 @@ export function coveringEntry(
  *
  * Both modes aim for the configured weekly total in three stages — Mon–Wed,
  * Thursday, Friday — and a day's target is fixed for the whole day: it depends
- * only on the selected project's hours logged *before* today (Mon 00:00 → today
- * 00:00), so it does not shrink as you work today. Every hour figure below is the
+ * only on the selected project's hours logged *before* today (the week's Saturday
+ * 00:00 → today 00:00, so a weekend at the week's start counts toward Thu/Fri), so
+ * it does not shrink as you work today. Every hour figure below is the
  * 40h-week baseline scaled by weeklyHours / 40 (the Friday floor can be overridden).
  *
  * Regular week (shortFriday = false):
@@ -304,7 +310,7 @@ export function dailyTargetSeconds(
   }
 
   if (day === 4 || day === 5) {
-    const weekStart = startOfWeekMonday(now).getTime();
+    const weekStart = startOfWeek(now).getTime();
     const todayStart = startOfDay(now).getTime();
     const loggedSoFar = projectSecondsInRange(entries, projects, weekStart, todayStart);
     const remaining = t.weekly - loggedSoFar;

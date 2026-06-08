@@ -22,7 +22,7 @@ import {
   subtractIntervals,
   hasBillingTag,
   startOfDay,
-  startOfWeekMonday,
+  startOfWeek,
   fmtHM,
   fmtClock,
   fmtTimeOfDay,
@@ -293,7 +293,7 @@ export default function Page() {
     const norm = normalize(entries, nowMs);
     const repId = [...projectIds][0]; // a representative project for the projection
     const dayMs = 24 * 3600 * 1000;
-    const weekStart = startOfWeekMonday(new Date(nowMs)).getTime();
+    const weekStart = startOfWeek(new Date(nowMs)).getTime();
     const todayStart = startOfDay(new Date(nowMs)).getTime();
     const beforeThursday = new Date(nowMs).getDay() < 4; // Mon–Wed (Sun=0 counts as before)
 
@@ -333,7 +333,7 @@ export default function Page() {
       const dayStart = weekStart + i * dayMs;
       const dayEnd = dayStart + dayMs;
       const date = new Date(dayStart);
-      const isWeekend = i >= 5;
+      const isWeekend = date.getDay() === 6 || date.getDay() === 0; // Sat/Sun
       const logged = projectSecondsInRange(norm, projectIds, dayStart, Math.min(dayEnd, nowMs));
       const scheduled = projectSecondsInRange(norm, projectIds, Math.max(dayStart, nowMs), dayEnd);
       if (isWeekend && logged === 0 && scheduled === 0) continue; // hide untouched weekend days
