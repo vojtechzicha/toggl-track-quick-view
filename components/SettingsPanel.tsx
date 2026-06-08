@@ -4,6 +4,7 @@ import { useState } from 'react';
 import type { Project } from '@/lib/toggl';
 import {
   DEFAULT_WEEKLY_HOURS,
+  DEFAULT_BILLING_TAG_PREFIX,
   defaultMaxBillableHours,
   defaultMinWorkingDayHours,
   fmtHoursLabel,
@@ -22,6 +23,8 @@ export interface SettingsValue {
   // that absolute hours value, which stays put when weeklyHours later changes.
   maxBillableHours: number | null;
   minWorkingDayHours: number | null;
+  // The prefix that marks a tag as a billing tag (default "D", e.g. "D123").
+  billingTagPrefix: string;
   refreshSec: number;
   timesheetMode: TimesheetMode;
 }
@@ -95,8 +98,11 @@ export default function SettingsPanel({
   const [minDayStr, setMinDayStr] = useState(
     initial.minWorkingDayHours === null ? '' : numLabel(initial.minWorkingDayHours)
   );
+  const [billingPrefix, setBillingPrefix] = useState(initial.billingTagPrefix);
   const [showAdvanced, setShowAdvanced] = useState(
-    initial.maxBillableHours !== null || initial.minWorkingDayHours !== null
+    initial.maxBillableHours !== null ||
+      initial.minWorkingDayHours !== null ||
+      initial.billingTagPrefix !== DEFAULT_BILLING_TAG_PREFIX
   );
 
   const tokenConnected = projects.length > 0;
@@ -131,6 +137,8 @@ export default function SettingsPanel({
       weeklyHours,
       maxBillableHours: parseOverride(maxBillStr, STEP),
       minWorkingDayHours: parseOverride(minDayStr, 0),
+      // An empty prefix would match every tag, so fall back to the default.
+      billingTagPrefix: billingPrefix.trim() || DEFAULT_BILLING_TAG_PREFIX,
       refreshSec,
       timesheetMode,
     });
@@ -298,6 +306,23 @@ export default function SettingsPanel({
               floor — Friday then shows exactly what&apos;s left, or nothing once you&apos;re over.
               Leave blank to auto-scale with the week (currently{' '}
               <strong>{fmtHoursLabel(defaultMinWorkingDayHours(previewWeekly))}</strong>).
+            </p>
+          </div>
+
+          <div className="field">
+            <label htmlFor="billing-prefix">Billing tag prefix</label>
+            <input
+              id="billing-prefix"
+              type="text"
+              value={billingPrefix}
+              placeholder={DEFAULT_BILLING_TAG_PREFIX}
+              onChange={(e) => setBillingPrefix(e.target.value)}
+            />
+            <p className="hint">
+              Toggl tags starting with this mark which line an entry bills to (e.g.{' '}
+              <strong>{(billingPrefix.trim() || DEFAULT_BILLING_TAG_PREFIX)}123</strong>). Entries
+              without one are flagged so they can be fixed in Toggl. Defaults to{' '}
+              <strong>{DEFAULT_BILLING_TAG_PREFIX}</strong>.
             </p>
           </div>
         </details>

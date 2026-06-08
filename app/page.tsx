@@ -209,7 +209,7 @@ export default function Page() {
           stopMs: e.stopMs,
           running: e.running,
           dur,
-          missingTag: !hasBillingTag(e.tags),
+          missingTag: !hasBillingTag(e.tags, settings.billingTagPrefix),
           tooLong: dur > maxBillSec,
         });
       }
@@ -259,7 +259,14 @@ export default function Page() {
       today: build(todayStart, true),
       yesterday: build(yesterdayStart, false),
     };
-  }, [entries, nowMs, settings.projectId, settings.weeklyHours, settings.maxBillableHours]);
+  }, [
+    entries,
+    nowMs,
+    settings.projectId,
+    settings.weeklyHours,
+    settings.maxBillableHours,
+    settings.billingTagPrefix,
+  ]);
 
   // Week summary for the side panel: logged vs target for each weekday. Mon–Fri
   // always show; Sat/Sun appear only when the selected project was tracked then.
@@ -695,6 +702,7 @@ export default function Page() {
             weeklyHours: settings.weeklyHours,
             maxBillableHours: settings.maxBillableHours,
             minWorkingDayHours: settings.minWorkingDayHours,
+            billingTagPrefix: settings.billingTagPrefix,
             refreshSec: settings.refreshSec,
             timesheetMode: settings.timesheetMode,
           }}

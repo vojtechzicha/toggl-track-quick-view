@@ -155,8 +155,8 @@ per-day totals.
 ## Billing tags
 
 Every entry on the selected project is expected to carry a **billing tag** — a
-Toggl tag whose name starts with **`D`** (e.g. `D123`) that says which line the
-time bills to.
+Toggl tag whose name starts with a configurable prefix (default **`D`**, e.g.
+`D123`) that says which line the time bills to.
 
 - On the dashboard's **Today / Yesterday** timeline, any selected-project entry
   **missing** a billing tag gets a small ⚠ marker. It's deliberately a quiet,
@@ -164,7 +164,9 @@ time bills to.
 - It reads the tag names Toggl already returns on each time entry, so this costs
   **no extra API calls**.
 
-The prefix lives in [`lib/calc.ts`](lib/calc.ts) as `BILLING_TAG_PREFIX`.
+The prefix is configurable under **Settings → Advanced → Billing tag prefix**
+(change it to `A`, say, to match `A123` tags). Its default lives in
+[`lib/calc.ts`](lib/calc.ts) as `DEFAULT_BILLING_TAG_PREFIX`.
 
 ## Timesheet
 

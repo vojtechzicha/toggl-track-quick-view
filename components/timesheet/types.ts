@@ -12,4 +12,6 @@ export interface TimesheetViewProps {
   projectName: string;
   // The resolved per-line billable cap in hours (override or proportional default).
   maxBillableHours: number;
+  // The prefix that marks a Toggl tag as a billing tag (default "D").
+  billingTagPrefix: string;
 }

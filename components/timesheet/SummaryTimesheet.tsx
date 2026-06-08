@@ -33,6 +33,7 @@ export default function SummaryTimesheet({
   nowMs,
   projectId,
   projectName,
+  billingTagPrefix,
 }: TimesheetViewProps) {
   const grid = useMemo(() => {
     if (!nowMs) return null;
@@ -66,7 +67,7 @@ export default function SummaryTimesheet({
 
       // Which row this entry lands in: its single billing tag, or a warning row
       // when it has none / more than one (both need fixing in Toggl).
-      const tags = billingTagsOf(e.tags);
+      const tags = billingTagsOf(e.tags, billingTagPrefix);
       let rowKey: string;
       if (tags.length === 0) {
         rowKey = UNTAGGED;
@@ -125,7 +126,7 @@ export default function SummaryTimesheet({
     const grandTotal = rowTotals.reduce((s, v) => s + v, 0);
 
     return { weekStart, dayCols, rows, cells, rounded, dayTotals, rowTotals, grandTotal };
-  }, [entries, nowMs, projectId]);
+  }, [entries, nowMs, projectId, billingTagPrefix]);
 
   if (!grid || grid.rows.length === 0) {
     return (
