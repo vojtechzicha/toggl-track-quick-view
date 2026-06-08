@@ -3,7 +3,6 @@
 import { useMemo } from 'react';
 import {
   billingTagsOf,
-  startOfWeek,
   fmtHours,
   fmtHoursLabel,
   fmtTimeOfDay,
@@ -221,6 +220,7 @@ function buildDay(dayEntries: DayEntry[], maxBillableSeconds: number, billingTag
  */
 export default function IndividualTimesheet({
   entries,
+  weekStart,
   nowMs,
   projects,
   multi,
@@ -228,10 +228,9 @@ export default function IndividualTimesheet({
   billingTagPrefix,
 }: TimesheetViewProps) {
   const week = useMemo(() => {
-    if (!nowMs) return null;
+    if (!weekStart) return null;
     const ids = new Set(projects.map((p) => p.id));
     const maxBillableSeconds = maxBillableHours * 3600;
-    const weekStart = startOfWeek(new Date(nowMs)).getTime();
     const weekEnd = weekStart + 7 * DAY_MS;
 
     const byDay: DayEntry[][] = Array.from({ length: 7 }, () => []);
@@ -264,14 +263,14 @@ export default function IndividualTimesheet({
 
     const grandTotal = days.reduce((s, d) => s + d.total, 0);
     return { days, grandTotal };
-  }, [entries, nowMs, projects, maxBillableHours, billingTagPrefix]);
+  }, [entries, weekStart, nowMs, projects, maxBillableHours, billingTagPrefix]);
 
   const nameById = new Map(projects.map((p) => [p.id, p.name]));
 
   if (!week || week.days.length === 0) {
     return (
       <div className="center-msg" style={{ height: 'auto' }}>
-        No entries this week yet.
+        No entries for this week.
       </div>
     );
   }

@@ -63,10 +63,13 @@ export async function GET(
 
   // Shared-cache path: only for the server's own token (no per-browser token),
   // so every cached viewer is the same user seeing identical data.
+  // A manual refresh asks for live data, bypassing the shared cache read (but
+  // the fresh value still updates the cache for everyone else).
+  const force = req.headers.get('x-toggl-refresh') === '1';
   const interval = cacheIntervalSec();
   if (interval !== null && !headerToken && process.env.TOGGL_API_TOKEN) {
     try {
-      const cached = await cachedToggl(joined, search, auth, interval);
+      const cached = await cachedToggl(joined, search, auth, interval, force);
       return new Response(cached.body, {
         status: cached.status,
         headers: { 'content-type': cached.contentType, 'cache-control': 'no-store' },

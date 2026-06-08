@@ -96,12 +96,19 @@ export async function login(password: string): Promise<void> {
   saveAuth(data);
 }
 
-async function tApi<T>(path: string, token: string, search?: string): Promise<T> {
+async function tApi<T>(
+  path: string,
+  token: string,
+  search?: string,
+  opts?: { force?: boolean }
+): Promise<T> {
   const url = `/api/toggl/${path}${search ? `?${search}` : ''}`;
   const auth = loadAuth();
   const headers: Record<string, string> = {};
   if (token) headers['x-toggl-token'] = token;
   if (auth?.token) headers['x-app-auth'] = auth.token;
+  // Ask the proxy to bypass its shared cache for a manual refresh.
+  if (opts?.force) headers['x-toggl-refresh'] = '1';
   const res = await fetch(url, { headers, cache: 'no-store' });
   // The proxy flags a missing/expired session distinctly so we can re-prompt
   // for the password rather than mistaking it for a Toggl auth failure.
@@ -142,9 +149,15 @@ export const getProjects = (token: string, workspaceId: number) =>
 export const getCurrent = (token: string) =>
   tApi<TimeEntry | null>('me/time_entries/current', token);
 
-export const getEntries = (token: string, startISO: string, endISO: string) =>
+export const getEntries = (
+  token: string,
+  startISO: string,
+  endISO: string,
+  opts?: { force?: boolean }
+) =>
   tApi<TimeEntry[]>(
     'me/time_entries',
     token,
-    `start_date=${encodeURIComponent(startISO)}&end_date=${encodeURIComponent(endISO)}`
+    `start_date=${encodeURIComponent(startISO)}&end_date=${encodeURIComponent(endISO)}`,
+    opts
   );
