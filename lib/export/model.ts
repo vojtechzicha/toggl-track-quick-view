@@ -139,9 +139,15 @@ function buildSummaryDoc(o: ExportOptions): SummaryDoc {
     const dayTotals = dayCols.map((_, ci) => keptRows.reduce((s, r) => s + r.cells[ci], 0));
     const grandTotal = dayTotals.reduce((s, v) => s + v, 0);
 
+    // Clamp the heading to the requested range so a month export's edge weeks read
+    // "Jun 1 – Jun 5" / "Jun 27 – Jun 30" rather than spilling into the neighbouring
+    // month (the Saturday-week would otherwise start in May or end in July).
+    const labelFromMs = Math.max(weekStart, range.fromMs);
+    const labelToMs = Math.min(weekStart + 6 * DAY_MS, range.toMs - DAY_MS);
+
     weeks.push({
       weekStart,
-      label: `${fmtDay(weekStart)} – ${fmtDay(weekStart + 6 * DAY_MS)}`,
+      label: `${fmtDay(labelFromMs)} – ${fmtDay(labelToMs)}`,
       dayLabels: dayCols.map((d) => DAY_LABELS[d]),
       rows: keptRows,
       dayTotals,

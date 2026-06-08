@@ -160,6 +160,15 @@ export default function TimesheetPage() {
   const shownWeekStart = mode === 'history' && selectedWeek != null ? selectedWeek : currentWeekStart;
   const shownEntries = mode === 'history' ? histEntries : entries;
 
+  // The on-screen week's entries, ready for the export dialog to reuse (so
+  // exporting the week you're looking at costs no extra Toggl request). In history
+  // mode only offer it once the snapshot has actually loaded.
+  const shownDataReady = mode !== 'history' || (!histLoading && !histError && histLoadedAt > 0);
+  const exportPrefetched =
+    hasProject && shownWeekStart > 0 && shownDataReady
+      ? { fromMs: shownWeekStart, toMs: shownWeekStart + WEEK_MS, entries: shownEntries }
+      : null;
+
   if (!hydrated) {
     return <div className="center-msg">Loading…</div>;
   }
@@ -296,6 +305,7 @@ export default function TimesheetPage() {
           billingTagPrefix={settings.billingTagPrefix}
           title={projectTitle}
           personName={settings.exportName.trim() || settings.accountName}
+          prefetched={exportPrefetched}
           loadRange={loadRange}
           onClose={() => setShowExport(false)}
         />

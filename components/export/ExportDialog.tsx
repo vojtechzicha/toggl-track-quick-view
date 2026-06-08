@@ -44,6 +44,12 @@ export interface ExportDialogProps {
   title: string;
   /** Person the timesheet is for (resolved name, may be empty). */
   personName: string;
+  /**
+   * Entries already in memory (the week currently on screen) and the half-open
+   * range they fully cover. When the requested export range fits inside this, the
+   * dialog reuses them instead of spending another Toggl request.
+   */
+  prefetched: { fromMs: number; toMs: number; entries: TimeEntry[] } | null;
   loadRange: (startISO: string, endISO: string, opts?: { force?: boolean }) => Promise<TimeEntry[]>;
   onClose: () => void;
 }
@@ -58,6 +64,7 @@ export default function ExportDialog({
   billingTagPrefix,
   title,
   personName,
+  prefetched,
   loadRange,
   onClose,
 }: ExportDialogProps) {
@@ -109,9 +116,16 @@ export default function ExportDialog({
     setError(null);
     setDone(null);
     try {
-      const startISO = new Date(range.fromMs).toISOString();
-      const endISO = new Date(range.toMs).toISOString();
-      const entries = await loadRange(startISO, endISO);
+      // Reuse the on-screen week's entries when they already cover the request
+      // (e.g. exporting the very week you're viewing); otherwise fetch the range,
+      // which goes through the shared server cache when one is configured.
+      const covered =
+        prefetched != null &&
+        range.fromMs >= prefetched.fromMs &&
+        range.toMs <= prefetched.toMs;
+      const entries = covered
+        ? (prefetched as NonNullable<typeof prefetched>).entries
+        : await loadRange(new Date(range.fromMs).toISOString(), new Date(range.toMs).toISOString());
       const doc = buildExportDoc({
         view,
         range,
