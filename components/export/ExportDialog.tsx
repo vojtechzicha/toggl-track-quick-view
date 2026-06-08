@@ -72,6 +72,7 @@ export default function ExportDialog({
   const [toStr, setToStr] = useState(() => toDateInput(initial.toMs - 1)); // inclusive last day
   const [format, setFormat] = useState<ExportFormat>('xlsx');
   const [templateId, setTemplateId] = useState<string>(DEFAULT_TEMPLATE_ID);
+  const [name, setName] = useState(personName);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [done, setDone] = useState<string | null>(null);
@@ -121,7 +122,7 @@ export default function ExportDialog({
         maxBillableHours,
         billingTagPrefix,
         title,
-        personName,
+        personName: name.trim(),
       });
       const ok = await runExport(doc, format, templateId);
       if (!ok) {
@@ -197,6 +198,22 @@ export default function ExportDialog({
             ))}
           </select>
         </div>
+
+        {format === 'pdf' && (
+          <div className="field">
+            <label htmlFor="exp-name">Name on PDF</label>
+            <input
+              id="exp-name"
+              type="text"
+              value={name}
+              placeholder="Defaults to your Toggl account name"
+              onChange={(e) => {
+                setName(e.target.value);
+                setDone(null);
+              }}
+            />
+          </div>
+        )}
 
         {format === 'pdf' && PDF_TEMPLATES.length > 1 && (
           <div className="field">
