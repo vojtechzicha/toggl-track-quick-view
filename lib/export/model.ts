@@ -139,11 +139,13 @@ function buildSummaryDoc(o: ExportOptions): SummaryDoc {
     const dayTotals = dayCols.map((_, ci) => keptRows.reduce((s, r) => s + r.cells[ci], 0));
     const grandTotal = dayTotals.reduce((s, v) => s + v, 0);
 
-    // Clamp the heading to the requested range so a month export's edge weeks read
-    // "Jun 1 – Jun 5" / "Jun 27 – Jun 30" rather than spilling into the neighbouring
-    // month (the Saturday-week would otherwise start in May or end in July).
-    const labelFromMs = Math.max(weekStart, range.fromMs);
-    const labelToMs = Math.min(weekStart + 6 * DAY_MS, range.toMs - DAY_MS);
+    // The heading spans exactly the visible columns: weekdays (Mon–Fri) are always
+    // shown — so an empty Friday still extends the label — while weekend days only
+    // appear when they carry time. Because `dayCols` is already the visible,
+    // range-clipped set, the first and last of them give the right span (and a
+    // month export's edge weeks naturally stay within the month).
+    const labelFromMs = weekStart + dayCols[0] * DAY_MS;
+    const labelToMs = weekStart + dayCols[dayCols.length - 1] * DAY_MS;
 
     weeks.push({
       weekStart,
