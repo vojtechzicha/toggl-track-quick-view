@@ -121,26 +121,34 @@ export interface TimeEntry {
 
 // ---- Billing tags ----
 // A "billing tag" identifies which line a tracked entry bills to. By convention
-// these tag names start with "D" (e.g. "D123"). Every entry on the selected
-// project is expected to carry one; the dashboard and timesheet flag the ones
-// that don't so they can be fixed in Toggl.
-export const BILLING_TAG_PREFIX = 'D';
+// these tag names start with a single-letter prefix (default "D", e.g. "D123").
+// The prefix is configurable in the advanced settings. Every entry on the
+// selected project is expected to carry one; the dashboard and timesheet flag
+// the ones that don't so they can be fixed in Toggl.
+export const DEFAULT_BILLING_TAG_PREFIX = 'D';
+
+/** The prefix to use, falling back to the default when none/empty is given. */
+function tagPrefix(prefix?: string): string {
+  return prefix && prefix.length > 0 ? prefix : DEFAULT_BILLING_TAG_PREFIX;
+}
 
 /** The first billing tag (name starting with the prefix) on an entry, or null. */
-export function billingTagOf(tags?: string[]): string | null {
+export function billingTagOf(tags?: string[], prefix?: string): string | null {
   if (!tags) return null;
-  return tags.find((t) => t.startsWith(BILLING_TAG_PREFIX)) ?? null;
+  const p = tagPrefix(prefix);
+  return tags.find((t) => t.startsWith(p)) ?? null;
 }
 
 /** All billing tags (names starting with the prefix) on an entry. */
-export function billingTagsOf(tags?: string[]): string[] {
+export function billingTagsOf(tags?: string[], prefix?: string): string[] {
   if (!tags) return [];
-  return tags.filter((t) => t.startsWith(BILLING_TAG_PREFIX));
+  const p = tagPrefix(prefix);
+  return tags.filter((t) => t.startsWith(p));
 }
 
 /** True when an entry carries at least one billing tag. */
-export function hasBillingTag(tags?: string[]): boolean {
-  return billingTagOf(tags) !== null;
+export function hasBillingTag(tags?: string[], prefix?: string): boolean {
+  return billingTagOf(tags, prefix) !== null;
 }
 
 /** Normalised entry with absolute millisecond bounds (running => stop is "now"). */

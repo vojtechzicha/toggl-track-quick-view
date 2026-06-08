@@ -83,7 +83,7 @@ function snapQuarter(ms: number): number {
  * at zero is dropped). Finally each billable line's start is snapped to the
  * nearest quarter and packed forward so the displayed blocks never overlap.
  */
-function buildDay(dayEntries: DayEntry[], maxBillableSeconds: number) {
+function buildDay(dayEntries: DayEntry[], maxBillableSeconds: number, billingTagPrefix: string) {
   const sorted = [...dayEntries].sort((a, b) => a.startMs - b.startMs);
 
   // Overlaps in the raw data (you can't bill two entries running at once). Sorted
@@ -127,7 +127,7 @@ function buildDay(dayEntries: DayEntry[], maxBillableSeconds: number) {
   };
 
   for (const e of sorted) {
-    const tags = billingTagsOf(e.tags);
+    const tags = billingTagsOf(e.tags, billingTagPrefix);
     if (tags.length === 0) {
       flush();
       addWarn(UNTAGGED, e);
@@ -218,6 +218,7 @@ export default function IndividualTimesheet({
   projectId,
   projectName,
   maxBillableHours,
+  billingTagPrefix,
 }: TimesheetViewProps) {
   const week = useMemo(() => {
     if (!nowMs) return null;
@@ -248,13 +249,13 @@ export default function IndividualTimesheet({
       .map((dayEntries, dayIdx) => ({
         dayIdx,
         dateMs: weekStart + dayIdx * DAY_MS,
-        ...buildDay(dayEntries, maxBillableSeconds),
+        ...buildDay(dayEntries, maxBillableSeconds, billingTagPrefix),
       }))
       .filter((d) => d.rows.length > 0 || d.overlaps.length > 0);
 
     const grandTotal = days.reduce((s, d) => s + d.total, 0);
     return { days, grandTotal };
-  }, [entries, nowMs, projectId, maxBillableHours]);
+  }, [entries, nowMs, projectId, maxBillableHours, billingTagPrefix]);
 
   if (!week || week.days.length === 0) {
     return (

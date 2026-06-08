@@ -95,6 +95,7 @@ export default function TimesheetPage() {
             projectId={settings.projectId}
             projectName={settings.projectName}
             maxBillableHours={effectiveMaxBillableHours(settings)}
+            billingTagPrefix={settings.billingTagPrefix}
           />
         )}
 
@@ -117,6 +118,7 @@ export default function TimesheetPage() {
             weeklyHours: settings.weeklyHours,
             maxBillableHours: settings.maxBillableHours,
             minWorkingDayHours: settings.minWorkingDayHours,
+            billingTagPrefix: settings.billingTagPrefix,
             refreshSec: settings.refreshSec,
             timesheetMode: settings.timesheetMode,
           }}

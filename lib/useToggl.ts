@@ -23,7 +23,13 @@ import {
   Project,
 } from '@/lib/toggl';
 import type { SettingsValue } from '@/components/SettingsPanel';
-import { TimeEntry, startOfDay, startOfWeekMonday, DEFAULT_WEEKLY_HOURS } from '@/lib/calc';
+import {
+  TimeEntry,
+  startOfDay,
+  startOfWeekMonday,
+  DEFAULT_WEEKLY_HOURS,
+  DEFAULT_BILLING_TAG_PREFIX,
+} from '@/lib/calc';
 
 const LS_KEY = 'tqv.settings.v1';
 const CACHE_KEY = 'tqv.cache.v1';
@@ -46,6 +52,7 @@ export const DEFAULTS: StoredSettings = {
   weeklyHours: DEFAULT_WEEKLY_HOURS,
   maxBillableHours: null,
   minWorkingDayHours: null,
+  billingTagPrefix: DEFAULT_BILLING_TAG_PREFIX,
   refreshSec: DEFAULT_REFRESH_SEC,
   timesheetMode: 'summary',
 };
