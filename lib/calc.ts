@@ -344,28 +344,37 @@ export function plannedTargetSeconds(
  * How long you've been continuously working on `projectId` right now.
  *
  * Returns `working: false` unless an entry for this project is currently
- * running. The continuous streak walks backwards from the running entry and
- * ends (i.e. a break is detected) at the first of:
- *   - a gap of >= BREAK_GAP_MINUTES between consecutive entries, or
- *   - an entry on a different project (a context switch counts as a break).
+ * running. The streak is determined purely by *this project's own* coverage:
+ * starting from now it walks backwards through the project's entries and ends
+ * (i.e. a break is detected) at the first real hole of >= BREAK_GAP_MINUTES.
+ *
+ * Entries on other projects are ignored entirely — a *parallel* timesheet that
+ * merely overlaps yours is not a break (you never stopped working on this
+ * project), and a *sequential* switch to another project already shows up as a
+ * hole in this project's coverage, so the gap rule still catches it.
  */
 export function continuousWorkSeconds(
   entries: NormEntry[],
   projectId: number,
   nowMs: number
 ): { working: boolean; seconds: number } {
-  const runningIdx = entries.findIndex((e) => e.running && e.projectId === projectId);
-  if (runningIdx === -1) return { working: false, seconds: 0 };
+  const working = entries.some((e) => e.running && e.projectId === projectId);
+  if (!working) return { working: false, seconds: 0 };
 
   const gapMs = BREAK_GAP_MINUTES * 60 * MS;
-  let streakStart = entries[runningIdx].startMs;
 
-  for (let i = runningIdx - 1; i >= 0; i--) {
-    const prev = entries[i];
-    const next = entries[i + 1];
-    if (prev.projectId !== projectId) break; // worked elsewhere => break taken
-    if (next.startMs - prev.stopMs >= gapMs) break; // real gap => break taken
-    streakStart = prev.startMs;
+  // Walk this project's entries from latest to earliest, extending the streak
+  // back as long as each entry's coverage reaches within gapMs of it. A running
+  // entry is clamped to now by normalize(), so coverage always reaches `nowMs`.
+  const spans = entries
+    .filter((e) => e.projectId === projectId)
+    .sort((a, b) => a.startMs - b.startMs);
+
+  let streakStart = nowMs;
+  for (let i = spans.length - 1; i >= 0; i--) {
+    const s = spans[i];
+    if (s.stopMs < streakStart - gapMs) break; // real gap before the streak => break taken
+    if (s.startMs < streakStart) streakStart = s.startMs;
   }
 
   return { working: true, seconds: (nowMs - streakStart) / MS };
