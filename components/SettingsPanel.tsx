@@ -132,16 +132,16 @@ export default function SettingsPanel({
   const showProjects = serverManaged || tokenConnected;
 
   // Show the multiselect once opted into, or whenever more than one is selected.
+  // Staying open while editing is deliberate: collapsing the instant the count
+  // hits one would make it impossible to pick a second project. It returns to the
+  // plain dropdown when Settings is reopened with a single project saved (see the
+  // multiExpanded initial value).
   const multiMode = multiExpanded || selectedIds.length > 1;
 
-  // Toggle a project in the checklist; auto-collapse back to the single dropdown
-  // as soon as the selection narrows to one (or none).
   const toggleProject = (id: number) => {
-    setSelectedIds((prev) => {
-      const next = prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id];
-      if (next.length <= 1) setMultiExpanded(false);
-      return next;
-    });
+    setSelectedIds((prev) =>
+      prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]
+    );
   };
 
   // The weekly value currently being edited (clamped), used to live-preview the
@@ -258,6 +258,16 @@ export default function SettingsPanel({
                   &ldquo;the project&rdquo; for your targets and ring. They stay
                   separate only in the timesheet, prefixed by project name.
                 </p>
+                <button
+                  type="button"
+                  className="linkbtn"
+                  onClick={() => {
+                    setSelectedIds((prev) => prev.slice(0, 1));
+                    setMultiExpanded(false);
+                  }}
+                >
+                  Back to a single project
+                </button>
               </>
             ) : (
               <>
