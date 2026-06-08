@@ -26,7 +26,7 @@ import type { SettingsValue, SelectedProject } from '@/components/SettingsPanel'
 import {
   TimeEntry,
   startOfDay,
-  startOfWeekMonday,
+  startOfWeek,
   DEFAULT_WEEKLY_HOURS,
   DEFAULT_BILLING_TAG_PREFIX,
 } from '@/lib/calc';
@@ -343,10 +343,11 @@ export function useToggl(): UseToggl {
       // call), so the per-device hourly meter would over-count — skip it.
       if (!cacheEnabled) setReqThisHour(recordReqs(1));
       try {
-        // From Monday (needed for the short-Friday weekly model) but never later
-        // than the start of yesterday, so unreported-time detection always has
-        // both yesterday and today even on a Monday.
-        const weekStart = startOfWeekMonday(new Date()).getTime();
+        // From the week's start (Saturday — needed for the weekly model and so the
+        // leading weekend's entries load) but never later than the start of
+        // yesterday, so unreported-time detection always has both yesterday and
+        // today even on the first day of the week.
+        const weekStart = startOfWeek(new Date()).getTime();
         const yesterdayStart = startOfDay(new Date()).getTime() - 24 * 3600 * 1000;
         const start = new Date(Math.min(weekStart, yesterdayStart)).toISOString();
         // Through the end of this week so pre-entered ("scheduled") future entries

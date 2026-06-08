@@ -9,7 +9,7 @@ import SummaryTimesheet from '@/components/timesheet/SummaryTimesheet';
 import IndividualTimesheet from '@/components/timesheet/IndividualTimesheet';
 import type { TimesheetViewProps } from '@/components/timesheet/types';
 import { useToggl } from '@/lib/useToggl';
-import { startOfWeekMonday, effectiveMaxBillableHours } from '@/lib/calc';
+import { startOfWeek, effectiveMaxBillableHours } from '@/lib/calc';
 
 const DAY_MS = 24 * 3600 * 1000;
 
@@ -65,7 +65,7 @@ export default function TimesheetPage() {
 
   const fmtDay = (ms: number) =>
     new Date(ms).toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
-  const weekStartMs = nowMs ? startOfWeekMonday(new Date(nowMs)).getTime() : 0;
+  const weekStartMs = nowMs ? startOfWeek(new Date(nowMs)).getTime() : 0;
   const weekRange = weekStartMs ? `${fmtDay(weekStartMs)} – ${fmtDay(weekStartMs + 6 * DAY_MS)}` : '';
 
   const Body = view.Component;

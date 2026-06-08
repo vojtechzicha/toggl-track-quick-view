@@ -3,7 +3,7 @@
 import { useMemo } from 'react';
 import {
   billingTagsOf,
-  startOfWeekMonday,
+  startOfWeek,
   fmtHours,
   fmtHoursLabel,
   fmtTimeOfDay,
@@ -13,7 +13,8 @@ import {
 import type { TimesheetViewProps } from './types';
 import CopyButton from './CopyButton';
 
-const DAY_LABELS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+// The week starts on Saturday, so the weekend leads the week (Sat/Sun, then Mon–Fri).
+const DAY_LABELS = ['Sat', 'Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri'];
 const DAY_MS = 24 * 3600 * 1000;
 const QUARTER_MS = QUARTER_SECONDS * 1000;
 const COMBINE_GAP_SECONDS = 60 * 60; // combine same-code entries only within this gap
@@ -230,7 +231,7 @@ export default function IndividualTimesheet({
     if (!nowMs) return null;
     const ids = new Set(projects.map((p) => p.id));
     const maxBillableSeconds = maxBillableHours * 3600;
-    const weekStart = startOfWeekMonday(new Date(nowMs)).getTime();
+    const weekStart = startOfWeek(new Date(nowMs)).getTime();
     const weekEnd = weekStart + 7 * DAY_MS;
 
     const byDay: DayEntry[][] = Array.from({ length: 7 }, () => []);
