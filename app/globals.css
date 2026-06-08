@@ -715,6 +715,7 @@ body {
 .field input[type='text'],
 .field input[type='password'],
 .field input[type='number'],
+.field input[type='date'],
 .field select {
   background: var(--bg);
   border: 1px solid var(--line);
@@ -853,6 +854,26 @@ body {
 .err-msg {
   color: var(--red);
   font-size: 13px;
+}
+
+/* ---------- Export dialog ---------- */
+.exp-dates {
+  display: flex;
+  gap: 12px;
+}
+.exp-dates .field {
+  flex: 1 1 0;
+  min-width: 0;
+}
+/* Date inputs render their own text dark by default in some engines; force the
+   app's light-on-dark scheme so they match the other fields. */
+.field input[type='date'] {
+  color-scheme: dark;
+}
+.exp-done {
+  color: var(--green);
+  font-size: 13px;
+  font-weight: 600;
 }
 
 /* ---------- Centered loading ---------- */

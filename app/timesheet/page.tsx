@@ -7,6 +7,7 @@ import ProjectChips from '@/components/ProjectChips';
 import PasswordGate from '@/components/PasswordGate';
 import SummaryTimesheet from '@/components/timesheet/SummaryTimesheet';
 import IndividualTimesheet from '@/components/timesheet/IndividualTimesheet';
+import ExportDialog from '@/components/export/ExportDialog';
 import type { TimesheetViewProps } from '@/components/timesheet/types';
 import { useToggl } from '@/lib/useToggl';
 import { isAuthRequired } from '@/lib/toggl';
@@ -65,6 +66,7 @@ export default function TimesheetPage() {
   } = useToggl();
 
   const [mode, setMode] = useState<Mode>('current');
+  const [showExport, setShowExport] = useState(false);
   const [selectedWeek, setSelectedWeek] = useState<number | null>(null);
   const [pickerCount, setPickerCount] = useState(PICKER_PAGE);
   const [histEntries, setHistEntries] = useState<TimeEntry[]>([]);
@@ -158,6 +160,15 @@ export default function TimesheetPage() {
   const shownWeekStart = mode === 'history' && selectedWeek != null ? selectedWeek : currentWeekStart;
   const shownEntries = mode === 'history' ? histEntries : entries;
 
+  // The on-screen week's entries, ready for the export dialog to reuse (so
+  // exporting the week you're looking at costs no extra Toggl request). In history
+  // mode only offer it once the snapshot has actually loaded.
+  const shownDataReady = mode !== 'history' || (!histLoading && !histError && histLoadedAt > 0);
+  const exportPrefetched =
+    hasProject && shownWeekStart > 0 && shownDataReady
+      ? { fromMs: shownWeekStart, toMs: shownWeekStart + WEEK_MS, entries: shownEntries }
+      : null;
+
   if (!hydrated) {
     return <div className="center-msg">Loading…</div>;
   }
@@ -193,6 +204,12 @@ export default function TimesheetPage() {
               <button className="navbtn" onClick={goCurrent} aria-label="This week">
                 <span className="navbtn-icon">↩</span>
                 <span className="navbtn-text">This week</span>
+              </button>
+            )}
+            {hasProject && (
+              <button className="navbtn" onClick={() => setShowExport(true)} aria-label="Export">
+                <span className="navbtn-icon">⤓</span>
+                <span className="navbtn-text">Export</span>
               </button>
             )}
             <Link className="navbtn" href="/" aria-label="Dashboard">
@@ -277,6 +294,23 @@ export default function TimesheetPage() {
         </footer>
       </div>
 
+      {!needsPassword && showExport && hasProject && (
+        <ExportDialog
+          view={settings.timesheetMode}
+          projects={sel}
+          multi={multi}
+          nowMs={nowMs}
+          selectedWeekStart={shownWeekStart || null}
+          maxBillableHours={effectiveMaxBillableHours(settings)}
+          billingTagPrefix={settings.billingTagPrefix}
+          title={projectTitle}
+          personName={settings.exportName.trim() || settings.accountName}
+          prefetched={exportPrefetched}
+          loadRange={loadRange}
+          onClose={() => setShowExport(false)}
+        />
+      )}
+
       {needsPassword && <PasswordGate onSubmit={submitPassword} error={pwError} busy={pwBusy} />}
 
       {!needsPassword && showSettings && (
@@ -292,6 +326,7 @@ export default function TimesheetPage() {
             billingTagPrefix: settings.billingTagPrefix,
             refreshSec: settings.refreshSec,
             timesheetMode: settings.timesheetMode,
+            exportName: settings.exportName,
           }}
           projects={projects}
           serverManaged={!!serverManaged}

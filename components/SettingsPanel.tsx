@@ -42,6 +42,8 @@ export interface SettingsValue {
   billingTagPrefix: string;
   refreshSec: number;
   timesheetMode: TimesheetMode;
+  // Name printed on exports (PDF header). Blank falls back to the Toggl account name.
+  exportName: string;
 }
 
 const WEEKLY_MIN = 1;
@@ -110,6 +112,7 @@ export default function SettingsPanel({
   const [shortFriday, setShortFriday] = useState(initial.shortFriday);
   const [refreshSec, setRefreshSec] = useState(initial.refreshSec);
   const [timesheetMode, setTimesheetMode] = useState<TimesheetMode>(initial.timesheetMode);
+  const [exportName, setExportName] = useState(initial.exportName);
 
   // Hours fields are kept as raw strings so a half-typed value (e.g. "3.") never
   // snaps mid-edit; they're parsed and clamped on save. An empty advanced field
@@ -125,7 +128,8 @@ export default function SettingsPanel({
   const [showAdvanced, setShowAdvanced] = useState(
     initial.maxBillableHours !== null ||
       initial.minWorkingDayHours !== null ||
-      initial.billingTagPrefix !== DEFAULT_BILLING_TAG_PREFIX
+      initial.billingTagPrefix !== DEFAULT_BILLING_TAG_PREFIX ||
+      initial.exportName.trim() !== ''
   );
 
   const tokenConnected = projects.length > 0;
@@ -184,6 +188,7 @@ export default function SettingsPanel({
       billingTagPrefix: billingPrefix.trim() || DEFAULT_BILLING_TAG_PREFIX,
       refreshSec,
       timesheetMode,
+      exportName: exportName.trim(),
     });
   };
 
@@ -429,6 +434,21 @@ export default function SettingsPanel({
               <strong>{(billingPrefix.trim() || DEFAULT_BILLING_TAG_PREFIX)}123</strong>). Entries
               without one are flagged so they can be fixed in Toggl. Defaults to{' '}
               <strong>{DEFAULT_BILLING_TAG_PREFIX}</strong>.
+            </p>
+          </div>
+
+          <div className="field">
+            <label htmlFor="export-name">Name on exports</label>
+            <input
+              id="export-name"
+              type="text"
+              value={exportName}
+              placeholder="Defaults to your Toggl account name"
+              onChange={(e) => setExportName(e.target.value)}
+            />
+            <p className="hint">
+              The default name printed in the header of PDF exports (you can still override it per
+              export). Leave blank to use your Toggl account name.
             </p>
           </div>
         </details>
