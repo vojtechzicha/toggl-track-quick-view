@@ -6,7 +6,6 @@ import ProgressRing from '@/components/ProgressRing';
 import SettingsPanel, { type SettingsPreset } from '@/components/SettingsPanel';
 import ProjectChips from '@/components/ProjectChips';
 import PasswordGate from '@/components/PasswordGate';
-import WorkspaceSwitcher from '@/components/WorkspaceSwitcher';
 import { useToggl, applyPreset, HOURLY_LIMIT, fmtInterval } from '@/lib/useToggl';
 import {
   NormEntry,
@@ -429,11 +428,6 @@ export default function Page() {
             </p>
           </div>
           <div className="topbar-actions">
-            <WorkspaceSwitcher
-              presets={settings.presets}
-              current={settings}
-              onSelect={(p) => persist(applyPreset(settings, p, projects))}
-            />
             <Link className="navbtn" href="/timesheet" aria-label="Timesheet">
               <span className="navbtn-icon">🧾</span>
               <span className="navbtn-text">Timesheet</span>

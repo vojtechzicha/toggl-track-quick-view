@@ -5,7 +5,6 @@ import Link from 'next/link';
 import SettingsPanel, { TimesheetMode, type SettingsPreset } from '@/components/SettingsPanel';
 import ProjectChips from '@/components/ProjectChips';
 import PasswordGate from '@/components/PasswordGate';
-import WorkspaceSwitcher from '@/components/WorkspaceSwitcher';
 import SummaryTimesheet from '@/components/timesheet/SummaryTimesheet';
 import IndividualTimesheet from '@/components/timesheet/IndividualTimesheet';
 import ExportDialog from '@/components/export/ExportDialog';
@@ -205,11 +204,6 @@ export default function TimesheetPage() {
             </p>
           </div>
           <div className="topbar-actions">
-            <WorkspaceSwitcher
-              presets={settings.presets}
-              current={settings}
-              onSelect={(p) => persist(applyPreset(settings, p, projects))}
-            />
             {mode === 'current' ? (
               <button className="navbtn" onClick={goPicker} aria-label="Previous weeks">
                 <span className="navbtn-icon">←</span>

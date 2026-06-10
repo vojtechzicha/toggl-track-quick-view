@@ -188,20 +188,16 @@ project selection, weekly target, billing-tag prefix and rounding).
 
 - Configure the settings you want, then open **Settings → Workspaces**, type a
   name and hit **Save current**. Store as many as you like.
-- A **🗂 Workspaces** button then appears in the topbar (dashboard *and*
-  timesheet). Click it and pick a workspace to switch instantly — the button
-  names whichever stored workspace currently matches, and the menu ticks it.
+- Click a stored workspace in that list to **recall it instantly** — it switches
+  live and the active one is marked. **↻** re-captures the current settings into
+  it, **✎** renames, **🗑** deletes.
 - Workspaces are **immutable snapshots**: editing your live settings never
-  changes a stored one. To re-capture the current settings into an existing
-  workspace, use the **↻** (overwrite) button next to it; **✎** renames and **🗑**
-  deletes. Inside Settings, clicking a workspace name loads it back into the form
-  for review before you Save.
+  changes a stored one — recall a workspace to bring its settings back.
 
 A workspace captures everything in Settings **except** the API token (the account
 credential, shared across all workspaces) and the refresh interval (a per-device
 knob). The list lives in the browser's `localStorage` alongside your other
-settings, so it's secondary by design — the quick-switch button is the main way
-you'll use it.
+settings — it's a secondary, tucked-away feature of the Settings panel.
 
 ## Timesheet
 
