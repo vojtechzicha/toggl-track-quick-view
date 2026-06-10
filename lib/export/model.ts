@@ -23,6 +23,8 @@ export interface ExportOptions {
   multi: boolean;
   maxBillableHours: number;
   billingTagPrefix: string;
+  /** Rounding granularity in seconds (900 = 15 min default, 720 = 12 min). */
+  roundingSeconds: number;
   /** Title shown on the document (project / group name). */
   title: string;
   /** Person the timesheet is for (may be empty). */
@@ -98,11 +100,11 @@ function codeLabel(
 }
 
 function buildSummaryDoc(o: ExportOptions): SummaryDoc {
-  const { range, entries, nowMs, projects, multi, billingTagPrefix } = o;
+  const { range, entries, nowMs, projects, multi, billingTagPrefix, roundingSeconds } = o;
   const weeks: SummaryWeekBlock[] = [];
 
   for (const weekStart of weeksInRange(range.fromMs, range.toMs)) {
-    const grid = buildSummaryGrid({ entries, weekStart, nowMs, projects, billingTagPrefix });
+    const grid = buildSummaryGrid({ entries, weekStart, nowMs, projects, billingTagPrefix, roundingSeconds });
     if (!grid || grid.rows.length === 0) continue;
 
     // Keep only day columns whose date falls inside the requested range, so the
@@ -171,7 +173,7 @@ function buildSummaryDoc(o: ExportOptions): SummaryDoc {
 }
 
 function buildIndividualDoc(o: ExportOptions): IndividualDoc {
-  const { range, entries, nowMs, projects, multi, maxBillableHours, billingTagPrefix } = o;
+  const { range, entries, nowMs, projects, multi, maxBillableHours, billingTagPrefix, roundingSeconds } = o;
   const nameById = new Map(projects.map((p) => [p.id, p.name]));
   const days: IndividualDayBlock[] = [];
 
@@ -183,6 +185,7 @@ function buildIndividualDoc(o: ExportOptions): IndividualDoc {
       projects,
       maxBillableHours,
       billingTagPrefix,
+      roundingSeconds,
     });
     if (!week) continue;
     for (const day of week.days) {

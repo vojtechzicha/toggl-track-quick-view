@@ -43,14 +43,16 @@ export interface SummaryInput {
   nowMs: number;
   projects: SelectedProject[];
   billingTagPrefix: string;
+  // The rounding granularity in seconds (e.g. 900 = 15 min, 720 = 12 min).
+  roundingSeconds: number;
 }
 
 /**
  * Build the Summary grid for one week: a grid of days (columns) × rows. A row is
  * normally a (project, billing-tag) pair — the same tag under two projects stays on
  * two separate rows. Each day's entries for a row are combined into one cell —
- * durations summed, descriptions merged without repeats — and rounded to 15-minute
- * units so each day's cells still add up to that day's rounded total (no drift).
+ * durations summed, descriptions merged without repeats — and rounded to the
+ * configured unit so each day's cells still add up to that day's rounded total (no drift).
  *
  * Returns null when there's no week to build (weekStart falsy).
  */
@@ -60,6 +62,7 @@ export function buildSummaryGrid({
   nowMs,
   projects,
   billingTagPrefix,
+  roundingSeconds,
 }: SummaryInput): SummaryGrid | null {
   if (!weekStart) return null;
   const ids = new Set(projects.map((p) => p.id));
@@ -140,14 +143,14 @@ export function buildSummaryGrid({
   if (multiplePresent) rows.push(MULTIPLE);
   if (untaggedPresent) rows.push(UNTAGGED);
 
-  // Round to 15-minute units per day: each cell is rounded so the cells still add
-  // up to the day's rounded total (no accumulated drift), with the rounding error
-  // spread evenly across the rows. Totals are then summed from these rounded
-  // cells, so every figure shown is a clean quarter-hour.
+  // Round to the configured units per day: each cell is rounded so the cells still
+  // add up to the day's rounded total (no accumulated drift), with the rounding
+  // error spread evenly across the rows. Totals are then summed from these rounded
+  // cells, so every figure shown is a clean multiple of the rounding unit.
   const rounded = new Map<string, number>(); // key: `${dayIdx}|${rowKey}`
   for (const d of dayCols) {
     const raw = rows.map((r) => cells.get(`${d}|${r}`)?.seconds ?? 0);
-    const adj = roundQuartersPreservingTotal(raw);
+    const adj = roundQuartersPreservingTotal(raw, { unitSeconds: roundingSeconds });
     rows.forEach((r, ri) => rounded.set(`${d}|${r}`, adj[ri]));
   }
 

@@ -5,6 +5,8 @@ import type { Project } from '@/lib/toggl';
 import {
   DEFAULT_WEEKLY_HOURS,
   DEFAULT_BILLING_TAG_PREFIX,
+  DEFAULT_ROUNDING_HOURS,
+  ROUNDING_HOURS_OPTIONS,
   defaultMaxBillableHours,
   defaultMinWorkingDayHours,
   fmtHoursLabel,
@@ -40,6 +42,9 @@ export interface SettingsValue {
   minWorkingDayHours: number | null;
   // The prefix that marks a tag as a billing tag (default "D", e.g. "D123").
   billingTagPrefix: string;
+  // Granularity the timesheet rounds entries to, in hours. 0.25 (15 min) by
+  // default; some clients can't enter quarter-hours, so 0.2 (12 min) is offered.
+  roundingHours: number;
   refreshSec: number;
   timesheetMode: TimesheetMode;
   // Name printed on exports (PDF header). Blank falls back to the Toggl account name.
@@ -125,10 +130,12 @@ export default function SettingsPanel({
     initial.minWorkingDayHours === null ? '' : numLabel(initial.minWorkingDayHours)
   );
   const [billingPrefix, setBillingPrefix] = useState(initial.billingTagPrefix);
+  const [roundingHours, setRoundingHours] = useState(initial.roundingHours);
   const [showAdvanced, setShowAdvanced] = useState(
     initial.maxBillableHours !== null ||
       initial.minWorkingDayHours !== null ||
       initial.billingTagPrefix !== DEFAULT_BILLING_TAG_PREFIX ||
+      initial.roundingHours !== DEFAULT_ROUNDING_HOURS ||
       initial.exportName.trim() !== ''
   );
 
@@ -186,6 +193,12 @@ export default function SettingsPanel({
       minWorkingDayHours: parseOverride(minDayStr, 0),
       // An empty prefix would match every tag, so fall back to the default.
       billingTagPrefix: billingPrefix.trim() || DEFAULT_BILLING_TAG_PREFIX,
+      // Guard against a stray value; only the offered granularities are valid.
+      roundingHours: ROUNDING_HOURS_OPTIONS.includes(
+        roundingHours as (typeof ROUNDING_HOURS_OPTIONS)[number]
+      )
+        ? roundingHours
+        : DEFAULT_ROUNDING_HOURS,
       refreshSec,
       timesheetMode,
       exportName: exportName.trim(),
@@ -332,7 +345,7 @@ export default function SettingsPanel({
             </select>
             <p className="hint">
               Which view the Timesheet button opens. Summary groups each day&apos;s entries by
-              billing tag and rounds to 15 minutes; Individual lists entries one by one.
+              billing tag and rounds to your chosen unit; Individual lists entries one by one.
             </p>
           </div>
         )}
@@ -434,6 +447,27 @@ export default function SettingsPanel({
               <strong>{(billingPrefix.trim() || DEFAULT_BILLING_TAG_PREFIX)}123</strong>). Entries
               without one are flagged so they can be fixed in Toggl. Defaults to{' '}
               <strong>{DEFAULT_BILLING_TAG_PREFIX}</strong>.
+            </p>
+          </div>
+
+          <div className="field">
+            <label htmlFor="rounding">Round timesheet to</label>
+            <select
+              id="rounding"
+              value={roundingHours}
+              onChange={(e) => setRoundingHours(Number(e.target.value))}
+            >
+              {ROUNDING_HOURS_OPTIONS.map((h) => (
+                <option key={h} value={h}>
+                  {Math.round(h * 60)} minutes ({numLabel(h)}h)
+                </option>
+              ))}
+            </select>
+            <p className="hint">
+              The unit the timesheet rounds each entry to. Defaults to{' '}
+              <strong>15 minutes ({numLabel(DEFAULT_ROUNDING_HOURS)}h)</strong>; pick{' '}
+              <strong>12 minutes (0.2h)</strong> if your client can&apos;t bill quarter-hours. The
+              dashboard and targets are unaffected.
             </p>
           </div>
 

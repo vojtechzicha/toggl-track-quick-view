@@ -24,6 +24,7 @@ export default function IndividualTimesheet({
   multi,
   maxBillableHours,
   billingTagPrefix,
+  roundingSeconds,
 }: TimesheetViewProps) {
   const week = useMemo(
     () =>
@@ -34,8 +35,9 @@ export default function IndividualTimesheet({
         projects,
         maxBillableHours,
         billingTagPrefix,
+        roundingSeconds,
       }),
-    [entries, weekStart, nowMs, projects, maxBillableHours, billingTagPrefix]
+    [entries, weekStart, nowMs, projects, maxBillableHours, billingTagPrefix, roundingSeconds]
   );
 
   const nameById = new Map(projects.map((p) => [p.id, p.name]));

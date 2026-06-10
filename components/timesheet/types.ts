@@ -27,4 +27,6 @@ export interface TimesheetViewProps {
   maxBillableHours: number;
   // The prefix that marks a Toggl tag as a billing tag (default "D").
   billingTagPrefix: string;
+  // The rounding granularity in seconds (900 = 15 min default, 720 = 12 min).
+  roundingSeconds: number;
 }

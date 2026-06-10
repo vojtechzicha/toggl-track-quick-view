@@ -7,13 +7,11 @@ import {
   fmtHoursLabel,
   fmtTimeOfDay,
   roundQuartersPreservingTotal,
-  QUARTER_SECONDS,
   type TimeEntry,
 } from '@/lib/calc';
 import type { SelectedProject } from '@/components/SettingsPanel';
 import { DAY_MS, UNTAGGED, MULTIPLE, TOOLONG } from './constants';
 
-const QUARTER_MS = QUARTER_SECONDS * 1000;
 const COMBINE_GAP_SECONDS = 60 * 60; // combine same-code entries only within this gap
 const OVERLAP_MIN_MS = 60 * 1000; // ignore sub-minute touches (display/manual-entry noise)
 
@@ -64,6 +62,8 @@ export interface IndividualInput {
   projects: SelectedProject[];
   maxBillableHours: number;
   billingTagPrefix: string;
+  // The rounding granularity in seconds (e.g. 900 = 15 min, 720 = 12 min).
+  roundingSeconds: number;
 }
 
 export function warnLabel(kind: WarnKind, maxBillableHours: number): string {
@@ -84,9 +84,9 @@ function mergeDesc(into: string[], desc: string) {
   into.push(text);
 }
 
-/** Snap an absolute time to the nearest 15-minute clock mark. */
-function snapQuarter(ms: number): number {
-  return Math.round(ms / QUARTER_MS) * QUARTER_MS;
+/** Snap an absolute time to the nearest rounding-unit clock mark. */
+function snapToUnit(ms: number, unitMs: number): number {
+  return Math.round(ms / unitMs) * unitMs;
 }
 
 /**
@@ -94,16 +94,18 @@ function snapQuarter(ms: number): number {
  *
  * Entries are classified, then consecutive same-code entries are combined while
  * the gap stays within an hour and the combined duration stays billable (within
- * the cap). Durations are rounded to 15-minute units preserving the day total
+ * the cap). Durations are rounded to the configured unit preserving the day total
  * (biased so a tiny entry surfaces rather than vanishing; a billable line still
  * at zero is dropped). Finally each billable line's start is snapped to the
- * nearest quarter and packed forward so the displayed blocks never overlap.
+ * nearest unit and packed forward so the displayed blocks never overlap.
  */
 export function buildDay(
   dayEntries: DayEntry[],
   maxBillableSeconds: number,
-  billingTagPrefix: string
+  billingTagPrefix: string,
+  roundingSeconds: number
 ) {
+  const roundingMs = roundingSeconds * 1000;
   const sorted = [...dayEntries].sort((a, b) => a.startMs - b.startMs);
 
   // Overlaps in the raw data (you can't bill two entries running at once). Sorted
@@ -203,7 +205,7 @@ export function buildDay(
   const allRows = [...bill, ...warnRows];
   const rounded = roundQuartersPreservingTotal(
     allRows.map((r) => r.seconds),
-    { biasZero: true }
+    { biasZero: true, unitSeconds: roundingSeconds }
   );
   allRows.forEach((r, i) => (r.rounded = rounded[i]));
 
@@ -211,12 +213,12 @@ export function buildDay(
   // the tag/length problem keeps surfacing even when its time is negligible.
   const billKept = bill.filter((r) => r.rounded > 0);
 
-  // Anchor each billable line's start to the nearest quarter and pack forward so
+  // Anchor each billable line's start to the nearest unit and pack forward so
   // the displayed blocks never overlap, even after rounding. The end is the
   // start plus the rounded duration.
   let cursor = -Infinity;
   for (const r of billKept) {
-    let start = snapQuarter(r.groupStartMs);
+    let start = snapToUnit(r.groupStartMs, roundingMs);
     if (start < cursor) start = cursor;
     const end = start + r.rounded * 1000;
     r.startMs = start;
@@ -241,6 +243,7 @@ export function buildIndividualWeek({
   projects,
   maxBillableHours,
   billingTagPrefix,
+  roundingSeconds,
 }: IndividualInput): IndividualWeek | null {
   if (!weekStart) return null;
   const ids = new Set(projects.map((p) => p.id));
@@ -271,7 +274,7 @@ export function buildIndividualWeek({
     .map((dayEntries, dayIdx) => ({
       dayIdx,
       dateMs: weekStart + dayIdx * DAY_MS,
-      ...buildDay(dayEntries, maxBillableSeconds, billingTagPrefix),
+      ...buildDay(dayEntries, maxBillableSeconds, billingTagPrefix, roundingSeconds),
     }))
     .filter((d) => d.rows.length > 0 || d.overlaps.length > 0);
 

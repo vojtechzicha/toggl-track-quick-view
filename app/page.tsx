@@ -732,6 +732,7 @@ export default function Page() {
             maxBillableHours: settings.maxBillableHours,
             minWorkingDayHours: settings.minWorkingDayHours,
             billingTagPrefix: settings.billingTagPrefix,
+            roundingHours: settings.roundingHours,
             refreshSec: settings.refreshSec,
             timesheetMode: settings.timesheetMode,
             exportName: settings.exportName,

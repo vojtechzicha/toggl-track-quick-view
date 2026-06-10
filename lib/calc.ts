@@ -474,36 +474,47 @@ export function unreportedGaps(
   return gaps;
 }
 
-export const QUARTER_SECONDS = 15 * 60; // timesheet rounding granularity
+export const QUARTER_SECONDS = 15 * 60; // default timesheet rounding granularity (15 min)
+export const DEFAULT_ROUNDING_HOURS = 0.25; // 15 minutes, the default rounding unit
+// Granularities a user can pick (hours). 0.25 = 15 min; 0.2 = 12 min (some clients
+// can't enter quarter-hours). Both are exact divisors that keep figures tidy.
+export const ROUNDING_HOURS_OPTIONS = [0.25, 0.2] as const;
 // The billable cap is per-config now; see effectiveMaxBillableHours / WeekConfig.
 
+/** Convert a rounding granularity in hours (e.g. 0.25) to whole seconds (900). */
+export function roundingUnitSeconds(hours: number): number {
+  return Math.round((hours > 0 ? hours : DEFAULT_ROUNDING_HOURS) * 3600);
+}
+
 /**
- * Round a set of second-durations to whole 15-minute units so that the rounded
- * values still **sum to the rounded total** of the originals — i.e. rounding the
- * parts never drifts away from rounding the whole.
+ * Round a set of second-durations to whole rounding units (15 minutes by default,
+ * or whatever `unitSeconds` is set to) so that the rounded values still **sum to
+ * the rounded total** of the originals — i.e. rounding the parts never drifts away
+ * from rounding the whole.
  *
- * The total is rounded to the nearest quarter-hour; each value is floored to a
- * quarter; then the leftover quarters needed to reach the total are handed out
- * one-by-one to the values with the largest fractional remainder (the
- * largest-remainder / Hamilton method). That spreads the unavoidable rounding
- * error as evenly as possible — the parts closest to rounding up are the ones
- * bumped up. Returns rounded seconds in the input order.
+ * The total is rounded to the nearest unit; each value is floored to a unit; then
+ * the leftover units needed to reach the total are handed out one-by-one to the
+ * values with the largest fractional remainder (the largest-remainder / Hamilton
+ * method). That spreads the unavoidable rounding error as evenly as possible — the
+ * parts closest to rounding up are the ones bumped up. Returns rounded seconds in
+ * the input order.
  *
- * With `biasZero`, the spare quarters go **first** to values that would
+ * With `biasZero`, the spare units go **first** to values that would
  * otherwise floor to zero (a small entry the summary would silently drop),
  * so the individual view can surface them; the largest-remainder order only
  * breaks ties among that group and orders the rest. A value can still end up at
- * zero when there aren't enough spare quarters to reach it — the caller decides
+ * zero when there aren't enough spare units to reach it — the caller decides
  * whether to keep or drop it.
  */
 export function roundQuartersPreservingTotal(
   secs: number[],
-  opts: { biasZero?: boolean } = {}
+  opts: { biasZero?: boolean; unitSeconds?: number } = {}
 ): number[] {
-  const quarters = secs.map((s) => Math.max(0, s) / QUARTER_SECONDS);
+  const unit = opts.unitSeconds && opts.unitSeconds > 0 ? opts.unitSeconds : QUARTER_SECONDS;
+  const quarters = secs.map((s) => Math.max(0, s) / unit);
   const floors = quarters.map((q) => Math.floor(q));
-  const target = Math.round(quarters.reduce((a, b) => a + b, 0)); // whole quarters in the total
-  let extra = target - floors.reduce((a, b) => a + b, 0); // spare quarters to distribute (>= 0)
+  const target = Math.round(quarters.reduce((a, b) => a + b, 0)); // whole units in the total
+  let extra = target - floors.reduce((a, b) => a + b, 0); // spare units to distribute (>= 0)
 
   const order = quarters
     .map((q, i) => ({ i, r: q - floors[i], surface: opts.biasZero === true && floors[i] === 0 && q > 0 }))
@@ -516,7 +527,7 @@ export function roundQuartersPreservingTotal(
   for (let k = 0; k < order.length && extra > 0; k++, extra--) {
     out[order[k].i] += 1;
   }
-  return out.map((q) => q * QUARTER_SECONDS);
+  return out.map((q) => q * unit);
 }
 
 /** Compact hours label, e.g. 40 → "40h", 37.5 → "37.5h", 2.25 → "2.25h". */
