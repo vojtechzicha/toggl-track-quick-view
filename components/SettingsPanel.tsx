@@ -152,6 +152,7 @@ export default function SettingsPanel({
   connecting,
   presets,
   onPresetsChange,
+  onApply,
   onConnect,
   onSave,
   onClose,
@@ -170,6 +171,9 @@ export default function SettingsPanel({
   // not part of the settings being edited.
   presets: SettingsPreset[];
   onPresetsChange: (presets: SettingsPreset[]) => void;
+  // Recall a workspace live (persist its settings immediately), so clicking one
+  // in the list switches there at once — the same one-click recall as the topbar.
+  onApply: (preset: SettingsPreset) => void;
   onConnect: (token: string) => void;
   onSave: (value: SettingsValue) => void;
   onClose: () => void;
@@ -333,6 +337,12 @@ export default function SettingsPanel({
     const name = renameText.trim();
     if (name) onPresetsChange(presets.map((p) => (p.id === renamingId ? { ...p, name } : p)));
     setRenamingId(null);
+  };
+  // Clicking a workspace recalls it: switch live (persist) and mirror it into the
+  // form, so Save/Cancel stay consistent and the active marker updates at once.
+  const recallPreset = (p: SettingsPreset) => {
+    applyPresetToForm(p.value);
+    onApply(p);
   };
 
   return (
@@ -653,8 +663,9 @@ export default function SettingsPanel({
             <summary>Workspaces</summary>
             <p className="hint">
               Store the settings shown above as a named workspace, then switch between saved
-              configurations from the dashboard. Editing settings never changes a stored
-              workspace — recall one with the workspace button to bring it back.
+              configurations — click a workspace below (or the 🗂 button in the topbar) to recall
+              it instantly. Editing settings never changes a stored workspace; use ↻ to re-capture
+              the current settings into one.
             </p>
 
             {presets.length > 0 && (
@@ -693,8 +704,8 @@ export default function SettingsPanel({
                           <button
                             type="button"
                             className="ws-name"
-                            title="Load this workspace into the form"
-                            onClick={() => applyPresetToForm(p.value)}
+                            title="Recall this workspace (switch to it now)"
+                            onClick={() => recallPreset(p)}
                           >
                             {active && <span className="ws-dot" aria-label="current" />}
                             <span className="ws-name-text">{p.name}</span>

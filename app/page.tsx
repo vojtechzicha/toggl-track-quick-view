@@ -750,6 +750,7 @@ export default function Page() {
           connecting={connecting}
           presets={settings.presets}
           onPresetsChange={(presets: SettingsPreset[]) => persist({ ...settings, presets })}
+          onApply={(p) => persist(applyPreset(settings, p, projects))}
           onConnect={(token) => connect(token, true)}
           onSave={(v) => {
             persist({ ...settings, ...v });
