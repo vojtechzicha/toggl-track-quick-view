@@ -130,6 +130,11 @@ change the weekly hours):
   a trip in. (The short-week Thursday reserve still scales purely with the weekly
   total, so the default shape is unchanged.)
 
+Also under **Advanced** is **Round timesheet to** — the unit the timesheet rounds
+each entry to. It defaults to **15 minutes (0.25h)**; pick **12 minutes (0.2h)**
+for a client that can't bill quarter-hours. Only the timesheet and exports are
+affected — the dashboard and the targets above are not.
+
 ## Break detection
 
 You're reminded to take a break once you've worked **4.5h continuously** on the
@@ -211,7 +216,8 @@ the hourly budget — it resumes when you click **This week**.
   are summed and their descriptions merged (`; `-separated) with **duplicates
   removed**. Cells show **duration only** — no clock times.
 - Durations are shown as **decimal hours** (e.g. `8.33h`) and **rounded to the
-  nearest 15 minutes**. The rounding is apportioned per day so each day's cells
+  nearest rounding unit** (15 minutes by default, or 12 — see Advanced above).
+  The rounding is apportioned per day so each day's cells
   still **add up to that day's rounded total** — the error is spread evenly
   across tags rather than accumulating (largest-remainder method).
 - A **copy button** on each cell copies that combined description to the
@@ -226,8 +232,8 @@ the hourly budget — it resumes when you click **This week**.
   own rows showing **start–end time, rounded hours, billing tag and description**
   (the summary view shows hours only). A **copy button** copies the row's
   description.
-- **Times are rounded too:** each row's start is snapped to the nearest 15
-  minutes and the end is start + the rounded duration, and rows are **packed
+- **Times are rounded too:** each row's start is snapped to the nearest rounding
+  unit and the end is start + the rounded duration, and rows are **packed
   forward so they never overlap** even after rounding.
 - **Adjacent same-tag entries combine** into one row — but only when they sit
   **within an hour** of each other and the combined time stays **≤ 4h**. So
@@ -323,5 +329,6 @@ else the proportional default).
 
 The fixed, deliberately **un-scaled** thresholds stay exported:
 `BREAK_AFTER_HOURS` (ergonomic — same regardless of the week's size),
-`BREAK_GAP_MINUTES`, `UNREPORTED_MIN_MINUTES`, and the timesheet's
-`QUARTER_SECONDS` rounding granularity.
+`BREAK_GAP_MINUTES`, and `UNREPORTED_MIN_MINUTES`. The timesheet's rounding
+granularity defaults to `QUARTER_SECONDS` (15 min) but is a user setting
+(`roundingHours`); `roundingUnitSeconds` converts it to seconds for the builders.

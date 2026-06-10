@@ -40,6 +40,8 @@ export interface ExportDialogProps {
   selectedWeekStart: number | null;
   maxBillableHours: number;
   billingTagPrefix: string;
+  /** Rounding granularity in seconds (900 = 15 min default, 720 = 12 min). */
+  roundingSeconds: number;
   /** Document title (project / group name). */
   title: string;
   /** Person the timesheet is for (resolved name, may be empty). */
@@ -62,6 +64,7 @@ export default function ExportDialog({
   selectedWeekStart,
   maxBillableHours,
   billingTagPrefix,
+  roundingSeconds,
   title,
   personName,
   prefetched,
@@ -135,6 +138,7 @@ export default function ExportDialog({
         multi,
         maxBillableHours,
         billingTagPrefix,
+        roundingSeconds,
         title,
         personName: name.trim(),
       });
@@ -164,7 +168,7 @@ export default function ExportDialog({
       <div className="panel">
         <h2>Export timesheet</h2>
         <p className="hint">
-          Exports the <strong>{viewLabel}</strong> view exactly as shown — same 15-minute
+          Exports the <strong>{viewLabel}</strong> view exactly as shown — same
           rounding and grouping, not the raw Toggl entries.
         </p>
 

@@ -11,7 +11,13 @@ import ExportDialog from '@/components/export/ExportDialog';
 import type { TimesheetViewProps } from '@/components/timesheet/types';
 import { useToggl } from '@/lib/useToggl';
 import { isAuthRequired } from '@/lib/toggl';
-import { startOfWeek, effectiveMaxBillableHours, fmtTimeOfDay, type TimeEntry } from '@/lib/calc';
+import {
+  startOfWeek,
+  effectiveMaxBillableHours,
+  roundingUnitSeconds,
+  fmtTimeOfDay,
+  type TimeEntry,
+} from '@/lib/calc';
 
 const DAY_MS = 24 * 3600 * 1000;
 const WEEK_MS = 7 * DAY_MS;
@@ -19,13 +25,16 @@ const PICKER_PAGE = 12; // how many previous weeks the picker reveals at a time
 
 // One entry per timesheet view. Adding a new view is just another row here plus
 // its component — the shell below stays untouched.
-const VIEWS: Record<TimesheetMode, { note: string; Component: ComponentType<TimesheetViewProps> }> = {
+const VIEWS: Record<
+  TimesheetMode,
+  { note: (roundMins: number) => string; Component: ComponentType<TimesheetViewProps> }
+> = {
   summary: {
-    note: 'Combined per billing tag, rounded to 15 min · copy a cell to paste into your timesheet',
+    note: (m) => `Combined per billing tag, rounded to ${m} min · copy a cell to paste into your timesheet`,
     Component: SummaryTimesheet,
   },
   individual: {
-    note: 'One row per entry, with times · same-code neighbours combined, rounded to 15 min',
+    note: (m) => `One row per entry, with times · same-code neighbours combined, rounded to ${m} min`,
     Component: IndividualTimesheet,
   },
 };
@@ -279,12 +288,13 @@ export default function TimesheetPage() {
             multi={multi}
             maxBillableHours={effectiveMaxBillableHours(settings)}
             billingTagPrefix={settings.billingTagPrefix}
+            roundingSeconds={roundingUnitSeconds(settings.roundingHours)}
           />
         )}
 
         <footer className="footer">
           <span>
-            {view.note} ·{' '}
+            {view.note(Math.round(settings.roundingHours * 60))} ·{' '}
             {mode === 'history'
               ? 'past week · manual refresh'
               : cacheEnabled
@@ -303,6 +313,7 @@ export default function TimesheetPage() {
           selectedWeekStart={shownWeekStart || null}
           maxBillableHours={effectiveMaxBillableHours(settings)}
           billingTagPrefix={settings.billingTagPrefix}
+          roundingSeconds={roundingUnitSeconds(settings.roundingHours)}
           title={projectTitle}
           personName={settings.exportName.trim() || settings.accountName}
           prefetched={exportPrefetched}
@@ -324,6 +335,7 @@ export default function TimesheetPage() {
             maxBillableHours: settings.maxBillableHours,
             minWorkingDayHours: settings.minWorkingDayHours,
             billingTagPrefix: settings.billingTagPrefix,
+            roundingHours: settings.roundingHours,
             refreshSec: settings.refreshSec,
             timesheetMode: settings.timesheetMode,
             exportName: settings.exportName,

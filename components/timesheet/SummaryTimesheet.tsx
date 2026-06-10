@@ -13,7 +13,7 @@ import CopyButton from './CopyButton';
  * tag under two projects stays on two separate rows, each prefixed by its project
  * name. With a single project selected the prefix is suppressed. Each day's
  * entries for a row are combined into one cell — durations summed, descriptions
- * merged without repeats — and rounded to 15-minute units so each day's cells
+ * merged without repeats — and rounded to the configured unit so each day's cells
  * still add up to that day's rounded total (no accumulated drift).
  *
  * The grid is built by the shared `buildSummaryGrid` so exports match exactly.
@@ -25,10 +25,11 @@ export default function SummaryTimesheet({
   projects,
   multi,
   billingTagPrefix,
+  roundingSeconds,
 }: TimesheetViewProps) {
   const grid = useMemo(
-    () => buildSummaryGrid({ entries, weekStart, nowMs, projects, billingTagPrefix }),
-    [entries, weekStart, nowMs, projects, billingTagPrefix]
+    () => buildSummaryGrid({ entries, weekStart, nowMs, projects, billingTagPrefix, roundingSeconds }),
+    [entries, weekStart, nowMs, projects, billingTagPrefix, roundingSeconds]
   );
 
   if (!grid || grid.rows.length === 0) {

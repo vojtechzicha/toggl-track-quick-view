@@ -29,6 +29,7 @@ import {
   startOfWeek,
   DEFAULT_WEEKLY_HOURS,
   DEFAULT_BILLING_TAG_PREFIX,
+  DEFAULT_ROUNDING_HOURS,
 } from '@/lib/calc';
 
 const LS_KEY = 'tqv.settings.v1';
@@ -57,6 +58,7 @@ export const DEFAULTS: StoredSettings = {
   maxBillableHours: null,
   minWorkingDayHours: null,
   billingTagPrefix: DEFAULT_BILLING_TAG_PREFIX,
+  roundingHours: DEFAULT_ROUNDING_HOURS,
   refreshSec: DEFAULT_REFRESH_SEC,
   timesheetMode: 'summary',
   exportName: '',
