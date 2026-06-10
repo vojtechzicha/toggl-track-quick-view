@@ -225,7 +225,7 @@ export default function Page() {
           running: e.running,
           dur,
           missingTag: !hasBillingTag(e.tags, settings.billingTagPrefix),
-          tooLong: dur > maxBillSec,
+          tooLong: settings.timesheetMode === 'individual' && dur > maxBillSec,
           projId: e.projectId,
         });
       }
