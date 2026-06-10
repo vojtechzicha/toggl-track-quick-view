@@ -3,10 +3,11 @@
 import { useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
 import ProgressRing from '@/components/ProgressRing';
-import SettingsPanel from '@/components/SettingsPanel';
+import SettingsPanel, { type SettingsPreset } from '@/components/SettingsPanel';
 import ProjectChips from '@/components/ProjectChips';
 import PasswordGate from '@/components/PasswordGate';
-import { useToggl, HOURLY_LIMIT, fmtInterval } from '@/lib/useToggl';
+import WorkspaceSwitcher from '@/components/WorkspaceSwitcher';
+import { useToggl, applyPreset, HOURLY_LIMIT, fmtInterval } from '@/lib/useToggl';
 import {
   NormEntry,
   Gap,
@@ -428,6 +429,11 @@ export default function Page() {
             </p>
           </div>
           <div className="topbar-actions">
+            <WorkspaceSwitcher
+              presets={settings.presets}
+              current={settings}
+              onSelect={(p) => persist(applyPreset(settings, p, projects))}
+            />
             <Link className="navbtn" href="/timesheet" aria-label="Timesheet">
               <span className="navbtn-icon">🧾</span>
               <span className="navbtn-text">Timesheet</span>
@@ -742,6 +748,8 @@ export default function Page() {
           cacheInterval={cacheEnabled ? effectiveRefreshSec : null}
           authError={authError}
           connecting={connecting}
+          presets={settings.presets}
+          onPresetsChange={(presets: SettingsPreset[]) => persist({ ...settings, presets })}
           onConnect={(token) => connect(token, true)}
           onSave={(v) => {
             persist({ ...settings, ...v });

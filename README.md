@@ -180,6 +180,29 @@ The prefix is configurable under **Settings → Advanced → Billing tag prefix*
 (change it to `A`, say, to match `A123` tags). Its default lives in
 [`lib/calc.ts`](lib/calc.ts) as `DEFAULT_BILLING_TAG_PREFIX`.
 
+## Workspaces (stored settings)
+
+A **workspace** is a named snapshot of your settings you can recall in one click —
+handy when you juggle more than one setup (different clients, each with their own
+project selection, weekly target, billing-tag prefix and rounding).
+
+- Configure the settings you want, then open **Settings → Workspaces**, type a
+  name and hit **Save current**. Store as many as you like.
+- A **🗂 Workspaces** button then appears in the topbar (dashboard *and*
+  timesheet). Click it and pick a workspace to switch instantly — the button
+  names whichever stored workspace currently matches, and the menu ticks it.
+- Workspaces are **immutable snapshots**: editing your live settings never
+  changes a stored one. To re-capture the current settings into an existing
+  workspace, use the **↻** (overwrite) button next to it; **✎** renames and **🗑**
+  deletes. Inside Settings, clicking a workspace name loads it back into the form
+  for review before you Save.
+
+A workspace captures everything in Settings **except** the API token (the account
+credential, shared across all workspaces) and the refresh interval (a per-device
+knob). The list lives in the browser's `localStorage` alongside your other
+settings, so it's secondary by design — the quick-switch button is the main way
+you'll use it.
+
 ## Timesheet
 
 The **Timesheet** button (top-right of the dashboard, or `/timesheet`) opens a

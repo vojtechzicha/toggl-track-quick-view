@@ -1308,3 +1308,179 @@ body:has(.ts-page) {
   align-self: center;
   cursor: pointer;
 }
+
+/* ---------- Workspaces (stored settings) ---------- */
+/* Topbar quick-switch: a navbtn that drops down the stored workspaces. */
+.ws-switcher {
+  position: relative;
+  flex: 0 0 auto;
+}
+.ws-switcher .navbtn-text {
+  max-width: 160px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.ws-menu {
+  position: absolute;
+  top: calc(100% + 6px);
+  right: 0;
+  z-index: 60;
+  min-width: 200px;
+  max-width: 280px;
+  max-height: 60vh;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 6px;
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  box-shadow: 0 16px 40px rgba(2, 5, 12, 0.55);
+}
+.ws-menu-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 9px 10px;
+  border: 1px solid transparent;
+  border-radius: 10px;
+  background: none;
+  color: var(--text);
+  font-size: 14px;
+  font-weight: 600;
+  text-align: left;
+  cursor: pointer;
+  transition: background 0.12s, border-color 0.12s;
+}
+.ws-menu-item:hover {
+  background: var(--card2);
+  border-color: var(--accent);
+}
+.ws-menu-item.active {
+  background: rgba(59, 130, 246, 0.12);
+}
+.ws-menu-check {
+  flex: 0 0 auto;
+  width: 14px;
+  color: var(--accent-soft);
+  font-weight: 800;
+}
+.ws-menu-name {
+  flex: 1 1 auto;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Settings-panel "Workspaces" block: reuses the .advanced collapsible shell. */
+.ws-list {
+  list-style: none;
+  margin: 8px 0 12px;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.ws-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 6px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--card);
+}
+.ws-row.active {
+  border-color: rgba(59, 130, 246, 0.55);
+  background: rgba(59, 130, 246, 0.08);
+}
+.ws-name {
+  flex: 1 1 auto;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  padding: 4px 6px;
+  background: none;
+  border: none;
+  color: var(--text);
+  font-size: 14px;
+  font-weight: 600;
+  text-align: left;
+  cursor: pointer;
+  border-radius: 8px;
+}
+.ws-name:hover {
+  color: var(--accent-soft);
+}
+.ws-name-text {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.ws-dot {
+  flex: 0 0 auto;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--accent-soft);
+}
+.ws-rename {
+  flex: 1 1 auto;
+  min-width: 0;
+  background: var(--bg);
+  border: 1px solid var(--accent);
+  color: var(--text);
+  border-radius: 8px;
+  padding: 7px 9px;
+  font-size: 14px;
+}
+.ws-rename:focus {
+  outline: none;
+}
+.ws-icon {
+  flex: 0 0 auto;
+  width: 30px;
+  height: 30px;
+  display: grid;
+  place-items: center;
+  background: var(--bg);
+  border: 1px solid var(--line);
+  color: var(--text);
+  border-radius: 8px;
+  font-size: 14px;
+  cursor: pointer;
+  transition: background 0.12s, border-color 0.12s, color 0.12s;
+}
+.ws-icon:hover {
+  background: var(--card2);
+  border-color: var(--accent);
+}
+.ws-del:hover {
+  border-color: var(--red);
+}
+.ws-new {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 4px;
+}
+.ws-new input {
+  flex: 1 1 auto;
+  min-width: 0;
+  background: var(--bg);
+  border: 1px solid var(--line);
+  color: var(--text);
+  border-radius: 12px;
+  padding: 11px 13px;
+  font-size: 14px;
+}
+.ws-new input:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+.ws-new .btn {
+  flex: 0 0 auto;
+}
