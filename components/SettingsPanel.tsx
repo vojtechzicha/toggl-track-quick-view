@@ -51,6 +51,70 @@ export interface SettingsValue {
   exportName: string;
 }
 
+/**
+ * The settings a stored workspace captures: everything the user configures here
+ * except the Toggl token (the account credential, shared across workspaces) and
+ * the refresh interval (a device/network knob, not part of "a workspace"). A
+ * workspace is a named snapshot you can recall from the dashboard to quick-switch
+ * between configurations (e.g. different clients with their own targets/billing).
+ */
+export type PresetValue = Omit<SettingsValue, 'token' | 'refreshSec'>;
+
+export interface SettingsPreset {
+  id: string;
+  name: string;
+  value: PresetValue;
+}
+
+/** Snapshot the preset-relevant fields out of a full settings value. */
+export function toPresetValue(s: SettingsValue): PresetValue {
+  return {
+    selectedProjects: s.selectedProjects,
+    groupName: s.groupName,
+    shortFriday: s.shortFriday,
+    weeklyHours: s.weeklyHours,
+    maxBillableHours: s.maxBillableHours,
+    minWorkingDayHours: s.minWorkingDayHours,
+    billingTagPrefix: s.billingTagPrefix,
+    roundingHours: s.roundingHours,
+    timesheetMode: s.timesheetMode,
+    exportName: s.exportName,
+  };
+}
+
+/**
+ * Whether a settings value currently matches a stored workspace. Projects are
+ * compared by id set only (names/colors are denormalised and can drift as Toggl
+ * changes), so recalling a workspace keeps reading as "active" after a refresh.
+ */
+export function presetMatches(value: PresetValue, s: SettingsValue): boolean {
+  const ids = (ps: SelectedProject[]) =>
+    ps
+      .map((p) => p.id)
+      .sort((a, b) => a - b)
+      .join(',');
+  return (
+    ids(value.selectedProjects) === ids(s.selectedProjects) &&
+    value.groupName === s.groupName &&
+    value.shortFriday === s.shortFriday &&
+    value.weeklyHours === s.weeklyHours &&
+    value.maxBillableHours === s.maxBillableHours &&
+    value.minWorkingDayHours === s.minWorkingDayHours &&
+    value.billingTagPrefix === s.billingTagPrefix &&
+    value.roundingHours === s.roundingHours &&
+    value.timesheetMode === s.timesheetMode &&
+    value.exportName === s.exportName
+  );
+}
+
+/** A stable id for a new workspace (falls back when crypto.randomUUID is absent). */
+function genPresetId(): string {
+  if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
+    return crypto.randomUUID();
+  }
+  return `ws_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
+}
+
 const WEEKLY_MIN = 1;
 const WEEKLY_MAX = 80;
 const STEP = 0.25; // 15-minute granularity for every hours field
@@ -86,6 +150,9 @@ export default function SettingsPanel({
   cacheInterval,
   authError,
   connecting,
+  presets,
+  onPresetsChange,
+  onApply,
   onConnect,
   onSave,
   onClose,
@@ -99,6 +166,14 @@ export default function SettingsPanel({
   cacheInterval: number | null;
   authError: string | null;
   connecting: boolean;
+  // Stored workspaces and a callback that persists the list. Workspace edits are
+  // committed immediately (independent of the Save button below) — they're meta,
+  // not part of the settings being edited.
+  presets: SettingsPreset[];
+  onPresetsChange: (presets: SettingsPreset[]) => void;
+  // Recall a workspace live (persist its settings immediately), so clicking one
+  // in the list switches there at once — the same one-click recall as the topbar.
+  onApply: (preset: SettingsPreset) => void;
   onConnect: (token: string) => void;
   onSave: (value: SettingsValue) => void;
   onClose: () => void;
@@ -162,7 +237,10 @@ export default function SettingsPanel({
     ? clampQuarter(parsedWeekly, WEEKLY_MIN, WEEKLY_MAX)
     : DEFAULT_WEEKLY_HOURS;
 
-  const handleSave = () => {
+  // Build the settings value from the current form state (parsing/clamping the
+  // raw fields). Shared by Save and by "store as a workspace", so a workspace
+  // snapshots exactly what the form would save.
+  const buildValue = (): SettingsValue => {
     // Resolve each selected id to its full {id, name, color} from the loaded list,
     // falling back to whatever we already had stored (covers an archived project
     // that no longer appears in the active list).
@@ -181,7 +259,7 @@ export default function SettingsPanel({
       if (s.trim() === '' || !Number.isFinite(n)) return null;
       return clampQuarter(n, min, weeklyHours);
     };
-    onSave({
+    return {
       // In server-managed mode the token always stays empty so the proxy uses
       // the server's TOGGL_API_TOKEN.
       token: serverManaged ? '' : token,
@@ -202,7 +280,69 @@ export default function SettingsPanel({
       refreshSec,
       timesheetMode,
       exportName: exportName.trim(),
-    });
+    };
+  };
+
+  const handleSave = () => onSave(buildValue());
+
+  // ---- Workspaces (stored settings) ----
+  const [newPresetName, setNewPresetName] = useState('');
+  const [renamingId, setRenamingId] = useState<string | null>(null);
+  const [renameText, setRenameText] = useState('');
+
+  // Load a stored workspace back into the form. Doesn't save on its own — the
+  // user reviews and clicks Save (the dashboard switcher applies directly).
+  const applyPresetToForm = (v: PresetValue) => {
+    setSelectedIds(v.selectedProjects.map((p) => p.id));
+    setGroupName(v.groupName);
+    setMultiExpanded(v.selectedProjects.length > 1);
+    setShortFriday(v.shortFriday);
+    setTimesheetMode(v.timesheetMode);
+    setExportName(v.exportName);
+    setWeeklyStr(numLabel(v.weeklyHours));
+    setMaxBillStr(v.maxBillableHours === null ? '' : numLabel(v.maxBillableHours));
+    setMinDayStr(v.minWorkingDayHours === null ? '' : numLabel(v.minWorkingDayHours));
+    setBillingPrefix(v.billingTagPrefix);
+    setRoundingHours(v.roundingHours);
+    if (
+      v.maxBillableHours !== null ||
+      v.minWorkingDayHours !== null ||
+      v.billingTagPrefix !== DEFAULT_BILLING_TAG_PREFIX ||
+      v.roundingHours !== DEFAULT_ROUNDING_HOURS ||
+      v.exportName.trim() !== ''
+    ) {
+      setShowAdvanced(true);
+    }
+  };
+
+  const addPreset = () => {
+    const name = newPresetName.trim();
+    if (!name || selectedIds.length === 0) return;
+    onPresetsChange([...presets, { id: genPresetId(), name, value: toPresetValue(buildValue()) }]);
+    setNewPresetName('');
+  };
+  const updatePreset = (id: string) =>
+    onPresetsChange(
+      presets.map((p) => (p.id === id ? { ...p, value: toPresetValue(buildValue()) } : p))
+    );
+  const deletePreset = (id: string) => {
+    onPresetsChange(presets.filter((p) => p.id !== id));
+    if (renamingId === id) setRenamingId(null);
+  };
+  const startRename = (p: SettingsPreset) => {
+    setRenamingId(p.id);
+    setRenameText(p.name);
+  };
+  const commitRename = () => {
+    const name = renameText.trim();
+    if (name) onPresetsChange(presets.map((p) => (p.id === renamingId ? { ...p, name } : p)));
+    setRenamingId(null);
+  };
+  // Clicking a workspace recalls it: switch live (persist) and mirror it into the
+  // form, so Save/Cancel stay consistent and the active marker updates at once.
+  const recallPreset = (p: SettingsPreset) => {
+    applyPresetToForm(p.value);
+    onApply(p);
   };
 
   return (
@@ -516,6 +656,112 @@ export default function SettingsPanel({
               between refreshes. Toggl&apos;s Free plan allows 30 requests/hour.
             </p>
           </div>
+        )}
+
+        {showProjects && (
+          <details className="advanced ws-block">
+            <summary>Workspaces</summary>
+            <p className="hint">
+              Store the settings shown above as a named workspace, then switch between saved
+              configurations — click a workspace below (or the 🗂 button in the topbar) to recall
+              it instantly. Editing settings never changes a stored workspace; use ↻ to re-capture
+              the current settings into one.
+            </p>
+
+            {presets.length > 0 && (
+              <ul className="ws-list">
+                {presets.map((p) => {
+                  const active = presetMatches(p.value, initial);
+                  return (
+                    <li key={p.id} className={`ws-row${active ? ' active' : ''}`}>
+                      {renamingId === p.id ? (
+                        <>
+                          <input
+                            type="text"
+                            className="ws-rename"
+                            value={renameText}
+                            autoFocus
+                            onChange={(e) => setRenameText(e.target.value)}
+                            onKeyDown={(e) => {
+                              if (e.key === 'Enter') commitRename();
+                              if (e.key === 'Escape') setRenamingId(null);
+                            }}
+                          />
+                          <button type="button" className="ws-icon" title="Save name" onClick={commitRename}>
+                            ✓
+                          </button>
+                          <button
+                            type="button"
+                            className="ws-icon"
+                            title="Cancel"
+                            onClick={() => setRenamingId(null)}
+                          >
+                            ✕
+                          </button>
+                        </>
+                      ) : (
+                        <>
+                          <button
+                            type="button"
+                            className="ws-name"
+                            title="Recall this workspace (switch to it now)"
+                            onClick={() => recallPreset(p)}
+                          >
+                            {active && <span className="ws-dot" aria-label="current" />}
+                            <span className="ws-name-text">{p.name}</span>
+                          </button>
+                          <button
+                            type="button"
+                            className="ws-icon"
+                            title="Overwrite with the settings shown above"
+                            onClick={() => updatePreset(p.id)}
+                          >
+                            ↻
+                          </button>
+                          <button
+                            type="button"
+                            className="ws-icon"
+                            title="Rename"
+                            onClick={() => startRename(p)}
+                          >
+                            ✎
+                          </button>
+                          <button
+                            type="button"
+                            className="ws-icon ws-del"
+                            title="Delete"
+                            onClick={() => deletePreset(p.id)}
+                          >
+                            🗑
+                          </button>
+                        </>
+                      )}
+                    </li>
+                  );
+                })}
+              </ul>
+            )}
+
+            <div className="ws-new">
+              <input
+                type="text"
+                value={newPresetName}
+                placeholder="New workspace name"
+                onChange={(e) => setNewPresetName(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') addPreset();
+                }}
+              />
+              <button
+                type="button"
+                className="btn"
+                disabled={!newPresetName.trim() || selectedIds.length === 0}
+                onClick={addPreset}
+              >
+                Save current
+              </button>
+            </div>
+          </details>
         )}
 
         <div className="row">

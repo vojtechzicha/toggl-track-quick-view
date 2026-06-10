@@ -3,10 +3,10 @@
 import { useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
 import ProgressRing from '@/components/ProgressRing';
-import SettingsPanel from '@/components/SettingsPanel';
+import SettingsPanel, { type SettingsPreset } from '@/components/SettingsPanel';
 import ProjectChips from '@/components/ProjectChips';
 import PasswordGate from '@/components/PasswordGate';
-import { useToggl, HOURLY_LIMIT, fmtInterval } from '@/lib/useToggl';
+import { useToggl, applyPreset, HOURLY_LIMIT, fmtInterval } from '@/lib/useToggl';
 import {
   NormEntry,
   Gap,
@@ -742,6 +742,9 @@ export default function Page() {
           cacheInterval={cacheEnabled ? effectiveRefreshSec : null}
           authError={authError}
           connecting={connecting}
+          presets={settings.presets}
+          onPresetsChange={(presets: SettingsPreset[]) => persist({ ...settings, presets })}
+          onApply={(p) => persist(applyPreset(settings, p, projects))}
           onConnect={(token) => connect(token, true)}
           onSave={(v) => {
             persist({ ...settings, ...v });

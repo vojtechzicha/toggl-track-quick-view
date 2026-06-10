@@ -2,14 +2,14 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState, type ComponentType } from 'react';
 import Link from 'next/link';
-import SettingsPanel, { TimesheetMode } from '@/components/SettingsPanel';
+import SettingsPanel, { TimesheetMode, type SettingsPreset } from '@/components/SettingsPanel';
 import ProjectChips from '@/components/ProjectChips';
 import PasswordGate from '@/components/PasswordGate';
 import SummaryTimesheet from '@/components/timesheet/SummaryTimesheet';
 import IndividualTimesheet from '@/components/timesheet/IndividualTimesheet';
 import ExportDialog from '@/components/export/ExportDialog';
 import type { TimesheetViewProps } from '@/components/timesheet/types';
-import { useToggl } from '@/lib/useToggl';
+import { useToggl, applyPreset } from '@/lib/useToggl';
 import { isAuthRequired } from '@/lib/toggl';
 import {
   startOfWeek,
@@ -345,6 +345,9 @@ export default function TimesheetPage() {
           cacheInterval={cacheEnabled ? effectiveRefreshSec : null}
           authError={authError}
           connecting={connecting}
+          presets={settings.presets}
+          onPresetsChange={(presets: SettingsPreset[]) => persist({ ...settings, presets })}
+          onApply={(p) => persist(applyPreset(settings, p, projects))}
           onConnect={(token) => connect(token, true)}
           onSave={(v) => {
             persist({ ...settings, ...v });

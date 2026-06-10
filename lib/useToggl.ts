@@ -22,7 +22,7 @@ import {
   login,
   Project,
 } from '@/lib/toggl';
-import type { SettingsValue, SelectedProject } from '@/components/SettingsPanel';
+import type { SettingsValue, SelectedProject, SettingsPreset } from '@/components/SettingsPanel';
 import {
   TimeEntry,
   startOfDay,
@@ -45,6 +45,9 @@ export interface StoredSettings extends SettingsValue {
   // The Toggl account's display name, captured at connect time. Used as the
   // default "name" on exports; not directly user-edited (see exportName).
   accountName: string;
+  // Saved "workspaces": named snapshots of the configurable settings the user can
+  // recall from the dashboard to quick-switch between setups (see SettingsPreset).
+  presets: SettingsPreset[];
 }
 
 export const DEFAULTS: StoredSettings = {
@@ -62,7 +65,26 @@ export const DEFAULTS: StoredSettings = {
   refreshSec: DEFAULT_REFRESH_SEC,
   timesheetMode: 'summary',
   exportName: '',
+  presets: [],
 };
+
+/**
+ * Apply a stored workspace over the current settings, returning the new value to
+ * persist. Refreshes each recalled project's name/color from the live project
+ * list (denormalised copies drift as Toggl changes); the token, workspace and
+ * stored-workspace list are left untouched.
+ */
+export function applyPreset(
+  settings: StoredSettings,
+  preset: SettingsPreset,
+  projects: Project[]
+): StoredSettings {
+  return {
+    ...settings,
+    ...preset.value,
+    selectedProjects: enrichSelected(preset.value.selectedProjects, projects),
+  };
+}
 
 function loadSettings(): StoredSettings {
   if (typeof window === 'undefined') return DEFAULTS;
