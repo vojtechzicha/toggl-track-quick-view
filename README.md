@@ -161,6 +161,16 @@ so a client never sees it. The cap is measured on **billable lines only** — th
 "No billing tag" / "Multiple billing tags" / "Too long" warnings are problems to
 fix in Toggl, not billable slack, so they never count toward it or get trimmed.
 
+**Month boundaries split the cap.** Billing runs to month-end, so when the 1st of
+a month falls mid-week the week is cut there and each side gets its own cap,
+proportional to the **weekdays (Mon–Fri)** it holds — `weeklyHours / 5 × that
+count` — and each side is trimmed independently. So if the 1st is a Wednesday, the
+Sat–Tue half caps at `weeklyHours/5 × 2` and the Wed–Fri half at `weeklyHours/5 ×
+3`. A weekend-only half caps at **zero** (its work isn't billed): when the 1st is a
+Monday, the leading Sat–Sun is capped at nothing. A week wholly inside one month is
+a single full-week segment capped at `weeklyHours`, exactly as before. This applies
+to the on-screen week too, not just month exports.
+
 The trimmed time is shown **only in the on-screen views** (Summary and Individual)
 on a muted **"Overtime (not billed)"** line, as a hint that the cap is doing its
 job. **Exports stay clean**: the XLSX / CSV / PDF contain only the billable

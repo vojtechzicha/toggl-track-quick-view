@@ -95,8 +95,62 @@ function apportion(total: number, weights: number[]): number[] {
   return out;
 }
 
-/** Whole rounding units that fit under a weekly hours cap (floored, so never over). */
-export function capUnits(weeklyHours: number, roundingSeconds: number): number {
-  if (weeklyHours <= 0 || roundingSeconds <= 0) return 0;
-  return Math.floor((weeklyHours * 3600) / roundingSeconds);
+/** Whole rounding units that fit under an hours cap (floored, so never over). */
+export function capUnits(hours: number, roundingSeconds: number): number {
+  if (hours <= 0 || roundingSeconds <= 0) return 0;
+  return Math.floor((hours * 3600) / roundingSeconds);
+}
+
+/** One stretch of a week the overtime cap applies to, with its own unit budget. */
+export interface WeekSegment {
+  startDay: number; // inclusive day index within the week (0 = Sat … 6 = Fri)
+  endDay: number; // inclusive
+  capUnits: number; // overtime cap for this segment, in whole rounding units
+}
+
+/**
+ * Split a week into the segments the overtime cap applies to.
+ *
+ * Billing runs to month-end, so when a month boundary falls mid-week the week is
+ * cut there and each side gets its own cap, proportional to the number of weekdays
+ * (Mon–Fri) it contains: `weeklyHours / 5 × that count`. A weekend-only segment
+ * therefore caps at zero — its work isn't billed — e.g. when the 1st lands on a
+ * Monday the leading Sat–Sun is capped at nothing. A week wholly inside one month
+ * is a single full-week segment (cap = weeklyHours), exactly as before.
+ */
+export function weekSegments(
+  weekStart: number,
+  weeklyHours: number,
+  roundingSeconds: number
+): WeekSegment[] {
+  // Mon–Fri are day indices 2…6; Sat/Sun (0,1) are weekend and add nothing.
+  const segHours = (start: number, end: number) => {
+    let weekdays = 0;
+    for (let d = start; d <= end; d++) if (d >= 2) weekdays++;
+    return (weeklyHours / 5) * weekdays;
+  };
+  const seg = (start: number, end: number): WeekSegment => ({
+    startDay: start,
+    endDay: end,
+    capUnits: capUnits(segHours(start, end), roundingSeconds),
+  });
+
+  const split = monthSplitDay(weekStart);
+  return split === null ? [seg(0, 6)] : [seg(0, split - 1), seg(split, 6)];
+}
+
+/** The first day index (1…6) whose calendar month differs from the week's first day, or null. */
+function monthSplitDay(weekStart: number): number | null {
+  const monthKey = (d: number) => {
+    // setDate keeps it on local calendar days, so a DST change at a month-end
+    // midnight can't drift the boundary the way fixed-ms day math could.
+    const dt = new Date(weekStart);
+    dt.setDate(dt.getDate() + d);
+    return dt.getFullYear() * 12 + dt.getMonth();
+  };
+  const first = monthKey(0);
+  for (let d = 1; d <= 6; d++) {
+    if (monthKey(d) !== first) return d;
+  }
+  return null;
 }

@@ -9,7 +9,7 @@ import {
   type TimeEntry,
 } from '@/lib/calc';
 import type { SelectedProject } from '@/components/SettingsPanel';
-import { allocateOvertimeTrim, capUnits } from './overtime';
+import { allocateOvertimeTrim, weekSegments } from './overtime';
 import { DAY_MS, UNTAGGED, MULTIPLE } from './constants';
 
 export interface Cell {
@@ -180,35 +180,40 @@ export function buildSummaryGrid({
     rows.forEach((r, ri) => rounded.set(`${d}|${r}`, adj[ri]));
   }
 
-  // Overtime pass: when the contract disallows billing overtime and the week's
-  // billable cells exceed the cap, shave whole rounding units off them (trimmable
-  // "(X)" codes first), spread proportionally across cells. Warning rows are never
-  // billed, so they're excluded from both the cap measurement and the trimming.
+  // Overtime pass: when the contract disallows billing overtime and a segment's
+  // billable cells exceed its cap, shave whole rounding units off them (trimmable
+  // "(X)" portions first), spread proportionally across cells. A month boundary
+  // mid-week splits the week into two independently-capped segments; otherwise it's
+  // one full-week segment. Warning rows are never billed, so they're excluded from
+  // both the cap measurement and the trimming.
   const overtimeByDay = new Array<number>(7).fill(0);
   if (noOvertime && weeklyHours > 0) {
-    const billCells: { key: string; day: number; units: number; trimmableUnits: number }[] = [];
-    for (const d of dayCols) {
-      for (const r of tagRows) {
-        const units = Math.round((rounded.get(`${d}|${r}`) ?? 0) / roundingSeconds);
-        if (units <= 0) continue;
-        const cell = cells.get(`${d}|${r}`);
-        // The trimmable budget is the "(X)" share of this cell's rounded units.
-        const frac = cell && cell.seconds > 0 ? cell.trimmableSeconds / cell.seconds : 0;
-        const trimmableUnits = Math.min(units, Math.round(units * frac));
-        billCells.push({ key: `${d}|${r}`, day: d, units, trimmableUnits });
+    for (const seg of weekSegments(weekStart, weeklyHours, roundingSeconds)) {
+      const billCells: { key: string; day: number; units: number; trimmableUnits: number }[] = [];
+      for (const d of dayCols) {
+        if (d < seg.startDay || d > seg.endDay) continue;
+        for (const r of tagRows) {
+          const units = Math.round((rounded.get(`${d}|${r}`) ?? 0) / roundingSeconds);
+          if (units <= 0) continue;
+          const cell = cells.get(`${d}|${r}`);
+          // The trimmable budget is the "(X)" share of this cell's rounded units.
+          const frac = cell && cell.seconds > 0 ? cell.trimmableSeconds / cell.seconds : 0;
+          const trimmableUnits = Math.min(units, Math.round(units * frac));
+          billCells.push({ key: `${d}|${r}`, day: d, units, trimmableUnits });
+        }
       }
+      const removed = allocateOvertimeTrim(
+        billCells.map((c) => ({ units: c.units, trimmableUnits: c.trimmableUnits })),
+        seg.capUnits
+      );
+      billCells.forEach((c, i) => {
+        if (removed[i] > 0) {
+          const strip = removed[i] * roundingSeconds;
+          rounded.set(c.key, (rounded.get(c.key) ?? 0) - strip);
+          overtimeByDay[c.day] += strip;
+        }
+      });
     }
-    const removed = allocateOvertimeTrim(
-      billCells.map((c) => ({ units: c.units, trimmableUnits: c.trimmableUnits })),
-      capUnits(weeklyHours, roundingSeconds)
-    );
-    billCells.forEach((c, i) => {
-      if (removed[i] > 0) {
-        const strip = removed[i] * roundingSeconds;
-        rounded.set(c.key, (rounded.get(c.key) ?? 0) - strip);
-        overtimeByDay[c.day] += strip;
-      }
-    });
   }
 
   // Totals are billable-only: warning rows ride along as view hints but don't count

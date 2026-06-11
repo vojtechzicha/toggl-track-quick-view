@@ -11,7 +11,7 @@ import {
   type TimeEntry,
 } from '@/lib/calc';
 import type { SelectedProject } from '@/components/SettingsPanel';
-import { allocateOvertimeTrim, capUnits } from './overtime';
+import { allocateOvertimeTrim, weekSegments } from './overtime';
 import { DAY_MS, UNTAGGED, MULTIPLE, TOOLONG } from './constants';
 
 const COMBINE_GAP_SECONDS = 60 * 60; // combine same-code entries only within this gap
@@ -319,32 +319,35 @@ export function buildIndividualWeek({
     classifyDay(dayEntries, maxBillableSeconds, billingTagPrefix, roundingSeconds)
   );
 
-  // Week-level overtime pass: if the contract disallows billing overtime and the
-  // week's billable lines exceed the cap, shave whole rounding units off them
-  // (trimmable "(X)" lines first), spread proportionally over codes and days. Each
-  // line's `rounded` is reduced in place and the per-day strip recorded.
+  // Week-level overtime pass: if the contract disallows billing overtime and a
+  // segment's billable lines exceed its cap, shave whole rounding units off them
+  // (trimmable "(X)" portions first), spread proportionally over codes and days.
+  // A month boundary mid-week splits the week into two independently-capped
+  // segments; otherwise it's one full-week segment. Each line's `rounded` is
+  // reduced in place and the per-day strip recorded.
   const overtimeByDay = new Array<number>(7).fill(0);
   if (noOvertime && weeklyHours > 0) {
-    const flat: { row: Row; day: number }[] = [];
-    classified.forEach((c, day) => c.bill.forEach((row) => flat.push({ row, day })));
-    const removed = allocateOvertimeTrim(
-      flat.map(({ row }) => {
-        const units = row.rounded / roundingSeconds;
-        // The trimmable budget is the "(X)" share of this line's *rounded* units, so
-        // a fully-"(X)" line is fully trimmable and a half-"(X)" line gives up half.
-        const frac = row.seconds > 0 ? (row.trimmableSeconds ?? 0) / row.seconds : 0;
-        const trimmableUnits = Math.min(units, Math.round(units * frac));
-        return { units, trimmableUnits };
-      }),
-      capUnits(weeklyHours, roundingSeconds)
-    );
-    flat.forEach(({ row, day }, i) => {
-      if (removed[i] > 0) {
-        const strip = removed[i] * roundingSeconds;
-        row.rounded -= strip;
-        overtimeByDay[day] += strip;
+    const toCell = (row: Row) => {
+      const units = row.rounded / roundingSeconds;
+      // The trimmable budget is the "(X)" share of this line's *rounded* units, so
+      // a fully-"(X)" line is fully trimmable and a half-"(X)" line gives up half.
+      const frac = row.seconds > 0 ? (row.trimmableSeconds ?? 0) / row.seconds : 0;
+      return { units, trimmableUnits: Math.min(units, Math.round(units * frac)) };
+    };
+    for (const seg of weekSegments(weekStart, weeklyHours, roundingSeconds)) {
+      const flat: { row: Row; day: number }[] = [];
+      for (let day = seg.startDay; day <= seg.endDay; day++) {
+        classified[day].bill.forEach((row) => flat.push({ row, day }));
       }
-    });
+      const removed = allocateOvertimeTrim(flat.map(({ row }) => toCell(row)), seg.capUnits);
+      flat.forEach(({ row, day }, i) => {
+        if (removed[i] > 0) {
+          const strip = removed[i] * roundingSeconds;
+          row.rounded -= strip;
+          overtimeByDay[day] += strip;
+        }
+      });
+    }
   }
 
   const days = classified
