@@ -6,19 +6,22 @@
 // the week's billable lines to bring the *billed* total down to the cap, in two
 // tiers:
 //
-//   1. Lines whose billing code carries the internal "(X)" marker are emptied first
-//      (they're explicitly the disposable buffer).
-//   2. Only if still over the cap, the remaining billable lines are trimmed too.
+//   1. The "(X)"-marked portion of each line (its `trimmableUnits`) is shaved first
+//      — that's the buffer the user explicitly flagged as disposable. A line can be
+//      part trimmable (some of its time tagged "(X)", some not), so the budget is
+//      per-line, not all-or-nothing.
+//   2. Only if emptying every "(X)" portion still isn't enough, the firm remainder
+//      of the lines is trimmed too.
 //
-// Within each tier the cut is spread proportionally to each line's size (the same
-// largest-remainder / Hamilton method the rounding uses), so the reduction lands as
-// evenly as possible across codes and days. A line may be reduced all the way to
-// zero. The trimmed time is never billed — the views surface it on a separate
+// Within each tier the cut is spread proportionally to each line's available size
+// (the same largest-remainder / Hamilton method the rounding uses), so the reduction
+// lands as evenly as possible across codes and days. A line may be reduced all the
+// way to zero. The trimmed time is never billed — the views surface it on a separate
 // "Overtime" line so it stays visible.
 
 export interface TrimCell {
   units: number; // current rounded duration, in whole rounding units
-  trimmable: boolean; // billing code carries the "(X)" overtime marker
+  trimmableUnits: number; // the "(X)"-marked portion of those units (0 ≤ this ≤ units)
 }
 
 /**
@@ -32,23 +35,33 @@ export function allocateOvertimeTrim(cells: TrimCell[], capUnits: number): numbe
   let excess = total - Math.max(0, capUnits);
   if (excess <= 0) return removed;
 
-  // Trimmable lines first, then the rest — each tier exhausted before the next.
-  for (const tier of [true, false]) {
-    if (excess <= 0) break;
-    const idx = cells
-      .map((_, i) => i)
-      .filter((i) => cells[i].trimmable === tier && cells[i].units > 0);
-    const capacity = idx.reduce((s, i) => s + cells[i].units, 0);
-    const take = Math.min(excess, capacity);
-    if (take <= 0) continue;
-    const alloc = apportion(
-      take,
-      idx.map((i) => cells[i].units)
-    );
-    idx.forEach((i, k) => (removed[i] += alloc[k]));
-    excess -= take;
-  }
+  // Tier 1: each line's trimmable "(X)" portion. Tier 2: whatever firm time is left.
+  excess = trimTier(cells, removed, excess, (c, i) =>
+    Math.max(0, Math.min(c.trimmableUnits, c.units) - removed[i])
+  );
+  trimTier(cells, removed, excess, (c, i) => c.units - removed[i]);
   return removed;
+}
+
+/**
+ * Shave up to `excess` units off the cells, where `avail(cell, i)` is how much each
+ * cell may still give up in this tier. The cut is apportioned proportionally to the
+ * available amounts. Returns the excess still outstanding after the tier.
+ */
+function trimTier(
+  cells: TrimCell[],
+  removed: number[],
+  excess: number,
+  avail: (c: TrimCell, i: number) => number
+): number {
+  if (excess <= 0) return 0;
+  const idx = cells.map((_, i) => i).filter((i) => avail(cells[i], i) > 0);
+  const caps = idx.map((i) => avail(cells[i], i));
+  const take = Math.min(excess, caps.reduce((a, b) => a + b, 0));
+  if (take <= 0) return excess;
+  const alloc = apportion(take, caps);
+  idx.forEach((i, k) => (removed[i] += alloc[k]));
+  return excess - take;
 }
 
 /**

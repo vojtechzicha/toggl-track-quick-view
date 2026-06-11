@@ -15,6 +15,7 @@ import { DAY_MS, UNTAGGED, MULTIPLE } from './constants';
 export interface Cell {
   descs: string[]; // de-duplicated, original-cased, in first-seen order
   seconds: number;
+  trimmableSeconds: number; // of `seconds`, how much came from "(X)"-marked entries
 }
 
 // A normal row is one (project, billing-tag) pair; warning rows are the sentinels.
@@ -22,7 +23,6 @@ export interface RowMeta {
   projectId: number;
   projectName: string;
   tag: string; // displayed billing code (internal "(X)" marker stripped)
-  trimmable: boolean; // code carried the "(X)" overtime marker
 }
 
 export interface SummaryGrid {
@@ -122,17 +122,17 @@ export function buildSummaryGrid({
       rowKey = MULTIPLE;
       multiplePresent = true;
     } else {
-      // Key by the raw tag so a trimmable "(X)" code keeps its own row, distinct
-      // from its plain twin (they bill the same but trim differently). The "(X)"
-      // marker is internal, so only the stripped base is displayed.
-      rowKey = `p${e.project_id}|${tags[0]}`;
+      // The "(X)" marker is just a trimmable version of the same billing code, so
+      // it shares one row with its plain twin (keyed by the stripped base); the
+      // "(X)" seconds are tracked per cell as the trim budget. The marker is
+      // internal, so only the base is displayed.
+      const { base } = parseBillingCode(tags[0]);
+      rowKey = `p${e.project_id}|${base}`;
       if (!rowMeta.has(rowKey)) {
-        const { base, trimmable } = parseBillingCode(tags[0]);
         rowMeta.set(rowKey, {
           projectId: e.project_id,
           projectName: nameById.get(e.project_id) ?? '',
           tag: base,
-          trimmable,
         });
       }
     }
@@ -141,10 +141,13 @@ export function buildSummaryGrid({
     const key = `${dayIdx}|${rowKey}`;
     let cell = cells.get(key);
     if (!cell) {
-      cell = { descs: [], seconds: 0 };
+      cell = { descs: [], seconds: 0, trimmableSeconds: 0 };
       cells.set(key, cell);
     }
     cell.seconds += seconds;
+    if (rowKey !== UNTAGGED && rowKey !== MULTIPLE && parseBillingCode(tags[0]).trimmable) {
+      cell.trimmableSeconds += seconds;
+    }
     addDesc(cell, e.description ?? '');
   }
 
@@ -183,17 +186,20 @@ export function buildSummaryGrid({
   // billed, so they're excluded from both the cap measurement and the trimming.
   const overtimeByDay = new Array<number>(7).fill(0);
   if (noOvertime && weeklyHours > 0) {
-    const billCells: { key: string; day: number; trimmable: boolean; units: number }[] = [];
+    const billCells: { key: string; day: number; units: number; trimmableUnits: number }[] = [];
     for (const d of dayCols) {
       for (const r of tagRows) {
         const units = Math.round((rounded.get(`${d}|${r}`) ?? 0) / roundingSeconds);
-        if (units > 0) {
-          billCells.push({ key: `${d}|${r}`, day: d, trimmable: rowMeta.get(r)!.trimmable, units });
-        }
+        if (units <= 0) continue;
+        const cell = cells.get(`${d}|${r}`);
+        // The trimmable budget is the "(X)" share of this cell's rounded units.
+        const frac = cell && cell.seconds > 0 ? cell.trimmableSeconds / cell.seconds : 0;
+        const trimmableUnits = Math.min(units, Math.round(units * frac));
+        billCells.push({ key: `${d}|${r}`, day: d, units, trimmableUnits });
       }
     }
     const removed = allocateOvertimeTrim(
-      billCells.map((c) => ({ units: c.units, trimmable: c.trimmable })),
+      billCells.map((c) => ({ units: c.units, trimmableUnits: c.trimmableUnits })),
       capUnits(weeklyHours, roundingSeconds)
     );
     billCells.forEach((c, i) => {
@@ -205,15 +211,17 @@ export function buildSummaryGrid({
     });
   }
 
-  // Totals reflect the trimmed (billed) figures; the stripped overtime is reported
-  // on its own line and is not part of any total here.
+  // Totals are billable-only: warning rows ride along as view hints but don't count
+  // toward what's billed, so the view total matches the export (which omits them).
+  // Per-row totals are still computed for every row so the view can show a warning
+  // row's hours; the day/grand totals sum the billable (tag) rows alone.
   const dayTotals = dayCols.map((d) =>
-    rows.reduce((s, r) => s + (rounded.get(`${d}|${r}`) ?? 0), 0)
+    tagRows.reduce((s, r) => s + (rounded.get(`${d}|${r}`) ?? 0), 0)
   );
   const rowTotals = rows.map((r) =>
     dayCols.reduce((s, d) => s + (rounded.get(`${d}|${r}`) ?? 0), 0)
   );
-  const grandTotal = rowTotals.reduce((s, v) => s + v, 0);
+  const grandTotal = dayTotals.reduce((s, v) => s + v, 0);
   const overtimeTotal = overtimeByDay.reduce((s, v) => s + v, 0);
 
   return {

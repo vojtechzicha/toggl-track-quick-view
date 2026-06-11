@@ -35,10 +35,9 @@ export interface Row {
   kind: 'bill' | 'warn';
   warn?: WarnKind;
   code?: string; // billing tag (display base, "(X)" stripped), for 'bill' rows
-  rawCode?: string; // original tag incl. any "(X)" marker — for combining like-with-like
-  trimmable?: boolean; // code carried the "(X)" overtime marker, for 'bill' rows
   projId?: number | null; // owning project, for 'bill' rows
   seconds: number; // raw, pre-rounding
+  trimmableSeconds?: number; // of `seconds`, how much came from "(X)"-marked entries
   rounded: number; // filled in after rounding
   startMs?: number; // anchored display start (bill rows, after rounding)
   endMs?: number; // start + rounded duration
@@ -187,31 +186,30 @@ function classifyDay(
       continue;
     }
 
-    const rawCode = tags[0];
-    const { base, trimmable } = parseBillingCode(rawCode);
-    // Same billing tag under two different projects stays separate: a project is a
-    // group of billing tags, so they're distinct lines even with an identical code.
-    // The raw tag is compared, so a trimmable "(X)" line never merges into its
-    // plain twin (they bill the same but trim differently).
+    // The "(X)" marker is just a trimmable *version* of the same billing code, so
+    // it merges into its plain twin: one displayed line, with the "(X)" seconds
+    // tracked separately as the trim budget. Same code under two different projects
+    // still stays separate (a project is a group of billing tags).
+    const { base, trimmable } = parseBillingCode(tags[0]);
     const canCombine =
       current !== null &&
-      current.rawCode === rawCode &&
+      current.code === base &&
       current.projId === e.projId &&
       e.startMs - lastStopMs <= COMBINE_GAP_SECONDS * 1000 &&
       current.seconds + e.seconds <= maxBillableSeconds;
 
     if (canCombine && current) {
       current.seconds += e.seconds;
+      if (trimmable) current.trimmableSeconds = (current.trimmableSeconds ?? 0) + e.seconds;
       mergeDesc(current.descs, e.desc);
     } else {
       current = {
         key: `b${e.startMs}`,
         kind: 'bill',
         code: base,
-        rawCode,
-        trimmable,
         projId: e.projId,
         seconds: e.seconds,
+        trimmableSeconds: trimmable ? e.seconds : 0,
         rounded: 0,
         descs: [],
         groupStartMs: e.startMs,
@@ -246,6 +244,10 @@ function classifyDay(
  * snapped to the nearest unit and packed forward so the displayed blocks never
  * overlap. `overtimeStripped` is the billable time (seconds) shaved off this day to
  * keep the week within the cap — reported separately, not part of the billed total.
+ *
+ * The total is billable-only: warning rows ride along as view hints (a tag/length
+ * problem to fix in Toggl) but don't count toward what's billed, so the view total
+ * matches the export — which omits the hint rows entirely.
  */
 function finalizeDay(
   dayIdx: number,
@@ -267,7 +269,7 @@ function finalizeDay(
   }
 
   const rows = [...billKept, ...warnRows];
-  const total = rows.reduce((s, r) => s + r.rounded, 0);
+  const total = billKept.reduce((s, r) => s + r.rounded, 0);
   return { dayIdx, dateMs, rows, total, overlaps, overtime: overtimeStripped };
 }
 
@@ -326,7 +328,14 @@ export function buildIndividualWeek({
     const flat: { row: Row; day: number }[] = [];
     classified.forEach((c, day) => c.bill.forEach((row) => flat.push({ row, day })));
     const removed = allocateOvertimeTrim(
-      flat.map(({ row }) => ({ units: row.rounded / roundingSeconds, trimmable: !!row.trimmable })),
+      flat.map(({ row }) => {
+        const units = row.rounded / roundingSeconds;
+        // The trimmable budget is the "(X)" share of this line's *rounded* units, so
+        // a fully-"(X)" line is fully trimmable and a half-"(X)" line gives up half.
+        const frac = row.seconds > 0 ? (row.trimmableSeconds ?? 0) / row.seconds : 0;
+        const trimmableUnits = Math.min(units, Math.round(units * frac));
+        return { units, trimmableUnits };
+      }),
       capUnits(weeklyHours, roundingSeconds)
     );
     flat.forEach(({ row, day }, i) => {

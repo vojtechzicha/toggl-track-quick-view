@@ -8,7 +8,7 @@
 import { fmtHours, fmtTimeOfDay, type TimeEntry } from '@/lib/calc';
 import type { SelectedProject } from '@/components/SettingsPanel';
 import { buildSummaryGrid } from '@/lib/timesheet/summary';
-import { buildIndividualWeek, warnLabel, type WarnKind } from '@/lib/timesheet/individual';
+import { buildIndividualWeek } from '@/lib/timesheet/individual';
 import { DAY_LABELS, DAY_MS, UNTAGGED, MULTIPLE } from '@/lib/timesheet/constants';
 import { weeksInRange, type DateRange } from './range';
 
@@ -61,10 +61,6 @@ export interface SummaryWeekBlock {
   rows: SummaryRow[];
   dayTotals: number[];
   grandTotal: number;
-  // Billable seconds stripped per visible day column when overtime isn't billed,
-  // and the week's total stripped. Zero/absent when the cap isn't hit or off.
-  overtimeCells: number[];
-  overtimeTotal: number;
 }
 export interface SummaryDoc extends ExportMeta {
   view: 'summary';
@@ -84,10 +80,7 @@ export interface IndividualDayBlock {
   dateMs: number;
   label: string; // "Sat · Jun 7"
   total: number;
-  rows: IndividualRow[];
-  overlaps: string[];
-  // Billable seconds stripped from this day when overtime isn't billed (0 = none).
-  overtime: number;
+  rows: IndividualRow[]; // billable lines only — warnings stay in the on-screen view
 }
 export interface IndividualDoc extends ExportMeta {
   view: 'individual';
@@ -134,35 +127,30 @@ function buildSummaryDoc(o: ExportOptions): SummaryDoc {
     });
     if (dayCols.length === 0) continue;
 
-    const rows: SummaryRow[] = grid.rows.map((rowKey) => {
-      const meta = grid.rowMeta.get(rowKey);
-      const warn = rowKey === UNTAGGED || rowKey === MULTIPLE;
-      const label = warn
-        ? rowKey === UNTAGGED
-          ? 'No billing tag'
-          : 'Multiple billing tags'
-        : codeLabel(meta?.projectName, meta?.tag, multi);
-      const cells = dayCols.map((d) => grid.rounded.get(`${d}|${rowKey}`) ?? 0);
-      // Aggregate this row's descriptions across the visible days (deduped).
-      const descs: string[] = [];
-      for (const d of dayCols) {
-        for (const desc of grid.cells.get(`${d}|${rowKey}`)?.descs ?? []) {
-          if (!descs.some((x) => x.toLowerCase() === desc.toLowerCase())) descs.push(desc);
+    // Billable rows only — warning rows (no/multiple billing tag) are an on-screen
+    // hint to fix Toggl, never part of the exported timesheet.
+    const rows: SummaryRow[] = grid.rows
+      .filter((rowKey) => rowKey !== UNTAGGED && rowKey !== MULTIPLE)
+      .map((rowKey) => {
+        const meta = grid.rowMeta.get(rowKey);
+        const label = codeLabel(meta?.projectName, meta?.tag, multi);
+        const cells = dayCols.map((d) => grid.rounded.get(`${d}|${rowKey}`) ?? 0);
+        // Aggregate this row's descriptions across the visible days (deduped).
+        const descs: string[] = [];
+        for (const d of dayCols) {
+          for (const desc of grid.cells.get(`${d}|${rowKey}`)?.descs ?? []) {
+            if (!descs.some((x) => x.toLowerCase() === desc.toLowerCase())) descs.push(desc);
+          }
         }
-      }
-      const total = cells.reduce((s, v) => s + v, 0);
-      return { label, warn, cells, descs, total };
-    });
+        const total = cells.reduce((s, v) => s + v, 0);
+        return { label, warn: false, cells, descs, total };
+      });
     // Drop rows that are entirely outside the kept columns (no time anywhere).
-    const keptRows = rows.filter((r) => r.total > 0 || r.warn);
+    const keptRows = rows.filter((r) => r.total > 0);
     if (keptRows.length === 0) continue;
 
     const dayTotals = dayCols.map((_, ci) => keptRows.reduce((s, r) => s + r.cells[ci], 0));
     const grandTotal = dayTotals.reduce((s, v) => s + v, 0);
-
-    // Overtime stripped per visible (range-clipped) day column, and this week's total.
-    const overtimeCells = dayCols.map((d) => grid.overtimeByDay[d] ?? 0);
-    const overtimeTotal = overtimeCells.reduce((s, v) => s + v, 0);
 
     // The heading spans exactly the visible columns: weekdays (Mon–Fri) are always
     // shown — so an empty Friday still extends the label — while weekend days only
@@ -179,8 +167,6 @@ function buildSummaryDoc(o: ExportOptions): SummaryDoc {
       rows: keptRows,
       dayTotals,
       grandTotal,
-      overtimeCells,
-      overtimeTotal,
     });
   }
 
@@ -222,17 +208,11 @@ function buildIndividualDoc(o: ExportOptions): IndividualDoc {
         month: 'short',
         day: 'numeric',
       });
-      const rows: IndividualRow[] = day.rows.map((row) => {
-        if (row.kind === 'warn') {
-          return {
-            time: null,
-            hours: row.rounded,
-            code: warnLabel(row.warn as WarnKind, maxBillableHours),
-            warn: true,
-            desc: row.descs.join('; '),
-          };
-        }
-        return {
+      // Billable lines only — warning rows and overlap flags are on-screen hints to
+      // fix Toggl, never part of the exported timesheet.
+      const rows: IndividualRow[] = day.rows
+        .filter((row) => row.kind === 'bill')
+        .map((row) => ({
           time: `${fmtTimeOfDay(row.startMs as number)}–${fmtTimeOfDay(row.endMs as number)}`,
           hours: row.rounded,
           code: codeLabel(
@@ -242,15 +222,13 @@ function buildIndividualDoc(o: ExportOptions): IndividualDoc {
           ),
           warn: false,
           desc: row.descs.join('; '),
-        };
-      });
+        }));
+      if (rows.length === 0) continue;
       days.push({
         dateMs: day.dateMs,
         label: `${DAY_LABELS[day.dayIdx]} · ${dateLabel}`,
         total: day.total,
         rows,
-        overlaps: day.overlaps,
-        overtime: day.overtime,
       });
     }
   }
