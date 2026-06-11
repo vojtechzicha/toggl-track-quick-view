@@ -41,6 +41,16 @@ export function toCSV(doc: ExportDoc): string {
           ])
         );
       }
+      if (week.overtimeTotal > 0) {
+        lines.push(
+          row([
+            'Overtime (not billed)',
+            ...week.overtimeCells.map((s) => (s > 0 ? -secsToHoursNum(s) : '')),
+            -secsToHoursNum(week.overtimeTotal),
+            '',
+          ])
+        );
+      }
       lines.push(
         row(['Total', ...week.dayTotals.map(hoursCell), secsToHoursNum(week.grandTotal), ''])
       );
@@ -58,6 +68,18 @@ export function toCSV(doc: ExportDoc): string {
       }
       for (const o of day.overlaps) {
         lines.push(row([dateStr ?? day.label, dayName ?? '', '', '', 'Overlapping entries', o]));
+      }
+      if (day.overtime > 0) {
+        lines.push(
+          row([
+            dateStr ?? day.label,
+            dayName ?? '',
+            '',
+            -secsToHoursNum(day.overtime),
+            'Overtime (not billed)',
+            '',
+          ])
+        );
       }
     }
     lines.push('');

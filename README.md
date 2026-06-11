@@ -135,6 +135,31 @@ each entry to. It defaults to **15 minutes (0.25h)**; pick **12 minutes (0.2h)**
 for a client that can't bill quarter-hours. Only the timesheet and exports are
 affected — the dashboard and the targets above are not.
 
+### Don't bill overtime
+
+Some engagements contractually disallow billing more than the agreed weekly hours.
+Turn on **Don't bill overtime** (under **Advanced**) and the timesheet caps each
+week's **billed** total at your **Hours worked per week**: when the week's billable
+lines exceed the cap, it trims them back down — always **rounding down**, by whole
+rounding units — and shows the removed time on its own muted **"Overtime (not
+billed)"** line. The time is still tracked in Toggl; it just isn't billed.
+
+How the trim is shared out:
+
+- **Codes ending in `(X)` go first.** Append `(X)` to a billing tag (e.g.
+  `D123(X)`) to mark it as the disposable buffer — those lines are reduced before
+  any normal line is touched, and can be reduced all the way to zero.
+- The cut is **spread proportionally** across the candidate lines and across the
+  days of the week (the bigger the line, the more it gives up), so no single day or
+  code is singled out.
+- If trimming every `(X)` line still isn't enough to reach the cap, the remaining
+  billable lines are trimmed the same way.
+
+The **`(X)` marker is internal**: it's stripped from every code the timesheet and
+exports display, so a client never sees it (an `(X)` line shows as plain `D123`).
+This applies to both the **Summary** and **Individual** views, and to every export
+(XLSX / CSV / PDF), where the stripped time appears as a negative **Overtime** row.
+
 ## Break detection
 
 You're reminded to take a break once you've worked **4.5h continuously** on the

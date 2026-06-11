@@ -29,4 +29,10 @@ export interface TimesheetViewProps {
   billingTagPrefix: string;
   // The rounding granularity in seconds (900 = 15 min default, 720 = 12 min).
   roundingSeconds: number;
+  // When true, the week's billable total is capped at `weeklyHours` (overtime
+  // isn't billable): billable lines are trimmed down and the stripped time shown
+  // on a separate "Overtime" line. Trimmable "(X)"-marked codes go first.
+  noOvertime: boolean;
+  // The weekly cap (hours) overtime trimming reduces the billed total to.
+  weeklyHours: number;
 }

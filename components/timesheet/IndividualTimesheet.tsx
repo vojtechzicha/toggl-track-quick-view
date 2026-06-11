@@ -25,6 +25,8 @@ export default function IndividualTimesheet({
   maxBillableHours,
   billingTagPrefix,
   roundingSeconds,
+  noOvertime,
+  weeklyHours,
 }: TimesheetViewProps) {
   const week = useMemo(
     () =>
@@ -36,8 +38,20 @@ export default function IndividualTimesheet({
         maxBillableHours,
         billingTagPrefix,
         roundingSeconds,
+        noOvertime,
+        weeklyHours,
       }),
-    [entries, weekStart, nowMs, projects, maxBillableHours, billingTagPrefix, roundingSeconds]
+    [
+      entries,
+      weekStart,
+      nowMs,
+      projects,
+      maxBillableHours,
+      billingTagPrefix,
+      roundingSeconds,
+      noOvertime,
+      weeklyHours,
+    ]
   );
 
   const nameById = new Map(projects.map((p) => [p.id, p.name]));
@@ -120,6 +134,17 @@ export default function IndividualTimesheet({
                     </td>
                   </tr>
                 ))}
+                {day.overtime > 0 && (
+                  <tr className="ts-row-overtime">
+                    <td className="ind-time ind-empty">—</td>
+                    <td className="ind-hours">−{fmtHours(day.overtime)}</td>
+                    <td className="ind-code" colSpan={3}>
+                      <span className="ts-overtime" title="Tracked but not billed — over the weekly cap">
+                        Overtime (not billed)
+                      </span>
+                    </td>
+                  </tr>
+                )}
               </tbody>
             </table>
           </section>

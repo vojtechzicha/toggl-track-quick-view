@@ -45,6 +45,10 @@ export interface SettingsValue {
   // Granularity the timesheet rounds entries to, in hours. 0.25 (15 min) by
   // default; some clients can't enter quarter-hours, so 0.2 (12 min) is offered.
   roundingHours: number;
+  // When true, the engagement disallows billing overtime: the timesheet caps each
+  // week's billable total at weeklyHours, trimming lines down (codes marked with a
+  // trailing "(X)" first) and showing the stripped time on an "Overtime" line.
+  noOvertime: boolean;
   refreshSec: number;
   timesheetMode: TimesheetMode;
   // Name printed on exports (PDF header). Blank falls back to the Toggl account name.
@@ -77,6 +81,7 @@ export function toPresetValue(s: SettingsValue): PresetValue {
     minWorkingDayHours: s.minWorkingDayHours,
     billingTagPrefix: s.billingTagPrefix,
     roundingHours: s.roundingHours,
+    noOvertime: s.noOvertime,
     timesheetMode: s.timesheetMode,
     exportName: s.exportName,
   };
@@ -102,6 +107,7 @@ export function presetMatches(value: PresetValue, s: SettingsValue): boolean {
     value.minWorkingDayHours === s.minWorkingDayHours &&
     value.billingTagPrefix === s.billingTagPrefix &&
     value.roundingHours === s.roundingHours &&
+    value.noOvertime === s.noOvertime &&
     value.timesheetMode === s.timesheetMode &&
     value.exportName === s.exportName
   );
@@ -206,11 +212,13 @@ export default function SettingsPanel({
   );
   const [billingPrefix, setBillingPrefix] = useState(initial.billingTagPrefix);
   const [roundingHours, setRoundingHours] = useState(initial.roundingHours);
+  const [noOvertime, setNoOvertime] = useState(initial.noOvertime);
   const [showAdvanced, setShowAdvanced] = useState(
     initial.maxBillableHours !== null ||
       initial.minWorkingDayHours !== null ||
       initial.billingTagPrefix !== DEFAULT_BILLING_TAG_PREFIX ||
       initial.roundingHours !== DEFAULT_ROUNDING_HOURS ||
+      initial.noOvertime ||
       initial.exportName.trim() !== ''
   );
 
@@ -277,6 +285,7 @@ export default function SettingsPanel({
       )
         ? roundingHours
         : DEFAULT_ROUNDING_HOURS,
+      noOvertime,
       refreshSec,
       timesheetMode,
       exportName: exportName.trim(),
@@ -304,11 +313,13 @@ export default function SettingsPanel({
     setMinDayStr(v.minWorkingDayHours === null ? '' : numLabel(v.minWorkingDayHours));
     setBillingPrefix(v.billingTagPrefix);
     setRoundingHours(v.roundingHours);
+    setNoOvertime(v.noOvertime);
     if (
       v.maxBillableHours !== null ||
       v.minWorkingDayHours !== null ||
       v.billingTagPrefix !== DEFAULT_BILLING_TAG_PREFIX ||
       v.roundingHours !== DEFAULT_ROUNDING_HOURS ||
+      v.noOvertime ||
       v.exportName.trim() !== ''
     ) {
       setShowAdvanced(true);
@@ -609,6 +620,27 @@ export default function SettingsPanel({
               <strong>12 minutes (0.2h)</strong> if your client can&apos;t bill quarter-hours. The
               dashboard and targets are unaffected.
             </p>
+          </div>
+
+          <div className="toggle">
+            <div className="t-text">
+              <strong>Don&apos;t bill overtime</strong>
+              <span>
+                Cap each week&apos;s billed total at your{' '}
+                {fmtHoursLabel(previewWeekly)} weekly hours. Anything over is trimmed off the
+                timesheet (rounding down) and shown as an &ldquo;Overtime&rdquo; line — still tracked,
+                just not billed. Codes ending in <strong>(X)</strong> are trimmed first; the
+                &ldquo;(X)&rdquo; itself is never shown.
+              </span>
+            </div>
+            <label className="switch">
+              <input
+                type="checkbox"
+                checked={noOvertime}
+                onChange={(e) => setNoOvertime(e.target.checked)}
+              />
+              <span className="slider" />
+            </label>
           </div>
 
           <div className="field">

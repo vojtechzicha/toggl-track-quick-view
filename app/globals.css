@@ -1040,6 +1040,20 @@ body:has(.ts-page) {
 .ts-row-warn .ts-tag {
   background: rgba(245, 158, 11, 0.12);
 }
+/* Overtime (tracked but not billed) — muted, de-emphasised against billed rows. */
+.ts-row-overtime td,
+.ts-row-overtime th {
+  color: var(--muted);
+  font-style: italic;
+}
+.ts-overtime {
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+.ts-overtime-cell {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
 .tag-warn.amber {
   white-space: normal;
   overflow-wrap: anywhere;

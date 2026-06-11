@@ -23,6 +23,14 @@ function summaryAOA(doc: Extract<ExportDoc, { view: 'summary' }>): Cell[][] {
     for (const r of week.rows) {
       aoa.push([r.label, ...r.cells.map(hoursCell), secsToHoursNum(r.total), r.descs.join('; ')]);
     }
+    if (week.overtimeTotal > 0) {
+      aoa.push([
+        'Overtime (not billed)',
+        ...week.overtimeCells.map((s) => (s > 0 ? -secsToHoursNum(s) : null)),
+        -secsToHoursNum(week.overtimeTotal),
+        '',
+      ]);
+    }
     aoa.push(['Total', ...week.dayTotals.map(hoursCell), secsToHoursNum(week.grandTotal), '']);
     aoa.push([]);
   }
@@ -44,6 +52,16 @@ function individualAOA(doc: Extract<ExportDoc, { view: 'individual' }>): Cell[][
     }
     for (const o of day.overlaps) {
       aoa.push([dateStr ?? day.label, dayName ?? '', '', null, 'Overlapping entries', o]);
+    }
+    if (day.overtime > 0) {
+      aoa.push([
+        dateStr ?? day.label,
+        dayName ?? '',
+        '',
+        -secsToHoursNum(day.overtime),
+        'Overtime (not billed)',
+        '',
+      ]);
     }
   }
   aoa.push([]);

@@ -26,10 +26,22 @@ export default function SummaryTimesheet({
   multi,
   billingTagPrefix,
   roundingSeconds,
+  noOvertime,
+  weeklyHours,
 }: TimesheetViewProps) {
   const grid = useMemo(
-    () => buildSummaryGrid({ entries, weekStart, nowMs, projects, billingTagPrefix, roundingSeconds }),
-    [entries, weekStart, nowMs, projects, billingTagPrefix, roundingSeconds]
+    () =>
+      buildSummaryGrid({
+        entries,
+        weekStart,
+        nowMs,
+        projects,
+        billingTagPrefix,
+        roundingSeconds,
+        noOvertime,
+        weeklyHours,
+      }),
+    [entries, weekStart, nowMs, projects, billingTagPrefix, roundingSeconds, noOvertime, weeklyHours]
   );
 
   if (!grid || grid.rows.length === 0) {
@@ -62,6 +74,10 @@ export default function SummaryTimesheet({
                 : row === MULTIPLE
                 ? 'Multiple billing tags'
                 : null;
+            // A billable row trimmed to nothing for the whole week (e.g. an "(X)"
+            // buffer fully consumed by the overtime cap) is dropped, matching the
+            // export. Warning rows always stay so the problem keeps surfacing.
+            if (!warn && grid.rowTotals[ri] === 0) return null;
             const meta = grid.rowMeta.get(row);
             return (
               <tr key={row} className={warn ? 'ts-row-warn' : ''}>
@@ -103,6 +119,24 @@ export default function SummaryTimesheet({
           })}
         </tbody>
         <tfoot>
+          {grid.overtimeTotal > 0 && (
+            <tr className="ts-row-overtime">
+              <th className="ts-tag" scope="row">
+                <span className="ts-overtime" title="Tracked but not billed — over the weekly cap">
+                  Overtime (not billed)
+                </span>
+              </th>
+              {grid.dayCols.map((d) => {
+                const secs = grid.overtimeByDay[d] ?? 0;
+                return (
+                  <td key={d} className="ts-cell ts-overtime-cell">
+                    {secs > 0 ? `−${fmtHours(secs)}` : '—'}
+                  </td>
+                );
+              })}
+              <td className="ts-cell ts-overtime-cell">−{fmtHours(grid.overtimeTotal)}</td>
+            </tr>
+          )}
           <tr>
             <th className="ts-tag">Total</th>
             {grid.dayTotals.map((sec, i) => (

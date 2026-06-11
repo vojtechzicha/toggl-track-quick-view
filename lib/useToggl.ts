@@ -62,6 +62,7 @@ export const DEFAULTS: StoredSettings = {
   minWorkingDayHours: null,
   billingTagPrefix: DEFAULT_BILLING_TAG_PREFIX,
   roundingHours: DEFAULT_ROUNDING_HOURS,
+  noOvertime: false,
   refreshSec: DEFAULT_REFRESH_SEC,
   timesheetMode: 'summary',
   exportName: '',

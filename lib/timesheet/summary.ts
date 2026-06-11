@@ -2,8 +2,14 @@
 // component and the exporters call this, so a CSV/XLSX/PDF export shows byte-identical
 // figures to what's on screen (same per-day quarter-hour rounding, same grouping).
 
-import { billingTagsOf, roundQuartersPreservingTotal, type TimeEntry } from '@/lib/calc';
+import {
+  billingTagsOf,
+  parseBillingCode,
+  roundQuartersPreservingTotal,
+  type TimeEntry,
+} from '@/lib/calc';
 import type { SelectedProject } from '@/components/SettingsPanel';
+import { allocateOvertimeTrim, capUnits } from './overtime';
 import { DAY_MS, UNTAGGED, MULTIPLE } from './constants';
 
 export interface Cell {
@@ -15,7 +21,8 @@ export interface Cell {
 export interface RowMeta {
   projectId: number;
   projectName: string;
-  tag: string;
+  tag: string; // displayed billing code (internal "(X)" marker stripped)
+  trimmable: boolean; // code carried the "(X)" overtime marker
 }
 
 export interface SummaryGrid {
@@ -33,8 +40,12 @@ export interface SummaryGrid {
   dayTotals: number[];
   /** Rounded total per row, aligned with `rows`. */
   rowTotals: number[];
-  /** Rounded grand total for the week. */
+  /** Rounded grand total for the week (billed — i.e. after any overtime trim). */
   grandTotal: number;
+  /** Billable seconds stripped per day index (0=Sat … 6=Fri) by the overtime cap. */
+  overtimeByDay: number[];
+  /** Total billable seconds stripped this week by the overtime cap. */
+  overtimeTotal: number;
 }
 
 export interface SummaryInput {
@@ -45,6 +56,11 @@ export interface SummaryInput {
   billingTagPrefix: string;
   // The rounding granularity in seconds (e.g. 900 = 15 min, 720 = 12 min).
   roundingSeconds: number;
+  // When true, the week's billable total is trimmed down to `weeklyHours` (the
+  // contract disallows billing overtime); the trimmed time is reported separately.
+  // When false, neither input has any effect.
+  noOvertime: boolean;
+  weeklyHours: number;
 }
 
 /**
@@ -63,6 +79,8 @@ export function buildSummaryGrid({
   projects,
   billingTagPrefix,
   roundingSeconds,
+  noOvertime,
+  weeklyHours,
 }: SummaryInput): SummaryGrid | null {
   if (!weekStart) return null;
   const ids = new Set(projects.map((p) => p.id));
@@ -104,12 +122,17 @@ export function buildSummaryGrid({
       rowKey = MULTIPLE;
       multiplePresent = true;
     } else {
+      // Key by the raw tag so a trimmable "(X)" code keeps its own row, distinct
+      // from its plain twin (they bill the same but trim differently). The "(X)"
+      // marker is internal, so only the stripped base is displayed.
       rowKey = `p${e.project_id}|${tags[0]}`;
       if (!rowMeta.has(rowKey)) {
+        const { base, trimmable } = parseBillingCode(tags[0]);
         rowMeta.set(rowKey, {
           projectId: e.project_id,
           projectName: nameById.get(e.project_id) ?? '',
-          tag: tags[0],
+          tag: base,
+          trimmable,
         });
       }
     }
@@ -154,6 +177,36 @@ export function buildSummaryGrid({
     rows.forEach((r, ri) => rounded.set(`${d}|${r}`, adj[ri]));
   }
 
+  // Overtime pass: when the contract disallows billing overtime and the week's
+  // billable cells exceed the cap, shave whole rounding units off them (trimmable
+  // "(X)" codes first), spread proportionally across cells. Warning rows are never
+  // billed, so they're excluded from both the cap measurement and the trimming.
+  const overtimeByDay = new Array<number>(7).fill(0);
+  if (noOvertime && weeklyHours > 0) {
+    const billCells: { key: string; day: number; trimmable: boolean; units: number }[] = [];
+    for (const d of dayCols) {
+      for (const r of tagRows) {
+        const units = Math.round((rounded.get(`${d}|${r}`) ?? 0) / roundingSeconds);
+        if (units > 0) {
+          billCells.push({ key: `${d}|${r}`, day: d, trimmable: rowMeta.get(r)!.trimmable, units });
+        }
+      }
+    }
+    const removed = allocateOvertimeTrim(
+      billCells.map((c) => ({ units: c.units, trimmable: c.trimmable })),
+      capUnits(weeklyHours, roundingSeconds)
+    );
+    billCells.forEach((c, i) => {
+      if (removed[i] > 0) {
+        const strip = removed[i] * roundingSeconds;
+        rounded.set(c.key, (rounded.get(c.key) ?? 0) - strip);
+        overtimeByDay[c.day] += strip;
+      }
+    });
+  }
+
+  // Totals reflect the trimmed (billed) figures; the stripped overtime is reported
+  // on its own line and is not part of any total here.
   const dayTotals = dayCols.map((d) =>
     rows.reduce((s, r) => s + (rounded.get(`${d}|${r}`) ?? 0), 0)
   );
@@ -161,6 +214,18 @@ export function buildSummaryGrid({
     dayCols.reduce((s, d) => s + (rounded.get(`${d}|${r}`) ?? 0), 0)
   );
   const grandTotal = rowTotals.reduce((s, v) => s + v, 0);
+  const overtimeTotal = overtimeByDay.reduce((s, v) => s + v, 0);
 
-  return { dayCols, rows, rowMeta, cells, rounded, dayTotals, rowTotals, grandTotal };
+  return {
+    dayCols,
+    rows,
+    rowMeta,
+    cells,
+    rounded,
+    dayTotals,
+    rowTotals,
+    grandTotal,
+    overtimeByDay,
+    overtimeTotal,
+  };
 }

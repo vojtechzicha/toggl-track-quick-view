@@ -64,6 +64,7 @@ const baseStyles: TDocumentDefinitions['styles'] = {
   th: { fontSize: 9, bold: true, color: COLOR.heading },
   td: { fontSize: 9, color: COLOR.text },
   tdWarn: { fontSize: 9, color: COLOR.warn },
+  tdOvertime: { fontSize: 9, italics: true, color: COLOR.muted },
   totalRow: { fontSize: 9, bold: true, color: COLOR.heading },
   footer: { fontSize: 8, color: COLOR.muted },
 };
@@ -99,6 +100,18 @@ function summaryContent(doc: SummaryDoc): Content[] {
         ...r.cells.map((c) => ({ text: hoursOrDash(c), style, alignment: 'center' as const })),
         { text: hoursOrDash(r.total), style, alignment: 'center' as const },
         { text: r.descs.join('; '), style },
+      ]);
+    }
+    if (week.overtimeTotal > 0) {
+      body.push([
+        { text: 'Overtime (not billed)', style: 'tdOvertime' },
+        ...week.overtimeCells.map((c) => ({
+          text: c > 0 ? `−${secsToHoursLabel(c)}` : '—',
+          style: 'tdOvertime',
+          alignment: 'center' as const,
+        })),
+        { text: `−${secsToHoursLabel(week.overtimeTotal)}`, style: 'tdOvertime', alignment: 'center' as const },
+        { text: '', style: 'tdOvertime' },
       ]);
     }
     body.push([
@@ -156,6 +169,14 @@ function individualContent(doc: IndividualDoc): Content[] {
         { text: '—', style: 'tdWarn', alignment: 'center' },
         { text: 'Overlapping entries', style: 'tdWarn' },
         { text: o, style: 'tdWarn' },
+      ]);
+    }
+    if (day.overtime > 0) {
+      body.push([
+        { text: '—', style: 'tdOvertime' },
+        { text: `−${secsToHoursLabel(day.overtime)}`, style: 'tdOvertime', alignment: 'center' },
+        { text: 'Overtime (not billed)', style: 'tdOvertime' },
+        { text: '', style: 'tdOvertime' },
       ]);
     }
     content.push({

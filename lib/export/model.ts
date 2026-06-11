@@ -25,6 +25,10 @@ export interface ExportOptions {
   billingTagPrefix: string;
   /** Rounding granularity in seconds (900 = 15 min default, 720 = 12 min). */
   roundingSeconds: number;
+  /** When true, cap each week's billable total at `weeklyHours` (overtime unbilled). */
+  noOvertime: boolean;
+  /** Weekly cap (hours) the overtime trim reduces the billed total to. */
+  weeklyHours: number;
   /** Title shown on the document (project / group name). */
   title: string;
   /** Person the timesheet is for (may be empty). */
@@ -57,6 +61,10 @@ export interface SummaryWeekBlock {
   rows: SummaryRow[];
   dayTotals: number[];
   grandTotal: number;
+  // Billable seconds stripped per visible day column when overtime isn't billed,
+  // and the week's total stripped. Zero/absent when the cap isn't hit or off.
+  overtimeCells: number[];
+  overtimeTotal: number;
 }
 export interface SummaryDoc extends ExportMeta {
   view: 'summary';
@@ -78,6 +86,8 @@ export interface IndividualDayBlock {
   total: number;
   rows: IndividualRow[];
   overlaps: string[];
+  // Billable seconds stripped from this day when overtime isn't billed (0 = none).
+  overtime: number;
 }
 export interface IndividualDoc extends ExportMeta {
   view: 'individual';
@@ -100,11 +110,20 @@ function codeLabel(
 }
 
 function buildSummaryDoc(o: ExportOptions): SummaryDoc {
-  const { range, entries, nowMs, projects, multi, billingTagPrefix, roundingSeconds } = o;
+  const { range, entries, nowMs, projects, multi, billingTagPrefix, roundingSeconds, noOvertime, weeklyHours } = o;
   const weeks: SummaryWeekBlock[] = [];
 
   for (const weekStart of weeksInRange(range.fromMs, range.toMs)) {
-    const grid = buildSummaryGrid({ entries, weekStart, nowMs, projects, billingTagPrefix, roundingSeconds });
+    const grid = buildSummaryGrid({
+      entries,
+      weekStart,
+      nowMs,
+      projects,
+      billingTagPrefix,
+      roundingSeconds,
+      noOvertime,
+      weeklyHours,
+    });
     if (!grid || grid.rows.length === 0) continue;
 
     // Keep only day columns whose date falls inside the requested range, so the
@@ -141,6 +160,10 @@ function buildSummaryDoc(o: ExportOptions): SummaryDoc {
     const dayTotals = dayCols.map((_, ci) => keptRows.reduce((s, r) => s + r.cells[ci], 0));
     const grandTotal = dayTotals.reduce((s, v) => s + v, 0);
 
+    // Overtime stripped per visible (range-clipped) day column, and this week's total.
+    const overtimeCells = dayCols.map((d) => grid.overtimeByDay[d] ?? 0);
+    const overtimeTotal = overtimeCells.reduce((s, v) => s + v, 0);
+
     // The heading spans exactly the visible columns: weekdays (Mon–Fri) are always
     // shown — so an empty Friday still extends the label — while weekend days only
     // appear when they carry time. Because `dayCols` is already the visible,
@@ -156,6 +179,8 @@ function buildSummaryDoc(o: ExportOptions): SummaryDoc {
       rows: keptRows,
       dayTotals,
       grandTotal,
+      overtimeCells,
+      overtimeTotal,
     });
   }
 
@@ -173,7 +198,7 @@ function buildSummaryDoc(o: ExportOptions): SummaryDoc {
 }
 
 function buildIndividualDoc(o: ExportOptions): IndividualDoc {
-  const { range, entries, nowMs, projects, multi, maxBillableHours, billingTagPrefix, roundingSeconds } = o;
+  const { range, entries, nowMs, projects, multi, maxBillableHours, billingTagPrefix, roundingSeconds, noOvertime, weeklyHours } = o;
   const nameById = new Map(projects.map((p) => [p.id, p.name]));
   const days: IndividualDayBlock[] = [];
 
@@ -186,6 +211,8 @@ function buildIndividualDoc(o: ExportOptions): IndividualDoc {
       maxBillableHours,
       billingTagPrefix,
       roundingSeconds,
+      noOvertime,
+      weeklyHours,
     });
     if (!week) continue;
     for (const day of week.days) {
@@ -223,6 +250,7 @@ function buildIndividualDoc(o: ExportOptions): IndividualDoc {
         total: day.total,
         rows,
         overlaps: day.overlaps,
+        overtime: day.overtime,
       });
     }
   }
