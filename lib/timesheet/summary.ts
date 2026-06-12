@@ -9,7 +9,7 @@ import {
   type TimeEntry,
 } from '@/lib/calc';
 import type { SelectedProject } from '@/components/SettingsPanel';
-import { allocateOvertimeTrim, weekSegments } from './overtime';
+import { allocateOvertimeTrimPerDay, weekSegments } from './overtime';
 import { DAY_MS, UNTAGGED, MULTIPLE } from './constants';
 
 export interface Cell {
@@ -181,8 +181,11 @@ export function buildSummaryGrid({
   }
 
   // Overtime pass: when the contract disallows billing overtime and a segment's
-  // billable cells exceed its cap, shave whole rounding units off them (trimmable
-  // "(X)" portions first), spread proportionally across cells. A month boundary
+  // billable cells exceed its cap, shave whole rounding units off them. Unlike the
+  // Individual view's proportional cut, the Summary evens out the days — the weekend
+  // is billed in full and the weekdays are water-filled toward a common
+  // (weeklyHours − weekend)/5 ceiling — while the segment still drops to its cap.
+  // Within a day the cut still takes trimmable "(X)" portions first. A month boundary
   // mid-week splits the week into two independently-capped segments; otherwise it's
   // one full-week segment. Warning rows are never billed, so they're excluded from
   // both the cap measurement and the trimming.
@@ -202,8 +205,8 @@ export function buildSummaryGrid({
           billCells.push({ key: `${d}|${r}`, day: d, units, trimmableUnits });
         }
       }
-      const removed = allocateOvertimeTrim(
-        billCells.map((c) => ({ units: c.units, trimmableUnits: c.trimmableUnits })),
+      const removed = allocateOvertimeTrimPerDay(
+        billCells.map((c) => ({ units: c.units, trimmableUnits: c.trimmableUnits, day: c.day })),
         seg.capUnits
       );
       billCells.forEach((c, i) => {
