@@ -18,6 +18,12 @@
 // lands as evenly as possible across codes and days. A line may be reduced all the
 // way to zero. The trimmed time is never billed — the views surface it on a separate
 // "Overtime" line so it stays visible.
+//
+// The Individual view trims a segment as one pool with `allocateOvertimeTrim`, so a
+// busy day stays proportionally busy. The Summary view instead evens out the *days*
+// with `allocateOvertimeTrimPerDay`: the weekend is billed in full and the five
+// weekdays are water-filled toward a common (weekTarget − weekend)/5 ceiling — same
+// per-day, trimmable-first cut underneath, just distributed to flatten the week.
 
 export interface TrimCell {
   units: number; // current rounded duration, in whole rounding units
@@ -41,6 +47,110 @@ export function allocateOvertimeTrim(cells: TrimCell[], capUnits: number): numbe
   );
   trimTier(cells, removed, excess, (c, i) => c.units - removed[i]);
   return removed;
+}
+
+/** A trim cell tagged with the week day it falls on (0 = Sat … 6 = Fri). */
+export interface DayTrimCell extends TrimCell {
+  day: number;
+}
+
+/**
+ * Like {@link allocateOvertimeTrim}, but instead of shrinking the whole segment
+ * proportionally it evens out the *weekdays*. The weekend (Sat/Sun, day < 2) is kept
+ * billed in full and the five weekdays are water-filled down to a common ceiling so
+ * each lands as close as possible to `(capUnits − weekend) / 5`, while the segment
+ * total still drops to `capUnits`. When every weekday sits above the line the ceiling
+ * is exactly that per-day target; when one is short the others float up to absorb the
+ * slack, so the week still hits the cap rather than billing under it.
+ *
+ * The per-day reduction is shared across that day's own cells with the same
+ * trimmable-"(X)"-first apportionment as `allocateOvertimeTrim`. Returns removals
+ * aligned with the input (0 = untouched). When already under the cap, nothing moves.
+ *
+ * Degenerate case: when the weekend alone exceeds `capUnits` (rare — month-split
+ * segments cap below a full week), the weekdays drop to zero and the weekend itself
+ * is evened down to the cap, so the contract cap is never exceeded.
+ */
+export function allocateOvertimeTrimPerDay(cells: DayTrimCell[], capUnits: number): number[] {
+  const removed = new Array<number>(cells.length).fill(0);
+  const cap = Math.max(0, capUnits);
+  const total = cells.reduce((s, c) => s + c.units, 0);
+  if (total <= cap) return removed;
+
+  const days = [...new Set(cells.map((c) => c.day))];
+  const unitsOf = (d: number) =>
+    cells.reduce((s, c) => (c.day === d ? s + c.units : s), 0);
+  const weekend = days.filter((d) => d < 2);
+  const weekdays = days.filter((d) => d >= 2);
+  const weekendUnits = weekend.reduce((s, d) => s + unitsOf(d), 0);
+
+  // Per-day units to keep. Normally the weekend rides along whole and the weekdays
+  // are water-filled into whatever the cap leaves; if the weekend alone blows the
+  // cap, the weekdays go to zero and the weekend is evened down to the cap instead.
+  const keepByDay = new Map<number, number>();
+  const budget = cap - weekendUnits;
+  if (budget >= 0) {
+    weekend.forEach((d) => keepByDay.set(d, unitsOf(d)));
+    const keep = waterfillKeep(weekdays.map(unitsOf), budget);
+    weekdays.forEach((d, i) => keepByDay.set(d, keep[i]));
+  } else {
+    weekdays.forEach((d) => keepByDay.set(d, 0));
+    const keep = waterfillKeep(weekend.map(unitsOf), cap);
+    weekend.forEach((d, i) => keepByDay.set(d, keep[i]));
+  }
+
+  // Reduce each day to its kept budget, trimmable "(X)" first, within that day alone.
+  for (const d of days) {
+    const idx = cells.map((_, i) => i).filter((i) => cells[i].day === d);
+    const sub = allocateOvertimeTrim(
+      idx.map((i) => cells[i]),
+      keepByDay.get(d) ?? unitsOf(d)
+    );
+    idx.forEach((i, k) => (removed[i] = sub[k]));
+  }
+  return removed;
+}
+
+/**
+ * Water-fill: keep as much of each day's `units` as a single common ceiling allows
+ * without the kept total exceeding `target`, raising the ceiling until the total is
+ * met. Days below the ceiling keep everything; days above are levelled to it. Returns
+ * kept units per day. With `target ≥ sum` nothing is trimmed; with `target ≤ 0` all
+ * goes. The few units that don't divide evenly land on the largest days first.
+ */
+function waterfillKeep(units: number[], target: number): number[] {
+  const total = units.reduce((a, b) => a + b, 0);
+  if (target >= total) return [...units];
+  if (target <= 0) return units.map(() => 0);
+
+  // Largest integer ceiling L with Σ min(u, L) ≤ target (binary search the staircase).
+  let lo = 0;
+  let hi = Math.max(...units);
+  let level = 0;
+  while (lo <= hi) {
+    const mid = (lo + hi) >> 1;
+    const sum = units.reduce((a, u) => a + Math.min(u, mid), 0);
+    if (sum <= target) {
+      level = mid;
+      lo = mid + 1;
+    } else {
+      hi = mid - 1;
+    }
+  }
+  const keep = units.map((u) => Math.min(u, level));
+  // Hand the remainder to the days still above the ceiling, largest first, so the
+  // kept total reaches `target` exactly while staying as level as the integers allow.
+  let leftover = target - keep.reduce((a, b) => a + b, 0);
+  const order = units
+    .map((u, i) => ({ i, head: u - keep[i] }))
+    .filter((x) => x.head > 0)
+    .sort((a, b) => b.head - a.head || a.i - b.i);
+  for (const { i } of order) {
+    if (leftover <= 0) break;
+    keep[i] += 1;
+    leftover -= 1;
+  }
+  return keep;
 }
 
 /**

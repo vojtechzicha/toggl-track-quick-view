@@ -630,7 +630,9 @@ export default function SettingsPanel({
                 {fmtHoursLabel(previewWeekly)} weekly hours. Anything over is trimmed off the
                 timesheet (rounding down) and shown as an &ldquo;Overtime&rdquo; line — still tracked,
                 just not billed. Codes ending in <strong>(X)</strong> are trimmed first; the
-                &ldquo;(X)&rdquo; itself is never shown.
+                &ldquo;(X)&rdquo; itself is never shown. In the <strong>Summary</strong> view the
+                weekdays are also evened out — the weekend stays billed in full and Mon–Fri are
+                levelled toward (weekly hours − weekend) ÷ 5.
               </span>
             </div>
             <label className="switch">
