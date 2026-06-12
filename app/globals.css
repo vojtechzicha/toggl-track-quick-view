@@ -644,9 +644,56 @@ body {
   font-weight: 600;
 }
 
+/* The close button only exists while the panel is shown as an overlay sheet. */
+.side-close {
+  display: none;
+}
+
 @media (max-width: 860px) {
+  /* Inline, the side panel is hidden at narrow widths... */
   .side {
     display: none;
+  }
+
+  /* ...but the Details button re-opens it as a centered overlay sheet, reusing
+     the Settings overlay aesthetic (dim + blur backdrop, scrollable card). */
+  .side-backdrop {
+    position: fixed;
+    inset: 0;
+    background: rgba(5, 8, 14, 0.72);
+    backdrop-filter: blur(6px);
+    z-index: 60;
+  }
+  .side.side-open {
+    display: flex;
+    position: fixed;
+    z-index: 61;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    width: min(460px, calc(100% - 28px));
+    max-height: 88vh;
+    overflow-y: auto;
+    padding: clamp(14px, 4vw, 22px);
+    background: var(--bg);
+    border: 1px solid var(--line);
+    border-radius: 20px;
+  }
+  /* As an overlay the whole sheet scrolls as one column, so the history list
+     shouldn't claim flex space or scroll independently. */
+  .side.side-open .history-card {
+    flex: 0 0 auto;
+  }
+  .side.side-open .history-list {
+    overflow: visible;
+    max-height: none;
+  }
+  .side.side-open .side-close {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    align-self: flex-end;
+    flex: 0 0 auto;
   }
 }
 
@@ -919,6 +966,17 @@ body {
   font-size: clamp(15px, 2vmin, 18px);
   line-height: 1;
 }
+/* The Details button only makes sense where the side panel is hidden (≤860px). */
+.navbtn.details-btn {
+  display: none;
+  cursor: pointer;
+}
+@media (max-width: 860px) {
+  .navbtn.details-btn {
+    display: inline-flex;
+  }
+}
+
 @media (max-width: 560px) {
   .navbtn-text {
     display: none;

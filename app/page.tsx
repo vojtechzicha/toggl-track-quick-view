@@ -62,6 +62,27 @@ export default function Page() {
 
   const [snoozeUntil, setSnoozeUntil] = useState(0);
   const [dayTab, setDayTab] = useState<'today' | 'yesterday'>('today');
+  // The side panel is hidden by CSS at narrow widths; this opens it as a
+  // full-screen overlay sheet instead (toggled from the topbar Details button).
+  const [showDetails, setShowDetails] = useState(false);
+
+  // Close the details sheet on Escape, and whenever the viewport grows back to
+  // a width where the panel is shown inline (so it can't get stuck open).
+  useEffect(() => {
+    if (!showDetails) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setShowDetails(false);
+    };
+    const onResize = () => {
+      if (window.innerWidth > 860) setShowDetails(false);
+    };
+    window.addEventListener('keydown', onKey);
+    window.addEventListener('resize', onResize);
+    return () => {
+      window.removeEventListener('keydown', onKey);
+      window.removeEventListener('resize', onResize);
+    };
+  }, [showDetails]);
 
   // The selected projects together count as "the project". The set drives every
   // tracking/target calculation (they're indistinguishable there); the array keeps
@@ -428,6 +449,16 @@ export default function Page() {
             </p>
           </div>
           <div className="topbar-actions">
+            {view && (
+              <button
+                className="navbtn details-btn"
+                aria-label="Details"
+                onClick={() => setShowDetails(true)}
+              >
+                <span className="navbtn-icon">📊</span>
+                <span className="navbtn-text">Details</span>
+              </button>
+            )}
             <Link className="navbtn" href="/timesheet" aria-label="Timesheet">
               <span className="navbtn-icon">🧾</span>
               <span className="navbtn-text">Timesheet</span>
@@ -528,8 +559,27 @@ export default function Page() {
             )}
           </div>
 
+          {view && showDetails && (
+            <div
+              className="side-backdrop"
+              aria-hidden="true"
+              onClick={() => setShowDetails(false)}
+            />
+          )}
           {view && (
-            <aside className="side">
+            <aside
+              className={`side${showDetails ? ' side-open' : ''}`}
+              role={showDetails ? 'dialog' : undefined}
+              aria-modal={showDetails ? true : undefined}
+              aria-label="Details"
+            >
+              <button
+                className="side-close iconbtn"
+                aria-label="Close details"
+                onClick={() => setShowDetails(false)}
+              >
+                ✕
+              </button>
               <div className="side-card">
                 <div className="side-title">Currently tracking</div>
                 {view.trackingProject ? (
