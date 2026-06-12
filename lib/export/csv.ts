@@ -56,9 +56,6 @@ export function toCSV(doc: ExportDoc): string {
           row([dateStr ?? day.label, dayName ?? '', r.time ?? '', secsToHoursNum(r.hours), r.code, r.desc])
         );
       }
-      for (const o of day.overlaps) {
-        lines.push(row([dateStr ?? day.label, dayName ?? '', '', '', 'Overlapping entries', o]));
-      }
     }
     lines.push('');
     lines.push(row(['Grand total', '', '', secsToHoursNum(doc.grandTotal)]));

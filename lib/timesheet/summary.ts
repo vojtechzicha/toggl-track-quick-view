@@ -2,20 +2,27 @@
 // component and the exporters call this, so a CSV/XLSX/PDF export shows byte-identical
 // figures to what's on screen (same per-day quarter-hour rounding, same grouping).
 
-import { billingTagsOf, roundQuartersPreservingTotal, type TimeEntry } from '@/lib/calc';
+import {
+  billingTagsOf,
+  parseBillingCode,
+  roundQuartersPreservingTotal,
+  type TimeEntry,
+} from '@/lib/calc';
 import type { SelectedProject } from '@/components/SettingsPanel';
+import { allocateOvertimeTrim, weekSegments } from './overtime';
 import { DAY_MS, UNTAGGED, MULTIPLE } from './constants';
 
 export interface Cell {
   descs: string[]; // de-duplicated, original-cased, in first-seen order
   seconds: number;
+  trimmableSeconds: number; // of `seconds`, how much came from "(X)"-marked entries
 }
 
 // A normal row is one (project, billing-tag) pair; warning rows are the sentinels.
 export interface RowMeta {
   projectId: number;
   projectName: string;
-  tag: string;
+  tag: string; // displayed billing code (internal "(X)" marker stripped)
 }
 
 export interface SummaryGrid {
@@ -33,8 +40,12 @@ export interface SummaryGrid {
   dayTotals: number[];
   /** Rounded total per row, aligned with `rows`. */
   rowTotals: number[];
-  /** Rounded grand total for the week. */
+  /** Rounded grand total for the week (billed — i.e. after any overtime trim). */
   grandTotal: number;
+  /** Billable seconds stripped per day index (0=Sat … 6=Fri) by the overtime cap. */
+  overtimeByDay: number[];
+  /** Total billable seconds stripped this week by the overtime cap. */
+  overtimeTotal: number;
 }
 
 export interface SummaryInput {
@@ -45,6 +56,11 @@ export interface SummaryInput {
   billingTagPrefix: string;
   // The rounding granularity in seconds (e.g. 900 = 15 min, 720 = 12 min).
   roundingSeconds: number;
+  // When true, the week's billable total is trimmed down to `weeklyHours` (the
+  // contract disallows billing overtime); the trimmed time is reported separately.
+  // When false, neither input has any effect.
+  noOvertime: boolean;
+  weeklyHours: number;
 }
 
 /**
@@ -63,6 +79,8 @@ export function buildSummaryGrid({
   projects,
   billingTagPrefix,
   roundingSeconds,
+  noOvertime,
+  weeklyHours,
 }: SummaryInput): SummaryGrid | null {
   if (!weekStart) return null;
   const ids = new Set(projects.map((p) => p.id));
@@ -104,12 +122,17 @@ export function buildSummaryGrid({
       rowKey = MULTIPLE;
       multiplePresent = true;
     } else {
-      rowKey = `p${e.project_id}|${tags[0]}`;
+      // The "(X)" marker is just a trimmable version of the same billing code, so
+      // it shares one row with its plain twin (keyed by the stripped base); the
+      // "(X)" seconds are tracked per cell as the trim budget. The marker is
+      // internal, so only the base is displayed.
+      const { base } = parseBillingCode(tags[0]);
+      rowKey = `p${e.project_id}|${base}`;
       if (!rowMeta.has(rowKey)) {
         rowMeta.set(rowKey, {
           projectId: e.project_id,
           projectName: nameById.get(e.project_id) ?? '',
-          tag: tags[0],
+          tag: base,
         });
       }
     }
@@ -118,10 +141,13 @@ export function buildSummaryGrid({
     const key = `${dayIdx}|${rowKey}`;
     let cell = cells.get(key);
     if (!cell) {
-      cell = { descs: [], seconds: 0 };
+      cell = { descs: [], seconds: 0, trimmableSeconds: 0 };
       cells.set(key, cell);
     }
     cell.seconds += seconds;
+    if (rowKey !== UNTAGGED && rowKey !== MULTIPLE && parseBillingCode(tags[0]).trimmable) {
+      cell.trimmableSeconds += seconds;
+    }
     addDesc(cell, e.description ?? '');
   }
 
@@ -154,13 +180,65 @@ export function buildSummaryGrid({
     rows.forEach((r, ri) => rounded.set(`${d}|${r}`, adj[ri]));
   }
 
+  // Overtime pass: when the contract disallows billing overtime and a segment's
+  // billable cells exceed its cap, shave whole rounding units off them (trimmable
+  // "(X)" portions first), spread proportionally across cells. A month boundary
+  // mid-week splits the week into two independently-capped segments; otherwise it's
+  // one full-week segment. Warning rows are never billed, so they're excluded from
+  // both the cap measurement and the trimming.
+  const overtimeByDay = new Array<number>(7).fill(0);
+  if (noOvertime && weeklyHours > 0) {
+    for (const seg of weekSegments(weekStart, weeklyHours, roundingSeconds)) {
+      const billCells: { key: string; day: number; units: number; trimmableUnits: number }[] = [];
+      for (const d of dayCols) {
+        if (d < seg.startDay || d > seg.endDay) continue;
+        for (const r of tagRows) {
+          const units = Math.round((rounded.get(`${d}|${r}`) ?? 0) / roundingSeconds);
+          if (units <= 0) continue;
+          const cell = cells.get(`${d}|${r}`);
+          // The trimmable budget is the "(X)" share of this cell's rounded units.
+          const frac = cell && cell.seconds > 0 ? cell.trimmableSeconds / cell.seconds : 0;
+          const trimmableUnits = Math.min(units, Math.round(units * frac));
+          billCells.push({ key: `${d}|${r}`, day: d, units, trimmableUnits });
+        }
+      }
+      const removed = allocateOvertimeTrim(
+        billCells.map((c) => ({ units: c.units, trimmableUnits: c.trimmableUnits })),
+        seg.capUnits
+      );
+      billCells.forEach((c, i) => {
+        if (removed[i] > 0) {
+          const strip = removed[i] * roundingSeconds;
+          rounded.set(c.key, (rounded.get(c.key) ?? 0) - strip);
+          overtimeByDay[c.day] += strip;
+        }
+      });
+    }
+  }
+
+  // Totals are billable-only: warning rows ride along as view hints but don't count
+  // toward what's billed, so the view total matches the export (which omits them).
+  // Per-row totals are still computed for every row so the view can show a warning
+  // row's hours; the day/grand totals sum the billable (tag) rows alone.
   const dayTotals = dayCols.map((d) =>
-    rows.reduce((s, r) => s + (rounded.get(`${d}|${r}`) ?? 0), 0)
+    tagRows.reduce((s, r) => s + (rounded.get(`${d}|${r}`) ?? 0), 0)
   );
   const rowTotals = rows.map((r) =>
     dayCols.reduce((s, d) => s + (rounded.get(`${d}|${r}`) ?? 0), 0)
   );
-  const grandTotal = rowTotals.reduce((s, v) => s + v, 0);
+  const grandTotal = dayTotals.reduce((s, v) => s + v, 0);
+  const overtimeTotal = overtimeByDay.reduce((s, v) => s + v, 0);
 
-  return { dayCols, rows, rowMeta, cells, rounded, dayTotals, rowTotals, grandTotal };
+  return {
+    dayCols,
+    rows,
+    rowMeta,
+    cells,
+    rounded,
+    dayTotals,
+    rowTotals,
+    grandTotal,
+    overtimeByDay,
+    overtimeTotal,
+  };
 }

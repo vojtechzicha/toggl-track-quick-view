@@ -146,6 +146,24 @@ export function billingTagsOf(tags?: string[], prefix?: string): string[] {
   return tags.filter((t) => t.startsWith(p));
 }
 
+// ---- Overtime marker ----
+// A billing code ending in this literal suffix is an internal "trimmable" marker:
+// the time is tracked but flagged as the first thing to drop when a contract
+// disallows billing overtime (see lib/timesheet/overtime). The suffix is private —
+// it's stripped from every displayed/exported code so a client never sees it.
+export const OVERTIME_TAG_SUFFIX = '(X)';
+
+/**
+ * Split a billing code into its displayed base and whether it carries the internal
+ * "(X)" overtime marker. The suffix (and any whitespace before it) is removed from
+ * the base, so `D123(X)` and `D123 (X)` both display as `D123` with trimmable=true.
+ */
+export function parseBillingCode(code: string): { base: string; trimmable: boolean } {
+  const trimmable = code.endsWith(OVERTIME_TAG_SUFFIX);
+  const base = trimmable ? code.slice(0, -OVERTIME_TAG_SUFFIX.length).trimEnd() : code;
+  return { base, trimmable };
+}
+
 /** True when an entry carries at least one billing tag. */
 export function hasBillingTag(tags?: string[], prefix?: string): boolean {
   return billingTagOf(tags, prefix) !== null;

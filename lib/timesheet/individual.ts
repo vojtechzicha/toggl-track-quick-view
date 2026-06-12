@@ -6,10 +6,12 @@ import {
   billingTagsOf,
   fmtHoursLabel,
   fmtTimeOfDay,
+  parseBillingCode,
   roundQuartersPreservingTotal,
   type TimeEntry,
 } from '@/lib/calc';
 import type { SelectedProject } from '@/components/SettingsPanel';
+import { allocateOvertimeTrim, weekSegments } from './overtime';
 import { DAY_MS, UNTAGGED, MULTIPLE, TOOLONG } from './constants';
 
 const COMBINE_GAP_SECONDS = 60 * 60; // combine same-code entries only within this gap
@@ -32,9 +34,10 @@ export interface Row {
   key: string;
   kind: 'bill' | 'warn';
   warn?: WarnKind;
-  code?: string; // billing tag, for 'bill' rows
+  code?: string; // billing tag (display base, "(X)" stripped), for 'bill' rows
   projId?: number | null; // owning project, for 'bill' rows
   seconds: number; // raw, pre-rounding
+  trimmableSeconds?: number; // of `seconds`, how much came from "(X)"-marked entries
   rounded: number; // filled in after rounding
   startMs?: number; // anchored display start (bill rows, after rounding)
   endMs?: number; // start + rounded duration
@@ -48,6 +51,10 @@ export interface IndividualDay {
   rows: Row[];
   total: number;
   overlaps: string[];
+  // Billable hours stripped from this day to keep the week within the cap when
+  // overtime isn't billable (seconds). Shown on a separate "Overtime" line; not
+  // part of `total` (which is what's actually billed).
+  overtime: number;
 }
 
 export interface IndividualWeek {
@@ -64,6 +71,11 @@ export interface IndividualInput {
   billingTagPrefix: string;
   // The rounding granularity in seconds (e.g. 900 = 15 min, 720 = 12 min).
   roundingSeconds: number;
+  // When true, the week's billable total is trimmed down to `weeklyHours` (the
+  // contract disallows billing overtime); the trimmed time surfaces as an
+  // "Overtime" line. When false, neither input has any effect.
+  noOvertime: boolean;
+  weeklyHours: number;
 }
 
 export function warnLabel(kind: WarnKind, maxBillableHours: number): string {
@@ -89,23 +101,31 @@ function snapToUnit(ms: number, unitMs: number): number {
   return Math.round(ms / unitMs) * unitMs;
 }
 
+/** A day classified into billable lines and warning aggregates, already rounded. */
+interface ClassifiedDay {
+  bill: Row[];
+  warnRows: Row[];
+  overlaps: string[];
+}
+
 /**
- * Build one day's rows from its selected-project entries.
+ * Classify one day's selected-project entries into billable lines and warning
+ * aggregates, and round them.
  *
  * Entries are classified, then consecutive same-code entries are combined while
  * the gap stays within an hour and the combined duration stays billable (within
  * the cap). Durations are rounded to the configured unit preserving the day total
- * (biased so a tiny entry surfaces rather than vanishing; a billable line still
- * at zero is dropped). Finally each billable line's start is snapped to the
- * nearest unit and packed forward so the displayed blocks never overlap.
+ * (biased so a tiny entry surfaces rather than vanishing). Zero-rounded billable
+ * lines are kept here (the caller drops them after any overtime trimming) and no
+ * time anchoring is done yet — that happens in `finalizeDay`, after the week-level
+ * overtime pass has had a chance to shave durations.
  */
-export function buildDay(
+function classifyDay(
   dayEntries: DayEntry[],
   maxBillableSeconds: number,
   billingTagPrefix: string,
   roundingSeconds: number
-) {
-  const roundingMs = roundingSeconds * 1000;
+): ClassifiedDay {
   const sorted = [...dayEntries].sort((a, b) => a.startMs - b.startMs);
 
   // Overlaps in the raw data (you can't bill two entries running at once). Sorted
@@ -166,26 +186,30 @@ export function buildDay(
       continue;
     }
 
-    const code = tags[0];
-    // Same billing tag under two different projects stays separate: a project is a
-    // group of billing tags, so they're distinct lines even with an identical code.
+    // The "(X)" marker is just a trimmable *version* of the same billing code, so
+    // it merges into its plain twin: one displayed line, with the "(X)" seconds
+    // tracked separately as the trim budget. Same code under two different projects
+    // still stays separate (a project is a group of billing tags).
+    const { base, trimmable } = parseBillingCode(tags[0]);
     const canCombine =
       current !== null &&
-      current.code === code &&
+      current.code === base &&
       current.projId === e.projId &&
       e.startMs - lastStopMs <= COMBINE_GAP_SECONDS * 1000 &&
       current.seconds + e.seconds <= maxBillableSeconds;
 
     if (canCombine && current) {
       current.seconds += e.seconds;
+      if (trimmable) current.trimmableSeconds = (current.trimmableSeconds ?? 0) + e.seconds;
       mergeDesc(current.descs, e.desc);
     } else {
       current = {
         key: `b${e.startMs}`,
         kind: 'bill',
-        code,
+        code: base,
         projId: e.projId,
         seconds: e.seconds,
+        trimmableSeconds: trimmable ? e.seconds : 0,
         rounded: 0,
         descs: [],
         groupStartMs: e.startMs,
@@ -209,13 +233,31 @@ export function buildDay(
   );
   allRows.forEach((r, i) => (r.rounded = rounded[i]));
 
-  // Drop billable lines that still round to nothing; warning rows always stay so
-  // the tag/length problem keeps surfacing even when its time is negligible.
+  return { bill, warnRows, overlaps };
+}
+
+/**
+ * Turn a classified (and possibly overtime-trimmed) day into its rendered rows.
+ *
+ * Billable lines that round to nothing are dropped (warning rows always stay so the
+ * tag/length problem keeps surfacing); each surviving billable line's start is
+ * snapped to the nearest unit and packed forward so the displayed blocks never
+ * overlap. `overtimeStripped` is the billable time (seconds) shaved off this day to
+ * keep the week within the cap — reported separately, not part of the billed total.
+ *
+ * The total is billable-only: warning rows ride along as view hints (a tag/length
+ * problem to fix in Toggl) but don't count toward what's billed, so the view total
+ * matches the export — which omits the hint rows entirely.
+ */
+function finalizeDay(
+  dayIdx: number,
+  dateMs: number,
+  { bill, warnRows, overlaps }: ClassifiedDay,
+  roundingMs: number,
+  overtimeStripped: number
+): IndividualDay {
   const billKept = bill.filter((r) => r.rounded > 0);
 
-  // Anchor each billable line's start to the nearest unit and pack forward so
-  // the displayed blocks never overlap, even after rounding. The end is the
-  // start plus the rounded duration.
   let cursor = -Infinity;
   for (const r of billKept) {
     let start = snapToUnit(r.groupStartMs, roundingMs);
@@ -227,8 +269,8 @@ export function buildDay(
   }
 
   const rows = [...billKept, ...warnRows];
-  const total = allRows.reduce((s, r) => s + r.rounded, 0);
-  return { rows, total, overlaps };
+  const total = billKept.reduce((s, r) => s + r.rounded, 0);
+  return { dayIdx, dateMs, rows, total, overlaps, overtime: overtimeStripped };
 }
 
 /**
@@ -244,10 +286,13 @@ export function buildIndividualWeek({
   maxBillableHours,
   billingTagPrefix,
   roundingSeconds,
+  noOvertime,
+  weeklyHours,
 }: IndividualInput): IndividualWeek | null {
   if (!weekStart) return null;
   const ids = new Set(projects.map((p) => p.id));
   const maxBillableSeconds = maxBillableHours * 3600;
+  const roundingMs = roundingSeconds * 1000;
   const weekEnd = weekStart + 7 * DAY_MS;
 
   const byDay: DayEntry[][] = Array.from({ length: 7 }, () => []);
@@ -270,13 +315,46 @@ export function buildIndividualWeek({
     });
   }
 
-  const days = byDay
-    .map((dayEntries, dayIdx) => ({
-      dayIdx,
-      dateMs: weekStart + dayIdx * DAY_MS,
-      ...buildDay(dayEntries, maxBillableSeconds, billingTagPrefix, roundingSeconds),
-    }))
-    .filter((d) => d.rows.length > 0 || d.overlaps.length > 0);
+  const classified = byDay.map((dayEntries) =>
+    classifyDay(dayEntries, maxBillableSeconds, billingTagPrefix, roundingSeconds)
+  );
+
+  // Week-level overtime pass: if the contract disallows billing overtime and a
+  // segment's billable lines exceed its cap, shave whole rounding units off them
+  // (trimmable "(X)" portions first), spread proportionally over codes and days.
+  // A month boundary mid-week splits the week into two independently-capped
+  // segments; otherwise it's one full-week segment. Each line's `rounded` is
+  // reduced in place and the per-day strip recorded.
+  const overtimeByDay = new Array<number>(7).fill(0);
+  if (noOvertime && weeklyHours > 0) {
+    const toCell = (row: Row) => {
+      const units = row.rounded / roundingSeconds;
+      // The trimmable budget is the "(X)" share of this line's *rounded* units, so
+      // a fully-"(X)" line is fully trimmable and a half-"(X)" line gives up half.
+      const frac = row.seconds > 0 ? (row.trimmableSeconds ?? 0) / row.seconds : 0;
+      return { units, trimmableUnits: Math.min(units, Math.round(units * frac)) };
+    };
+    for (const seg of weekSegments(weekStart, weeklyHours, roundingSeconds)) {
+      const flat: { row: Row; day: number }[] = [];
+      for (let day = seg.startDay; day <= seg.endDay; day++) {
+        classified[day].bill.forEach((row) => flat.push({ row, day }));
+      }
+      const removed = allocateOvertimeTrim(flat.map(({ row }) => toCell(row)), seg.capUnits);
+      flat.forEach(({ row, day }, i) => {
+        if (removed[i] > 0) {
+          const strip = removed[i] * roundingSeconds;
+          row.rounded -= strip;
+          overtimeByDay[day] += strip;
+        }
+      });
+    }
+  }
+
+  const days = classified
+    .map((c, dayIdx) =>
+      finalizeDay(dayIdx, weekStart + dayIdx * DAY_MS, c, roundingMs, overtimeByDay[dayIdx])
+    )
+    .filter((d) => d.rows.length > 0 || d.overlaps.length > 0 || d.overtime > 0);
 
   const grandTotal = days.reduce((s, d) => s + d.total, 0);
   return { days, grandTotal };

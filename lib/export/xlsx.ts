@@ -42,9 +42,6 @@ function individualAOA(doc: Extract<ExportDoc, { view: 'individual' }>): Cell[][
     for (const r of day.rows) {
       aoa.push([dateStr ?? day.label, dayName ?? '', r.time ?? '', secsToHoursNum(r.hours), r.code, r.desc]);
     }
-    for (const o of day.overlaps) {
-      aoa.push([dateStr ?? day.label, dayName ?? '', '', null, 'Overlapping entries', o]);
-    }
   }
   aoa.push([]);
   aoa.push(['Grand total', '', '', secsToHoursNum(doc.grandTotal)]);

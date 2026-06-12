@@ -42,6 +42,10 @@ export interface ExportDialogProps {
   billingTagPrefix: string;
   /** Rounding granularity in seconds (900 = 15 min default, 720 = 12 min). */
   roundingSeconds: number;
+  /** When true, cap each week's billable total at `weeklyHours` (overtime unbilled). */
+  noOvertime: boolean;
+  /** Weekly cap (hours) the overtime trim reduces the billed total to. */
+  weeklyHours: number;
   /** Document title (project / group name). */
   title: string;
   /** Person the timesheet is for (resolved name, may be empty). */
@@ -65,6 +69,8 @@ export default function ExportDialog({
   maxBillableHours,
   billingTagPrefix,
   roundingSeconds,
+  noOvertime,
+  weeklyHours,
   title,
   personName,
   prefetched,
@@ -139,6 +145,8 @@ export default function ExportDialog({
         maxBillableHours,
         billingTagPrefix,
         roundingSeconds,
+        noOvertime,
+        weeklyHours,
         title,
         personName: name.trim(),
       });

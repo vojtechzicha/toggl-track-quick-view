@@ -150,14 +150,6 @@ function individualContent(doc: IndividualDoc): Content[] {
         { text: r.desc, style },
       ]);
     }
-    for (const o of day.overlaps) {
-      body.push([
-        { text: '—', style: 'tdWarn' },
-        { text: '—', style: 'tdWarn', alignment: 'center' },
-        { text: 'Overlapping entries', style: 'tdWarn' },
-        { text: o, style: 'tdWarn' },
-      ]);
-    }
     content.push({
       table: { headerRows: 1, widths: ['auto', 'auto', 'auto', '*'], body },
       layout: { ...tableLayout, fillColor: (rowIndex: number) => (rowIndex === 0 ? COLOR.headFill : null) },

@@ -135,6 +135,48 @@ each entry to. It defaults to **15 minutes (0.25h)**; pick **12 minutes (0.2h)**
 for a client that can't bill quarter-hours. Only the timesheet and exports are
 affected — the dashboard and the targets above are not.
 
+### Don't bill overtime
+
+Some engagements contractually disallow billing more than the agreed weekly hours.
+Turn on **Don't bill overtime** (under **Advanced**) and the timesheet caps each
+week's **billed** total at your **Hours worked per week**: when the week's billable
+lines exceed the cap, it trims them back down — always **rounding down**, by whole
+rounding units. The time is still tracked in Toggl; it just isn't billed.
+
+How the trim is shared out:
+
+- **`(X)`-marked time goes first.** Append `(X)` to a billing tag (e.g. `D123(X)`)
+  to mark that time as the disposable buffer. `D123(X)` is treated as the *same
+  billing code* as `D123` — they merge into one `D123` line — but the `(X)` share
+  of that line is what gets trimmed first, and it can be trimmed all the way to
+  zero before any firm time is touched.
+- The cut is **spread proportionally** across the candidate lines and across the
+  days of the week (the bigger the share, the more it gives up), so no single day
+  or code is singled out.
+- If trimming every `(X)` share still isn't enough to reach the cap, the firm
+  remainder of the billable lines is trimmed the same way.
+
+The **`(X)` marker is internal**: it's stripped from every displayed/exported code,
+so a client never sees it. The cap is measured on **billable lines only** — the
+"No billing tag" / "Multiple billing tags" / "Too long" warnings are problems to
+fix in Toggl, not billable slack, so they never count toward it or get trimmed.
+
+**Month boundaries split the cap.** Billing runs to month-end, so when the 1st of
+a month falls mid-week the week is cut there and each side gets its own cap,
+proportional to the **weekdays (Mon–Fri)** it holds — `weeklyHours / 5 × that
+count` — and each side is trimmed independently. So if the 1st is a Wednesday, the
+Sat–Tue half caps at `weeklyHours/5 × 2` and the Wed–Fri half at `weeklyHours/5 ×
+3`. A weekend-only half caps at **zero** (its work isn't billed): when the 1st is a
+Monday, the leading Sat–Sun is capped at nothing. A week wholly inside one month is
+a single full-week segment capped at `weeklyHours`, exactly as before. This applies
+to the on-screen week too, not just month exports.
+
+The trimmed time is shown **only in the on-screen views** (Summary and Individual)
+on a muted **"Overtime (not billed)"** line, as a hint that the cap is doing its
+job. **Exports stay clean**: the XLSX / CSV / PDF contain only the billable
+timesheet — no overtime line and no warning/overlap rows — and every billable
+figure (and the totals) matches the view exactly.
+
 ## Break detection
 
 You're reminded to take a break once you've worked **4.5h continuously** on the
@@ -243,7 +285,10 @@ the hourly budget — it resumes when you click **This week**.
   clipboard. Per-day, per-tag, and grand-total hours are shown.
 - An entry **without** a billing tag collects in a **"No billing tag"** row, and
   one carrying **more than one** billing tag collects in a **"Multiple billing
-  tags"** row — both flagged in **amber** ⚠ so you go fix the tag in Toggl.
+  tags"** row — both flagged in **amber** ⚠ so you go fix the tag in Toggl. These
+  warning rows are **on-screen hints only**: they don't count toward the day/grand
+  totals and never appear in exports (the totals are the billable lines alone, so
+  the view and the export always agree).
 
 ### Individual timesheet
 
@@ -265,7 +310,9 @@ the hourly budget — it resumes when you click **This week**.
   as in the summary, plus a **Too long to bill individually (> 4h)** row for any
   single entry over four hours (it can't be split), and an **Overlapping
   entries** notice when two entries overlap in time. The over-4h case also shows
-  the same quiet ⚠ on the dashboard timeline.
+  the same quiet ⚠ on the dashboard timeline. As in the summary, all of these are
+  **view-only hints** — they don't count toward the totals and are left out of
+  exports.
 
 Each view lives in its own component under
 [`components/timesheet/`](components/timesheet); the page

@@ -733,6 +733,7 @@ export default function Page() {
             minWorkingDayHours: settings.minWorkingDayHours,
             billingTagPrefix: settings.billingTagPrefix,
             roundingHours: settings.roundingHours,
+            noOvertime: settings.noOvertime,
             refreshSec: settings.refreshSec,
             timesheetMode: settings.timesheetMode,
             exportName: settings.exportName,
