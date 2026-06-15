@@ -58,6 +58,18 @@ adjust **Hours worked per week** (40h by default) for a part-time commitment.
 3. (Optional) Set `APP_PASSWORD` to put the whole dashboard behind a password —
    see below.
 
+## Install as an app (PWA)
+
+The dashboard ships a web manifest, maskable icons, and Apple touch-icon /
+status-bar metadata, so it can be installed to the home screen and launched
+standalone (its own window, no browser chrome, dark theme color, safe-area
+padding for notched phones). On the phone, "Add to Home Screen" (iOS Safari) or
+the install prompt (Chrome / Android) does the job.
+
+It is **not** offline-capable by design — a tiny pass-through service worker
+(`public/sw.js`) only exists to satisfy installability and caches nothing, so the
+app always shows live data and never serves anything stale.
+
 ## Password protection
 
 A server-managed deploy (`TOGGL_API_TOKEN` set) is otherwise readable by anyone
