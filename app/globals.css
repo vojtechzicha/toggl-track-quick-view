@@ -37,7 +37,12 @@ body {
   height: 100dvh;
   display: flex;
   flex-direction: column;
-  padding: clamp(14px, 2.4vmin, 28px);
+  /* Base padding, plus safe-area insets so the shell clears the notch and
+     home indicator when installed/run as a standalone PWA (viewport-fit=cover). */
+  padding: calc(clamp(14px, 2.4vmin, 28px) + env(safe-area-inset-top, 0px))
+    calc(clamp(14px, 2.4vmin, 28px) + env(safe-area-inset-right, 0px))
+    calc(clamp(14px, 2.4vmin, 28px) + env(safe-area-inset-bottom, 0px))
+    calc(clamp(14px, 2.4vmin, 28px) + env(safe-area-inset-left, 0px));
   gap: clamp(10px, 2vmin, 22px);
 }
 
@@ -1004,7 +1009,11 @@ body {
   min-height: 100dvh;
   display: flex;
   flex-direction: column;
-  padding: clamp(14px, 2.4vmin, 28px);
+  /* Safe-area insets for standalone PWA use (viewport-fit=cover). */
+  padding: calc(clamp(14px, 2.4vmin, 28px) + env(safe-area-inset-top, 0px))
+    calc(clamp(14px, 2.4vmin, 28px) + env(safe-area-inset-right, 0px))
+    calc(clamp(14px, 2.4vmin, 28px) + env(safe-area-inset-bottom, 0px))
+    calc(clamp(14px, 2.4vmin, 28px) + env(safe-area-inset-left, 0px));
   gap: clamp(12px, 2vmin, 20px);
 }
 /* The timesheet, unlike the single-screen dashboard, may exceed the viewport —
