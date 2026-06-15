@@ -1,4 +1,5 @@
 :root {
+  color-scheme: dark;
   --bg: #0d1117;
   --card: #161b22;
   --card2: #1c2330;
@@ -21,6 +22,12 @@
 html,
 body {
   height: 100%;
+}
+
+/* Dark base color so the safe-area / overscroll regions (e.g. behind the
+   iPhone home indicator) never flash white, in the browser or installed. */
+html {
+  background: var(--bg);
 }
 
 body {
@@ -677,7 +684,11 @@ body {
     left: 50%;
     transform: translate(-50%, -50%);
     width: min(460px, calc(100% - 28px));
-    max-height: 88vh;
+    /* Leave room for the notch / Dynamic Island and home indicator; the sheet
+       is centred, so subtracting both insets keeps it clear top and bottom. */
+    max-height: calc(
+      100dvh - 48px - env(safe-area-inset-top, 0px) - env(safe-area-inset-bottom, 0px)
+    );
     overflow-y: auto;
     padding: clamp(14px, 4vw, 22px);
     background: var(--bg);
@@ -727,7 +738,12 @@ body {
   backdrop-filter: blur(6px);
   display: grid;
   place-items: center;
-  padding: 20px;
+  /* Keep the centered panel clear of the notch / Dynamic Island and the home
+     indicator when the panel is tall (viewport-fit=cover). */
+  padding: calc(20px + env(safe-area-inset-top, 0px))
+    calc(20px + env(safe-area-inset-right, 0px))
+    calc(20px + env(safe-area-inset-bottom, 0px))
+    calc(20px + env(safe-area-inset-left, 0px));
   z-index: 50;
 }
 .panel {
@@ -735,7 +751,9 @@ body {
   border: 1px solid var(--line);
   border-radius: 20px;
   width: min(460px, 100%);
-  max-height: 92vh;
+  /* 100% of the safe-area-padded overlay cell, so the panel scrolls internally
+     rather than spilling under the status bar or home indicator. */
+  max-height: 100%;
   overflow: auto;
   padding: clamp(20px, 3vmin, 32px);
   display: flex;
