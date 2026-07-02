@@ -415,7 +415,11 @@ comfortably under that:
   running timer, so there's no separate "current entry" call.
 - **Cached connect.** Your workspace + project list are cached in `localStorage`
   for 24h, so reloading the page costs **zero** requests until the cache
-  expires. (Click **Connect/Reconnect** in Settings to force a refresh.)
+  expires. A project **created in Toggl after connecting therefore doesn't show
+  up in Settings right away** — click **↻ Refresh project list** under the
+  project picker (or **Connect/Reconnect** when you manage your own token) to
+  force a fresh fetch. Only projects from your default Toggl workspace are
+  listed.
 - **Configurable refresh interval**, default **3 minutes** (~20 requests/hour).
   Options range from 1 min (paid plans) to 10 min. The on-screen counter keeps
   ticking every second locally between refreshes, so the display stays live even

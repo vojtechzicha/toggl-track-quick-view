@@ -542,6 +542,23 @@ export default function SettingsPanel({
                 </button>
               </>
             )}
+            {/* The project list is cached for 24h to conserve the request budget,
+                so a project created in Toggl after connecting won't show until a
+                forced refresh. In server-managed mode this link is the ONLY such
+                affordance (there's no Connect button to double as one). */}
+            <button
+              type="button"
+              className="linkbtn"
+              onClick={() => onConnect(serverManaged ? '' : token)}
+              disabled={connecting}
+            >
+              {connecting ? 'Refreshing…' : '↻ Refresh project list'}
+            </button>
+            <p className="hint">
+              Just created a project in Toggl and it&apos;s not listed? The list is cached for a
+              day — refresh it here (costs 2 API requests). Only projects from your default Toggl
+              workspace are shown.
+            </p>
           </div>
         )}
 
