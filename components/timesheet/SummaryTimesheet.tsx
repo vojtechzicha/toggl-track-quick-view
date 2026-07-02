@@ -28,6 +28,7 @@ export default function SummaryTimesheet({
   roundingSeconds,
   noOvertime,
   weeklyHours,
+  codeMappings,
 }: TimesheetViewProps) {
   const grid = useMemo(
     () =>
@@ -40,8 +41,9 @@ export default function SummaryTimesheet({
         roundingSeconds,
         noOvertime,
         weeklyHours,
+        codeMappings,
       }),
-    [entries, weekStart, nowMs, projects, billingTagPrefix, roundingSeconds, noOvertime, weeklyHours]
+    [entries, weekStart, nowMs, projects, billingTagPrefix, roundingSeconds, noOvertime, weeklyHours, codeMappings]
   );
 
   if (!grid || grid.rows.length === 0) {

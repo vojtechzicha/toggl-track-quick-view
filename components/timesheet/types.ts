@@ -1,5 +1,6 @@
 import type { TimeEntry } from '@/lib/calc';
 import type { SelectedProject } from '@/components/SettingsPanel';
+import type { CodeMapping } from '@/lib/timesheet/mapping';
 
 /**
  * Props every timesheet view receives. The page owns the single Toggl poll (via
@@ -35,4 +36,7 @@ export interface TimesheetViewProps {
   noOvertime: boolean;
   // The weekly cap (hours) overtime trimming reduces the billed total to.
   weeklyHours: number;
+  // Linked billing codes: projects billed here as one fixed code per day, rounded
+  // on their own grid (see lib/timesheet/mapping).
+  codeMappings: CodeMapping[];
 }

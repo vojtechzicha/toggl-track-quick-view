@@ -11,6 +11,7 @@ import {
   defaultMinWorkingDayHours,
   fmtHoursLabel,
 } from '@/lib/calc';
+import { mappingGridCompatible, type CodeMapping } from '@/lib/timesheet/mapping';
 
 export type TimesheetMode = 'summary' | 'individual';
 
@@ -49,6 +50,10 @@ export interface SettingsValue {
   // week's billable total at weeklyHours, trimming lines down (codes marked with a
   // trailing "(X)" first) and showing the stripped time on an "Overtime" line.
   noOvertime: boolean;
+  // Linked billing codes: selected projects whose entries carry another client's
+  // billing tags (their own prefix and rounding grid) and bill on this timesheet
+  // as one fixed code per day (see lib/timesheet/mapping).
+  codeMappings: CodeMapping[];
   refreshSec: number;
   timesheetMode: TimesheetMode;
   // Name printed on exports (PDF header). Blank falls back to the Toggl account name.
@@ -82,6 +87,7 @@ export function toPresetValue(s: SettingsValue): PresetValue {
     billingTagPrefix: s.billingTagPrefix,
     roundingHours: s.roundingHours,
     noOvertime: s.noOvertime,
+    codeMappings: s.codeMappings,
     timesheetMode: s.timesheetMode,
     exportName: s.exportName,
   };
@@ -98,6 +104,18 @@ export function presetMatches(value: PresetValue, s: SettingsValue): boolean {
       .map((p) => p.id)
       .sort((a, b) => a - b)
       .join(',');
+  // Order-insensitive mapping comparison; `?? []` covers presets stored before
+  // linked codes existed, and the overtime fields normalise so presets stored
+  // before those existed still match their unchanged settings.
+  const maps = (ms: CodeMapping[] | undefined) =>
+    (ms ?? [])
+      .map(
+        (m) =>
+          `${m.projectId}|${m.tagPrefix}|${m.roundingHours}|${m.targetCode}|` +
+          `${m.noOvertime ? m.weeklyHours ?? DEFAULT_WEEKLY_HOURS : ''}`
+      )
+      .sort()
+      .join(';');
   return (
     ids(value.selectedProjects) === ids(s.selectedProjects) &&
     value.groupName === s.groupName &&
@@ -108,6 +126,7 @@ export function presetMatches(value: PresetValue, s: SettingsValue): boolean {
     value.billingTagPrefix === s.billingTagPrefix &&
     value.roundingHours === s.roundingHours &&
     value.noOvertime === s.noOvertime &&
+    maps(value.codeMappings) === maps(s.codeMappings) &&
     value.timesheetMode === s.timesheetMode &&
     value.exportName === s.exportName
   );
@@ -213,12 +232,14 @@ export default function SettingsPanel({
   const [billingPrefix, setBillingPrefix] = useState(initial.billingTagPrefix);
   const [roundingHours, setRoundingHours] = useState(initial.roundingHours);
   const [noOvertime, setNoOvertime] = useState(initial.noOvertime);
+  const [codeMappings, setCodeMappings] = useState<CodeMapping[]>(initial.codeMappings ?? []);
   const [showAdvanced, setShowAdvanced] = useState(
     initial.maxBillableHours !== null ||
       initial.minWorkingDayHours !== null ||
       initial.billingTagPrefix !== DEFAULT_BILLING_TAG_PREFIX ||
       initial.roundingHours !== DEFAULT_ROUNDING_HOURS ||
       initial.noOvertime ||
+      (initial.codeMappings?.length ?? 0) > 0 ||
       initial.exportName.trim() !== ''
   );
 
@@ -267,6 +288,39 @@ export default function SettingsPanel({
       if (s.trim() === '' || !Number.isFinite(n)) return null;
       return clampQuarter(n, min, weeklyHours);
     };
+    // Guard against a stray value; only the offered granularities are valid.
+    const finalRounding = ROUNDING_HOURS_OPTIONS.includes(
+      roundingHours as (typeof ROUNDING_HOURS_OPTIONS)[number]
+    )
+      ? roundingHours
+      : DEFAULT_ROUNDING_HOURS;
+    // Linked codes: keep only complete rows on selected projects (one per
+    // project). A grid that would take figures off this sheet's rounding unit is
+    // coerced to the sheet's own — the equality with the sub-client sheet only
+    // works when its rounded totals still land on this grid. The sub-client's
+    // weekly cap is clamped like the main weekly field.
+    const seenMapped = new Set<number>();
+    const cleanedMappings: CodeMapping[] = [];
+    for (const m of codeMappings) {
+      const tagPrefix = m.tagPrefix.trim();
+      const targetCode = m.targetCode.trim();
+      if (!m.projectId || !tagPrefix || !targetCode) continue;
+      if (!selectedIds.includes(m.projectId) || seenMapped.has(m.projectId)) continue;
+      seenMapped.add(m.projectId);
+      const validUnit =
+        ROUNDING_HOURS_OPTIONS.includes(m.roundingHours as (typeof ROUNDING_HOURS_OPTIONS)[number]) &&
+        mappingGridCompatible(m.roundingHours, finalRounding);
+      cleanedMappings.push({
+        projectId: m.projectId,
+        tagPrefix,
+        roundingHours: validUnit ? m.roundingHours : finalRounding,
+        targetCode,
+        noOvertime: !!m.noOvertime,
+        weeklyHours: Number.isFinite(m.weeklyHours as number)
+          ? clampQuarter(m.weeklyHours as number, WEEKLY_MIN, WEEKLY_MAX)
+          : DEFAULT_WEEKLY_HOURS,
+      });
+    }
     return {
       // In server-managed mode the token always stays empty so the proxy uses
       // the server's TOGGL_API_TOKEN.
@@ -279,13 +333,9 @@ export default function SettingsPanel({
       minWorkingDayHours: parseOverride(minDayStr, 0),
       // An empty prefix would match every tag, so fall back to the default.
       billingTagPrefix: billingPrefix.trim() || DEFAULT_BILLING_TAG_PREFIX,
-      // Guard against a stray value; only the offered granularities are valid.
-      roundingHours: ROUNDING_HOURS_OPTIONS.includes(
-        roundingHours as (typeof ROUNDING_HOURS_OPTIONS)[number]
-      )
-        ? roundingHours
-        : DEFAULT_ROUNDING_HOURS,
+      roundingHours: finalRounding,
       noOvertime,
+      codeMappings: cleanedMappings,
       refreshSec,
       timesheetMode,
       exportName: exportName.trim(),
@@ -293,6 +343,33 @@ export default function SettingsPanel({
   };
 
   const handleSave = () => onSave(buildValue());
+
+  // ---- Linked billing codes ----
+  // Rows are edited freely (a half-filled row is fine mid-edit); buildValue keeps
+  // only complete rows on selected projects when saving.
+  const updateMapping = (i: number, patch: Partial<CodeMapping>) =>
+    setCodeMappings((ms) => ms.map((m, idx) => (idx === i ? { ...m, ...patch } : m)));
+  const removeMapping = (i: number) =>
+    setCodeMappings((ms) => ms.filter((_, idx) => idx !== i));
+  const addMapping = () => {
+    const free = selectedIds.find((id) => !codeMappings.some((m) => m.projectId === id));
+    setCodeMappings((ms) => [
+      ...ms,
+      // New rows start on this sheet's own grid — always compatible.
+      {
+        projectId: free ?? 0,
+        tagPrefix: '',
+        roundingHours,
+        targetCode: '',
+        noOvertime: false,
+        weeklyHours: DEFAULT_WEEKLY_HOURS,
+      },
+    ]);
+  };
+  const projectNameOf = (id: number) =>
+    projects.find((p) => p.id === id)?.name ??
+    initial.selectedProjects.find((p) => p.id === id)?.name ??
+    `#${id}`;
 
   // ---- Workspaces (stored settings) ----
   const [newPresetName, setNewPresetName] = useState('');
@@ -314,12 +391,14 @@ export default function SettingsPanel({
     setBillingPrefix(v.billingTagPrefix);
     setRoundingHours(v.roundingHours);
     setNoOvertime(v.noOvertime);
+    setCodeMappings(v.codeMappings ?? []); // presets stored before linked codes existed
     if (
       v.maxBillableHours !== null ||
       v.minWorkingDayHours !== null ||
       v.billingTagPrefix !== DEFAULT_BILLING_TAG_PREFIX ||
       v.roundingHours !== DEFAULT_ROUNDING_HOURS ||
       v.noOvertime ||
+      (v.codeMappings?.length ?? 0) > 0 ||
       v.exportName.trim() !== ''
     ) {
       setShowAdvanced(true);
@@ -463,6 +542,23 @@ export default function SettingsPanel({
                 </button>
               </>
             )}
+            {/* The project list is cached for 24h to conserve the request budget,
+                so a project created in Toggl after connecting won't show until a
+                forced refresh. In server-managed mode this link is the ONLY such
+                affordance (there's no Connect button to double as one). */}
+            <button
+              type="button"
+              className="linkbtn"
+              onClick={() => onConnect(serverManaged ? '' : token)}
+              disabled={connecting}
+            >
+              {connecting ? 'Refreshing…' : '↻ Refresh project list'}
+            </button>
+            <p className="hint">
+              Just created a project in Toggl and it&apos;s not listed? The list is cached for a
+              day — refresh it here (costs 2 API requests). Only projects from your default Toggl
+              workspace are shown.
+            </p>
           </div>
         )}
 
@@ -619,6 +715,134 @@ export default function SettingsPanel({
               <strong>15 minutes ({numLabel(DEFAULT_ROUNDING_HOURS)}h)</strong>; pick{' '}
               <strong>12 minutes (0.2h)</strong> if your client can&apos;t bill quarter-hours. The
               dashboard and targets are unaffected.
+            </p>
+          </div>
+
+          <div className="field">
+            <label>Linked billing codes</label>
+            {codeMappings.length > 0 && (
+              <div className="map-list">
+                {codeMappings.map((m, i) => {
+                  const gridOk = mappingGridCompatible(m.roundingHours, roundingHours);
+                  return (
+                    <div key={i} className="map-row">
+                      <div className="map-grid">
+                        <label className="map-cell">
+                          <span className="map-cap">Project</span>
+                          <select
+                            value={m.projectId || ''}
+                            onChange={(e) =>
+                              updateMapping(i, { projectId: Number(e.target.value) || 0 })
+                            }
+                          >
+                            <option value="">Pick a project…</option>
+                            {selectedIds.map((id) => (
+                              <option
+                                key={id}
+                                value={id}
+                                disabled={codeMappings.some(
+                                  (o, oi) => oi !== i && o.projectId === id
+                                )}
+                              >
+                                {projectNameOf(id)}
+                              </option>
+                            ))}
+                          </select>
+                        </label>
+                        <label className="map-cell map-cell-sm">
+                          <span className="map-cap">Tag prefix</span>
+                          <input
+                            type="text"
+                            value={m.tagPrefix}
+                            placeholder="S"
+                            onChange={(e) => updateMapping(i, { tagPrefix: e.target.value })}
+                          />
+                        </label>
+                        <label className="map-cell map-cell-sm">
+                          <span className="map-cap">Rounding</span>
+                          <select
+                            value={m.roundingHours}
+                            onChange={(e) =>
+                              updateMapping(i, { roundingHours: Number(e.target.value) })
+                            }
+                          >
+                            {ROUNDING_HOURS_OPTIONS.map((h) => (
+                              <option key={h} value={h}>
+                                {Math.round(h * 60)} min
+                              </option>
+                            ))}
+                          </select>
+                        </label>
+                        <label className="map-cell">
+                          <span className="map-cap">Bills here as</span>
+                          <input
+                            type="text"
+                            value={m.targetCode}
+                            placeholder={`${billingPrefix.trim() || DEFAULT_BILLING_TAG_PREFIX}-SUB-1`}
+                            onChange={(e) => updateMapping(i, { targetCode: e.target.value })}
+                          />
+                        </label>
+                        <button
+                          type="button"
+                          className="ws-icon ws-del map-del"
+                          title="Remove this linked code"
+                          onClick={() => removeMapping(i)}
+                        >
+                          🗑
+                        </button>
+                      </div>
+                      <label className="map-ot">
+                        <input
+                          type="checkbox"
+                          checked={!!m.noOvertime}
+                          onChange={(e) => updateMapping(i, { noOvertime: e.target.checked })}
+                        />
+                        <span>It doesn&apos;t bill overtime — cap its week at</span>
+                        <input
+                          type="number"
+                          inputMode="decimal"
+                          min={WEEKLY_MIN}
+                          max={WEEKLY_MAX}
+                          step={STEP}
+                          value={m.weeklyHours ?? DEFAULT_WEEKLY_HOURS}
+                          disabled={!m.noOvertime}
+                          onChange={(e) => {
+                            const v = parseFloat(e.target.value);
+                            updateMapping(i, { weeklyHours: Number.isFinite(v) ? v : 0 });
+                          }}
+                        />
+                        <span>h</span>
+                      </label>
+                      {!gridOk && (
+                        <p className="map-warn">
+                          Off this sheet&apos;s {Math.round(roundingHours * 60)}-min grid — will be
+                          saved as {Math.round(roundingHours * 60)} min so the figures stay tidy.
+                        </p>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+            <button
+              type="button"
+              className="linkbtn"
+              onClick={addMapping}
+              disabled={selectedIds.length === 0}
+            >
+              + Link a project&apos;s codes
+            </button>
+            <p className="hint">
+              Bill a selected project as a <strong>single code</strong> on this timesheet while it
+              keeps its own billing tags. Its entries are grouped by their own tags (the prefix
+              above), rounded per day on its own grid, and each day&apos;s total lands on the one
+              code entered here — so this sheet&apos;s line always equals that project&apos;s own
+              timesheet, day for day (its per-code breakdown is kept in the cell description).
+              If the linked engagement itself doesn&apos;t bill overtime, tick its cap above: its
+              week is then trimmed by <em>its own</em> rules first and this sheet bills whatever
+              its timesheet shows. This sheet&apos;s own &ldquo;Don&apos;t bill overtime&rdquo;
+              never trims a linked line (it only counts toward the cap), and the linked rounding
+              must be this sheet&apos;s unit or a whole multiple of it.
             </p>
           </div>
 

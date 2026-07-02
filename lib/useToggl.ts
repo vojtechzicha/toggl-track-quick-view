@@ -63,6 +63,7 @@ export const DEFAULTS: StoredSettings = {
   billingTagPrefix: DEFAULT_BILLING_TAG_PREFIX,
   roundingHours: DEFAULT_ROUNDING_HOURS,
   noOvertime: false,
+  codeMappings: [],
   refreshSec: DEFAULT_REFRESH_SEC,
   timesheetMode: 'summary',
   exportName: '',
@@ -84,6 +85,9 @@ export function applyPreset(
     ...settings,
     ...preset.value,
     selectedProjects: enrichSelected(preset.value.selectedProjects, projects),
+    // A preset stored before linked codes existed has no key to spread in, which
+    // would otherwise leak the current mappings into the recalled workspace.
+    codeMappings: preset.value.codeMappings ?? [],
   };
 }
 

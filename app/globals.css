@@ -1518,3 +1518,73 @@ body:has(.ts-page) {
 .ws-new .btn {
   flex: 0 0 auto;
 }
+
+/* ---------- Settings: linked billing codes ---------- */
+/* One card per linked project; the inputs wrap into a compact grid so the card
+   stays usable at the panel's narrow width. */
+.map-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.map-row {
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--card);
+  padding: 8px 10px;
+}
+.map-grid {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: 8px;
+}
+.map-cell {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  flex: 1 1 140px;
+  min-width: 0;
+}
+.map-cell-sm {
+  flex: 0 1 90px;
+}
+.map-cap {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--muted);
+}
+.field .map-cell input,
+.field .map-cell select {
+  padding: 8px 10px;
+  font-size: 14px;
+  border-radius: 10px;
+}
+.map-del {
+  flex: 0 0 auto;
+  align-self: flex-end;
+}
+/* The linked project's own no-overtime contract: checkbox + weekly-cap hours. */
+.map-ot {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  margin-top: 8px;
+  font-size: 13px;
+  color: var(--muted);
+}
+.field .map-ot input[type='number'] {
+  width: 74px;
+  padding: 6px 8px;
+  font-size: 13px;
+  border-radius: 8px;
+}
+.field .map-ot input[type='number']:disabled {
+  opacity: 0.5;
+}
+.map-warn {
+  margin-top: 6px;
+  color: var(--amber);
+  font-size: 12px;
+  line-height: 1.4;
+}

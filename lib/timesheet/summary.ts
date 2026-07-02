@@ -3,13 +3,22 @@
 // figures to what's on screen (same per-day quarter-hour rounding, same grouping).
 
 import {
-  billingTagsOf,
   parseBillingCode,
   roundQuartersPreservingTotal,
   type TimeEntry,
 } from '@/lib/calc';
 import type { SelectedProject } from '@/components/SettingsPanel';
 import { allocateOvertimeTrimPerDay, weekSegments } from './overtime';
+import {
+  addToMappedAgg,
+  entryBillingTags,
+  finalizeMappedWeek,
+  mappedRowKey,
+  mappingFor,
+  newMappedAgg,
+  type CodeMapping,
+  type MappedAgg,
+} from './mapping';
 import { DAY_MS, UNTAGGED, MULTIPLE } from './constants';
 
 export interface Cell {
@@ -61,6 +70,9 @@ export interface SummaryInput {
   // When false, neither input has any effect.
   noOvertime: boolean;
   weeklyHours: number;
+  // Linked billing codes: projects whose entries carry another client's tags and
+  // bill here as one fixed row per day (see lib/timesheet/mapping).
+  codeMappings?: CodeMapping[];
 }
 
 /**
@@ -81,6 +93,7 @@ export function buildSummaryGrid({
   roundingSeconds,
   noOvertime,
   weeklyHours,
+  codeMappings,
 }: SummaryInput): SummaryGrid | null {
   if (!weekStart) return null;
   const ids = new Set(projects.map((p) => p.id));
@@ -92,6 +105,15 @@ export function buildSummaryGrid({
   const dayHasEntries = new Array(7).fill(false);
   let untaggedPresent = false;
   let multiplePresent = false;
+
+  // Linked-code accumulators: per mapped row, one aggregate per day. Mapped rows
+  // carry a fixed pre-rounded value (rounded — and, when the mapping declares the
+  // sub-client's own no-overtime contract, trimmed — on the mapping's own grid,
+  // see lib/timesheet/mapping), so they're excluded from this sheet's rounding
+  // pass and from overtime trimming below.
+  const mappedAggs = new Map<string, Map<number, MappedAgg>>(); // rowKey -> day -> agg
+  const mappingByRow = new Map<string, CodeMapping>(); // rowKey -> its mapping
+  const mappedRows = new Set<string>();
 
   const addDesc = (cell: Cell, desc: string) => {
     const text = desc.trim();
@@ -113,7 +135,10 @@ export function buildSummaryGrid({
 
     // Which row this entry lands in: its (project, single billing tag), or a
     // warning row when it has none / more than one (both need fixing in Toggl).
-    const tags = billingTagsOf(e.tags, billingTagPrefix);
+    // A mapped project's entries are validated against the *mapping's* prefix, so
+    // its untagged/multi-tagged entries surface in the same warning rows.
+    const mapping = mappingFor(codeMappings, e.project_id);
+    const tags = entryBillingTags(e.tags, mapping, billingTagPrefix);
     let rowKey: string;
     if (tags.length === 0) {
       rowKey = UNTAGGED;
@@ -121,6 +146,33 @@ export function buildSummaryGrid({
     } else if (tags.length > 1) {
       rowKey = MULTIPLE;
       multiplePresent = true;
+    } else if (mapping) {
+      // Linked code: the whole project collapses to one row billed as the target
+      // code; the per-code time is aggregated here and rounded per day on the
+      // mapping's grid once the loop is done.
+      rowKey = mappedRowKey(e.project_id);
+      mappedRows.add(rowKey);
+      mappingByRow.set(rowKey, mapping);
+      if (!rowMeta.has(rowKey)) {
+        rowMeta.set(rowKey, {
+          projectId: e.project_id,
+          projectName: nameById.get(e.project_id) ?? '',
+          tag: mapping.targetCode,
+        });
+      }
+      dayHasEntries[dayIdx] = true;
+      let byDay = mappedAggs.get(rowKey);
+      if (!byDay) {
+        byDay = new Map();
+        mappedAggs.set(rowKey, byDay);
+      }
+      let agg = byDay.get(dayIdx);
+      if (!agg) {
+        agg = newMappedAgg(startMs);
+        byDay.set(dayIdx, agg);
+      }
+      addToMappedAgg(agg, tags[0], seconds, e.description, startMs);
+      continue;
     } else {
       // The "(X)" marker is just a trimmable version of the same billing code, so
       // it shares one row with its plain twin (keyed by the stripped base); the
@@ -158,6 +210,24 @@ export function buildSummaryGrid({
     if (i >= 2 || dayHasEntries[i]) dayCols.push(i);
   }
 
+  // Close the linked-code aggregates: each mapped (project, day) becomes a fixed
+  // cell — rounded (and, per the mapping's own no-overtime contract, trimmed) on
+  // the mapping's own grid so it equals the sub-client sheet's billed day total
+  // (the invariant), with that sheet's per-code breakdown leading the cell's
+  // descriptions for traceability.
+  const mappedFixed = new Map<string, number>(); // key: `${dayIdx}|${rowKey}`
+  for (const [rowKey, byDay] of mappedAggs) {
+    const values = finalizeMappedWeek(byDay, mappingByRow.get(rowKey)!, weekStart);
+    for (const [day, value] of values) {
+      mappedFixed.set(`${day}|${rowKey}`, value.seconds);
+      cells.set(`${day}|${rowKey}`, {
+        descs: value.descs,
+        seconds: byDay.get(day)!.seconds,
+        trimmableSeconds: 0,
+      });
+    }
+  }
+
   // Rows: normal rows grouped by project, then tag (both alphabetical), then the
   // warning rows (multiple, untagged) last.
   const tagRows = [...rowMeta.keys()].sort((a, b) => {
@@ -172,12 +242,17 @@ export function buildSummaryGrid({
   // Round to the configured units per day: each cell is rounded so the cells still
   // add up to the day's rounded total (no accumulated drift), with the rounding
   // error spread evenly across the rows. Totals are then summed from these rounded
-  // cells, so every figure shown is a clean multiple of the rounding unit.
+  // cells, so every figure shown is a clean multiple of the rounding unit. Mapped
+  // rows are already rounded (on their own grid) and must not be re-rounded — that
+  // would break the equality with the sub-client's sheet — so they take their fixed
+  // value and only the native rows go through this sheet's rounding.
+  const roundableRows = rows.filter((r) => !mappedRows.has(r));
   const rounded = new Map<string, number>(); // key: `${dayIdx}|${rowKey}`
   for (const d of dayCols) {
-    const raw = rows.map((r) => cells.get(`${d}|${r}`)?.seconds ?? 0);
+    const raw = roundableRows.map((r) => cells.get(`${d}|${r}`)?.seconds ?? 0);
     const adj = roundQuartersPreservingTotal(raw, { unitSeconds: roundingSeconds });
-    rows.forEach((r, ri) => rounded.set(`${d}|${r}`, adj[ri]));
+    roundableRows.forEach((r, ri) => rounded.set(`${d}|${r}`, adj[ri]));
+    for (const r of mappedRows) rounded.set(`${d}|${r}`, mappedFixed.get(`${d}|${r}`) ?? 0);
   }
 
   // Overtime pass: when the contract disallows billing overtime and a segment's
@@ -188,16 +263,24 @@ export function buildSummaryGrid({
   // Within a day the cut still takes trimmable "(X)" portions first. A month boundary
   // mid-week splits the week into two independently-capped segments; otherwise it's
   // one full-week segment. Warning rows are never billed, so they're excluded from
-  // both the cap measurement and the trimming.
+  // both the cap measurement and the trimming. Mapped rows are protected — they must
+  // keep equalling the sub-client sheet's day totals — so they still consume the cap
+  // (their units are subtracted from the segment's budget) but the cut itself lands
+  // only on native rows.
   const overtimeByDay = new Array<number>(7).fill(0);
   if (noOvertime && weeklyHours > 0) {
     for (const seg of weekSegments(weekStart, weeklyHours, roundingSeconds)) {
       const billCells: { key: string; day: number; units: number; trimmableUnits: number }[] = [];
+      let mappedUnits = 0;
       for (const d of dayCols) {
         if (d < seg.startDay || d > seg.endDay) continue;
         for (const r of tagRows) {
           const units = Math.round((rounded.get(`${d}|${r}`) ?? 0) / roundingSeconds);
           if (units <= 0) continue;
+          if (mappedRows.has(r)) {
+            mappedUnits += units;
+            continue;
+          }
           const cell = cells.get(`${d}|${r}`);
           // The trimmable budget is the "(X)" share of this cell's rounded units.
           const frac = cell && cell.seconds > 0 ? cell.trimmableSeconds / cell.seconds : 0;
@@ -207,7 +290,7 @@ export function buildSummaryGrid({
       }
       const removed = allocateOvertimeTrimPerDay(
         billCells.map((c) => ({ units: c.units, trimmableUnits: c.trimmableUnits, day: c.day })),
-        seg.capUnits
+        Math.max(0, seg.capUnits - mappedUnits)
       );
       billCells.forEach((c, i) => {
         if (removed[i] > 0) {
