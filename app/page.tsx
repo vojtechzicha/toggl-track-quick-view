@@ -7,6 +7,7 @@ import SettingsPanel, { type SettingsPreset } from '@/components/SettingsPanel';
 import ProjectChips from '@/components/ProjectChips';
 import PasswordGate from '@/components/PasswordGate';
 import { useToggl, applyPreset, HOURLY_LIMIT, fmtInterval } from '@/lib/useToggl';
+import { mappingFor } from '@/lib/timesheet/mapping';
 import {
   NormEntry,
   Gap,
@@ -245,7 +246,12 @@ export default function Page() {
           stopMs: e.stopMs,
           running: e.running,
           dur,
-          missingTag: !hasBillingTag(e.tags, settings.billingTagPrefix),
+          // A linked-code project's entries carry the mapping's own tag prefix,
+          // so they're checked against that instead of this sheet's.
+          missingTag: !hasBillingTag(
+            e.tags,
+            mappingFor(settings.codeMappings, e.projectId)?.tagPrefix ?? settings.billingTagPrefix
+          ),
           tooLong: settings.timesheetMode === 'individual' && dur > maxBillSec,
           projId: e.projectId,
         });
@@ -305,6 +311,7 @@ export default function Page() {
     settings.weeklyHours,
     settings.maxBillableHours,
     settings.billingTagPrefix,
+    settings.codeMappings,
   ]);
 
   // Week summary for the side panel: logged vs target for each weekday. Mon–Fri
@@ -784,6 +791,7 @@ export default function Page() {
             billingTagPrefix: settings.billingTagPrefix,
             roundingHours: settings.roundingHours,
             noOvertime: settings.noOvertime,
+            codeMappings: settings.codeMappings,
             refreshSec: settings.refreshSec,
             timesheetMode: settings.timesheetMode,
             exportName: settings.exportName,

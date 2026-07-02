@@ -9,6 +9,7 @@ import { fmtHours, fmtTimeOfDay, type TimeEntry } from '@/lib/calc';
 import type { SelectedProject } from '@/components/SettingsPanel';
 import { buildSummaryGrid } from '@/lib/timesheet/summary';
 import { buildIndividualWeek } from '@/lib/timesheet/individual';
+import type { CodeMapping } from '@/lib/timesheet/mapping';
 import { DAY_LABELS, DAY_MS, UNTAGGED, MULTIPLE } from '@/lib/timesheet/constants';
 import { weeksInRange, type DateRange } from './range';
 
@@ -29,6 +30,8 @@ export interface ExportOptions {
   noOvertime: boolean;
   /** Weekly cap (hours) the overtime trim reduces the billed total to. */
   weeklyHours: number;
+  /** Linked billing codes (see lib/timesheet/mapping); empty/omitted = none. */
+  codeMappings?: CodeMapping[];
   /** Title shown on the document (project / group name). */
   title: string;
   /** Person the timesheet is for (may be empty). */
@@ -103,7 +106,7 @@ function codeLabel(
 }
 
 function buildSummaryDoc(o: ExportOptions): SummaryDoc {
-  const { range, entries, nowMs, projects, multi, billingTagPrefix, roundingSeconds, noOvertime, weeklyHours } = o;
+  const { range, entries, nowMs, projects, multi, billingTagPrefix, roundingSeconds, noOvertime, weeklyHours, codeMappings } = o;
   const weeks: SummaryWeekBlock[] = [];
 
   for (const weekStart of weeksInRange(range.fromMs, range.toMs)) {
@@ -116,6 +119,7 @@ function buildSummaryDoc(o: ExportOptions): SummaryDoc {
       roundingSeconds,
       noOvertime,
       weeklyHours,
+      codeMappings,
     });
     if (!grid || grid.rows.length === 0) continue;
 
@@ -184,7 +188,7 @@ function buildSummaryDoc(o: ExportOptions): SummaryDoc {
 }
 
 function buildIndividualDoc(o: ExportOptions): IndividualDoc {
-  const { range, entries, nowMs, projects, multi, maxBillableHours, billingTagPrefix, roundingSeconds, noOvertime, weeklyHours } = o;
+  const { range, entries, nowMs, projects, multi, maxBillableHours, billingTagPrefix, roundingSeconds, noOvertime, weeklyHours, codeMappings } = o;
   const nameById = new Map(projects.map((p) => [p.id, p.name]));
   const days: IndividualDayBlock[] = [];
 
@@ -199,6 +203,7 @@ function buildIndividualDoc(o: ExportOptions): IndividualDoc {
       roundingSeconds,
       noOvertime,
       weeklyHours,
+      codeMappings,
     });
     if (!week) continue;
     for (const day of week.days) {

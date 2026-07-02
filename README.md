@@ -326,6 +326,39 @@ the hourly budget — it resumes when you click **This week**.
   **view-only hints** — they don't count toward the totals and are left out of
   exports.
 
+### Linked billing codes (subcontracting)
+
+Sometimes a project is billed **through** another client: you work for a prime
+contractor whose timesheet bills the whole engagement under **one** code, but the
+work itself is tracked for a sub-client project with **its own** billing codes
+and possibly its own rounding rules. **Settings → Advanced → Linked billing
+codes** models exactly that. A linked code says, for one selected project:
+
+- its entries carry the **sub-client's own tags** (a separate prefix, e.g. `S`
+  for `S101`/`S102`), validated as usual — untagged or multi-tagged entries still
+  land in the amber warning rows;
+- per day, those entries are grouped by their own codes and rounded on the
+  **mapping's own grid** (which must be this sheet's unit or a whole multiple of
+  it, so figures stay tidy), exactly as the sub-client's own timesheet — a stored
+  workspace with that prefix/rounding — would show them;
+- the day's rounded total then bills on this sheet as the **single target code**
+  you entered (e.g. `D-SUB-1`).
+
+The guarantee that makes the two sheets reconcile: **per day, the sum of the
+sub-client's billed codes equals this sheet's linked line** — by construction,
+since the day-total-preserving rounding makes the sub-client's cells sum to the
+rounded day total, and that same total is what the linked line carries. To keep
+it, the linked line is treated as **fixed**: this sheet's own rounding pass never
+re-rounds it and **"Don't bill overtime" never trims it** (it still counts
+toward the weekly cap, so the trim takes correspondingly more off the native
+lines). For traceability the cell's description leads with the sub-client's
+per-code breakdown (e.g. `S101 1.75h, S102 0.50h`) followed by the merged entry
+descriptions; in the Individual view the linked project appears as **one block
+per day**, anchored at its first entry. Exports show the same figures as the
+views, as always.
+
+The mapping logic lives in [`lib/timesheet/mapping.ts`](lib/timesheet/mapping.ts).
+
 Each view lives in its own component under
 [`components/timesheet/`](components/timesheet); the page
 ([`app/timesheet/page.tsx`](app/timesheet/page.tsx)) is a thin shell that picks

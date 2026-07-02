@@ -291,6 +291,7 @@ export default function TimesheetPage() {
             roundingSeconds={roundingUnitSeconds(settings.roundingHours)}
             noOvertime={settings.noOvertime}
             weeklyHours={settings.weeklyHours}
+            codeMappings={settings.codeMappings}
           />
         )}
 
@@ -318,6 +319,7 @@ export default function TimesheetPage() {
           roundingSeconds={roundingUnitSeconds(settings.roundingHours)}
           noOvertime={settings.noOvertime}
           weeklyHours={settings.weeklyHours}
+          codeMappings={settings.codeMappings}
           title={projectTitle}
           personName={settings.exportName.trim() || settings.accountName}
           prefetched={exportPrefetched}
@@ -341,6 +343,7 @@ export default function TimesheetPage() {
             billingTagPrefix: settings.billingTagPrefix,
             roundingHours: settings.roundingHours,
             noOvertime: settings.noOvertime,
+            codeMappings: settings.codeMappings,
             refreshSec: settings.refreshSec,
             timesheetMode: settings.timesheetMode,
             exportName: settings.exportName,

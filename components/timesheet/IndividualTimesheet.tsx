@@ -27,6 +27,7 @@ export default function IndividualTimesheet({
   roundingSeconds,
   noOvertime,
   weeklyHours,
+  codeMappings,
 }: TimesheetViewProps) {
   const week = useMemo(
     () =>
@@ -40,6 +41,7 @@ export default function IndividualTimesheet({
         roundingSeconds,
         noOvertime,
         weeklyHours,
+        codeMappings,
       }),
     [
       entries,
@@ -51,6 +53,7 @@ export default function IndividualTimesheet({
       roundingSeconds,
       noOvertime,
       weeklyHours,
+      codeMappings,
     ]
   );
 

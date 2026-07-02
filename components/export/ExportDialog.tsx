@@ -13,6 +13,7 @@ import {
   toDateInput,
 } from '@/lib/export/range';
 import { buildExportDoc } from '@/lib/export/model';
+import type { CodeMapping } from '@/lib/timesheet/mapping';
 import {
   type ExportFormat,
   FORMAT_LABELS,
@@ -46,6 +47,8 @@ export interface ExportDialogProps {
   noOvertime: boolean;
   /** Weekly cap (hours) the overtime trim reduces the billed total to. */
   weeklyHours: number;
+  /** Linked billing codes (see lib/timesheet/mapping); empty = none. */
+  codeMappings: CodeMapping[];
   /** Document title (project / group name). */
   title: string;
   /** Person the timesheet is for (resolved name, may be empty). */
@@ -71,6 +74,7 @@ export default function ExportDialog({
   roundingSeconds,
   noOvertime,
   weeklyHours,
+  codeMappings,
   title,
   personName,
   prefetched,
@@ -147,6 +151,7 @@ export default function ExportDialog({
         roundingSeconds,
         noOvertime,
         weeklyHours,
+        codeMappings,
         title,
         personName: name.trim(),
       });

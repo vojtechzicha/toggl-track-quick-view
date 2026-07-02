@@ -3,7 +3,6 @@
 // (same same-code combining, same biased quarter-hour rounding, same time anchoring).
 
 import {
-  billingTagsOf,
   fmtHoursLabel,
   fmtTimeOfDay,
   parseBillingCode,
@@ -12,6 +11,15 @@ import {
 } from '@/lib/calc';
 import type { SelectedProject } from '@/components/SettingsPanel';
 import { allocateOvertimeTrim, weekSegments } from './overtime';
+import {
+  addToMappedAgg,
+  entryBillingTags,
+  finalizeMappedAgg,
+  mappingFor,
+  newMappedAgg,
+  type CodeMapping,
+  type MappedAgg,
+} from './mapping';
 import { DAY_MS, UNTAGGED, MULTIPLE, TOOLONG } from './constants';
 
 const COMBINE_GAP_SECONDS = 60 * 60; // combine same-code entries only within this gap
@@ -43,6 +51,10 @@ export interface Row {
   endMs?: number; // start + rounded duration
   descs: string[];
   groupStartMs: number; // first raw start, used to anchor the display time
+  // A linked-code day block: `rounded` is already fixed on the mapping's own grid
+  // (equal to the sub-client sheet's day total), so it's never re-rounded, trimmed
+  // or length-checked here (see lib/timesheet/mapping).
+  fixed?: boolean;
 }
 
 export interface IndividualDay {
@@ -76,6 +88,9 @@ export interface IndividualInput {
   // "Overtime" line. When false, neither input has any effect.
   noOvertime: boolean;
   weeklyHours: number;
+  // Linked billing codes: projects whose entries carry another client's tags and
+  // bill here as one fixed day block per project (see lib/timesheet/mapping).
+  codeMappings?: CodeMapping[];
 }
 
 export function warnLabel(kind: WarnKind, maxBillableHours: number): string {
@@ -124,7 +139,8 @@ function classifyDay(
   dayEntries: DayEntry[],
   maxBillableSeconds: number,
   billingTagPrefix: string,
-  roundingSeconds: number
+  roundingSeconds: number,
+  codeMappings?: CodeMapping[]
 ): ClassifiedDay {
   const sorted = [...dayEntries].sort((a, b) => a.startMs - b.startMs);
 
@@ -168,8 +184,16 @@ function classifyDay(
     current = null;
   };
 
+  // Linked-code accumulators, one per mapped project this day. Their entries are
+  // folded into a single fixed day block (built after the loop) instead of normal
+  // billable lines.
+  const mappedByProj = new Map<number, MappedAgg>();
+
   for (const e of sorted) {
-    const tags = billingTagsOf(e.tags, billingTagPrefix);
+    // A mapped project's entries are validated against the *mapping's* prefix, so
+    // its untagged/multi-tagged entries surface in the same warning rows.
+    const mapping = mappingFor(codeMappings, e.projId);
+    const tags = entryBillingTags(e.tags, mapping, billingTagPrefix);
     if (tags.length === 0) {
       flush();
       addWarn(UNTAGGED, e);
@@ -178,6 +202,19 @@ function classifyDay(
     if (tags.length > 1) {
       flush();
       addWarn(MULTIPLE, e);
+      continue;
+    }
+    if (mapping) {
+      // Linked code: fold into the project's day aggregate. The billable-length
+      // cap doesn't apply — the block is an aggregate of the whole day by design,
+      // like a Summary cell, not an individually billed entry.
+      flush();
+      let agg = mappedByProj.get(e.projId as number);
+      if (!agg) {
+        agg = newMappedAgg(e.startMs);
+        mappedByProj.set(e.projId as number, agg);
+      }
+      addToMappedAgg(agg, tags[0], e.seconds, e.desc, e.startMs);
       continue;
     }
     if (e.seconds > maxBillableSeconds) {
@@ -220,13 +257,38 @@ function classifyDay(
     lastStopMs = e.stopMs;
   }
 
+  // Close the linked-code aggregates: one fixed billable block per mapped project,
+  // rounded per code on the *mapping's* grid so it equals the sub-client sheet's
+  // rounded day total (the invariant), with that sheet's per-code breakdown leading
+  // the block's description. Anchored at the first mapped entry's start; sorted
+  // back into time order with the native lines.
+  for (const [projId, agg] of mappedByProj) {
+    const mapping = mappingFor(codeMappings, projId)!;
+    const value = finalizeMappedAgg(agg, mapping);
+    bill.push({
+      key: `m${projId}`,
+      kind: 'bill',
+      code: mapping.targetCode,
+      projId,
+      seconds: agg.seconds,
+      trimmableSeconds: 0,
+      rounded: value.seconds,
+      descs: value.descs,
+      groupStartMs: agg.firstStartMs,
+      fixed: true,
+    });
+  }
+  bill.sort((a, b) => a.groupStartMs - b.groupStartMs);
+
   // Rows that take part in the day's rounding: billable lines first, then any
   // warning aggregates. Bias the spare quarters toward would-be-zero entries so
-  // small entries surface (a billable line still at zero is then dropped).
+  // small entries surface (a billable line still at zero is then dropped). Fixed
+  // (linked-code) blocks are already rounded on their own grid and stay out — a
+  // re-round here would break the equality with the sub-client's sheet.
   const warnRows = ([UNTAGGED, MULTIPLE, TOOLONG] as WarnKind[])
     .map((k) => warnBuckets[k])
     .filter((r): r is Row => r !== null);
-  const allRows = [...bill, ...warnRows];
+  const allRows = [...bill.filter((r) => !r.fixed), ...warnRows];
   const rounded = roundQuartersPreservingTotal(
     allRows.map((r) => r.seconds),
     { biasZero: true, unitSeconds: roundingSeconds }
@@ -288,6 +350,7 @@ export function buildIndividualWeek({
   roundingSeconds,
   noOvertime,
   weeklyHours,
+  codeMappings,
 }: IndividualInput): IndividualWeek | null {
   if (!weekStart) return null;
   const ids = new Set(projects.map((p) => p.id));
@@ -316,7 +379,7 @@ export function buildIndividualWeek({
   }
 
   const classified = byDay.map((dayEntries) =>
-    classifyDay(dayEntries, maxBillableSeconds, billingTagPrefix, roundingSeconds)
+    classifyDay(dayEntries, maxBillableSeconds, billingTagPrefix, roundingSeconds, codeMappings)
   );
 
   // Week-level overtime pass: if the contract disallows billing overtime and a
@@ -335,11 +398,21 @@ export function buildIndividualWeek({
       return { units, trimmableUnits: Math.min(units, Math.round(units * frac)) };
     };
     for (const seg of weekSegments(weekStart, weeklyHours, roundingSeconds)) {
+      // Fixed (linked-code) blocks are protected from the cut — they must keep
+      // equalling the sub-client sheet's day totals — but still consume the cap,
+      // so the trim takes that much more off the native lines instead.
       const flat: { row: Row; day: number }[] = [];
+      let fixedUnits = 0;
       for (let day = seg.startDay; day <= seg.endDay; day++) {
-        classified[day].bill.forEach((row) => flat.push({ row, day }));
+        classified[day].bill.forEach((row) => {
+          if (row.fixed) fixedUnits += Math.round(row.rounded / roundingSeconds);
+          else flat.push({ row, day });
+        });
       }
-      const removed = allocateOvertimeTrim(flat.map(({ row }) => toCell(row)), seg.capUnits);
+      const removed = allocateOvertimeTrim(
+        flat.map(({ row }) => toCell(row)),
+        Math.max(0, seg.capUnits - fixedUnits)
+      );
       flat.forEach(({ row, day }, i) => {
         if (removed[i] > 0) {
           const strip = removed[i] * roundingSeconds;
