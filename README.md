@@ -331,8 +331,9 @@ the hourly budget — it resumes when you click **This week**.
 Sometimes a project is billed **through** another client: you work for a prime
 contractor whose timesheet bills the whole engagement under **one** code, but the
 work itself is tracked for a sub-client project with **its own** billing codes
-and possibly its own rounding rules. **Settings → Advanced → Linked billing
-codes** models exactly that. A linked code says, for one selected project:
+and possibly its own rounding and overtime rules. **Settings → Advanced → Linked
+billing codes** models exactly that. A linked code says, for one selected
+project:
 
 - its entries carry the **sub-client's own tags** (a separate prefix, e.g. `S`
   for `S101`/`S102`), validated as usual — untagged or multi-tagged entries still
@@ -347,15 +348,55 @@ codes** models exactly that. A linked code says, for one selected project:
 The guarantee that makes the two sheets reconcile: **per day, the sum of the
 sub-client's billed codes equals this sheet's linked line** — by construction,
 since the day-total-preserving rounding makes the sub-client's cells sum to the
-rounded day total, and that same total is what the linked line carries. To keep
-it, the linked line is treated as **fixed**: this sheet's own rounding pass never
-re-rounds it and **"Don't bill overtime" never trims it** (it still counts
-toward the weekly cap, so the trim takes correspondingly more off the native
-lines). For traceability the cell's description leads with the sub-client's
-per-code breakdown (e.g. `S101 1.75h, S102 0.50h`) followed by the merged entry
+rounded day total, and that same total is what the linked line carries. For
+traceability the cell's description leads with the sub-client's per-code
+breakdown (e.g. `S101 1.75h, S102 0.50h`) followed by the merged entry
 descriptions; in the Individual view the linked project appears as **one block
 per day**, anchored at its first entry. Exports show the same figures as the
 views, as always.
+
+#### How to set it up
+
+Say you bill client **P** (prime) and the work is really for sub-client **S**:
+
+1. **In Toggl**: create a separate project for the sub-client's work, and tag its
+   entries with the sub-client's own billing codes under their own prefix
+   (exactly one per entry, e.g. `S101`) — your prime-client entries keep their
+   usual tags (e.g. `D123`).
+2. **The prime workspace** (your main config): under **Settings → Project**, use
+   *Track more than one project* and select your prime project(s) **and** the
+   sub-client project — the linked project must be among the selected projects
+   (that's what brings its entries into the timesheet and counts its hours toward
+   your targets and weekly cap). Then add the linked code under **Advanced →
+   Linked billing codes**: pick the sub-client project, enter its tag prefix, its
+   rounding, and the single code it bills as here. If the sub-client engagement
+   doesn't bill overtime, tick **"It doesn't bill overtime"** and enter *its*
+   weekly cap. Store the whole thing as a workspace.
+3. **The sub-client workspace** (for the sheet you hand to the sub-client): a
+   second stored workspace with **only** the sub-client project selected, its tag
+   prefix, its rounding, and its own targets — **no** linked-codes entry there.
+   Switch between the two with the 🗂 button.
+
+Day to day you just track on the right project with one billing tag per entry;
+both workspaces flag untagged/multi-tagged entries until fixed.
+
+#### Overtime rules for linked lines
+
+Two independent knobs, deliberately asymmetric:
+
+- **This sheet's "Don't bill overtime" NEVER trims a linked line** — no matter
+  what. The linked line must keep equalling the sub-client's sheet, so the
+  weekly cut lands entirely on the native lines (the linked hours still count
+  toward the cap, so the trim takes correspondingly more off them).
+- **The mapping's own "It doesn't bill overtime"** applies the *sub-client's*
+  contract upstream: the linked project's week is capped at the mapping's weekly
+  hours and trimmed on the mapping's grid with the very same cut the sub-client's
+  own sheet runs (weekend billed in full, weekdays evened out, `(X)`-marked codes
+  cut first, a mid-week month boundary splitting the cap into two independent
+  budgets). This sheet then bills whatever the sub-client's sheet shows — trimmed
+  or not — and builds its totals around those values. Keep this setting in sync
+  with the sub-client workspace's own overtime setting so the two sheets keep
+  reconciling.
 
 The mapping logic lives in [`lib/timesheet/mapping.ts`](lib/timesheet/mapping.ts).
 

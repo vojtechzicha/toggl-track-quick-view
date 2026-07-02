@@ -12,7 +12,7 @@ import { allocateOvertimeTrimPerDay, weekSegments } from './overtime';
 import {
   addToMappedAgg,
   entryBillingTags,
-  finalizeMappedAgg,
+  finalizeMappedWeek,
   mappedRowKey,
   mappingFor,
   newMappedAgg,
@@ -106,11 +106,12 @@ export function buildSummaryGrid({
   let untaggedPresent = false;
   let multiplePresent = false;
 
-  // Linked-code accumulators: one aggregate per (mapped project, day), keyed like
-  // `cells`. Mapped rows carry a fixed pre-rounded value (rounded on the mapping's
-  // own grid, see lib/timesheet/mapping), so they're excluded from this sheet's
-  // rounding pass and from overtime trimming below.
-  const mappedAggs = new Map<string, MappedAgg>(); // key: `${dayIdx}|${rowKey}`
+  // Linked-code accumulators: per mapped row, one aggregate per day. Mapped rows
+  // carry a fixed pre-rounded value (rounded — and, when the mapping declares the
+  // sub-client's own no-overtime contract, trimmed — on the mapping's own grid,
+  // see lib/timesheet/mapping), so they're excluded from this sheet's rounding
+  // pass and from overtime trimming below.
+  const mappedAggs = new Map<string, Map<number, MappedAgg>>(); // rowKey -> day -> agg
   const mappingByRow = new Map<string, CodeMapping>(); // rowKey -> its mapping
   const mappedRows = new Set<string>();
 
@@ -160,11 +161,15 @@ export function buildSummaryGrid({
         });
       }
       dayHasEntries[dayIdx] = true;
-      const aggKey = `${dayIdx}|${rowKey}`;
-      let agg = mappedAggs.get(aggKey);
+      let byDay = mappedAggs.get(rowKey);
+      if (!byDay) {
+        byDay = new Map();
+        mappedAggs.set(rowKey, byDay);
+      }
+      let agg = byDay.get(dayIdx);
       if (!agg) {
         agg = newMappedAgg(startMs);
-        mappedAggs.set(aggKey, agg);
+        byDay.set(dayIdx, agg);
       }
       addToMappedAgg(agg, tags[0], seconds, e.description, startMs);
       continue;
@@ -206,15 +211,21 @@ export function buildSummaryGrid({
   }
 
   // Close the linked-code aggregates: each mapped (project, day) becomes a fixed
-  // cell — rounded on the mapping's own grid so it equals the sub-client sheet's
-  // rounded day total (the invariant), with that sheet's per-code breakdown leading
-  // the cell's descriptions for traceability.
+  // cell — rounded (and, per the mapping's own no-overtime contract, trimmed) on
+  // the mapping's own grid so it equals the sub-client sheet's billed day total
+  // (the invariant), with that sheet's per-code breakdown leading the cell's
+  // descriptions for traceability.
   const mappedFixed = new Map<string, number>(); // key: `${dayIdx}|${rowKey}`
-  for (const [key, agg] of mappedAggs) {
-    const rowKey = key.slice(key.indexOf('|') + 1);
-    const value = finalizeMappedAgg(agg, mappingByRow.get(rowKey)!);
-    mappedFixed.set(key, value.seconds);
-    cells.set(key, { descs: value.descs, seconds: agg.seconds, trimmableSeconds: 0 });
+  for (const [rowKey, byDay] of mappedAggs) {
+    const values = finalizeMappedWeek(byDay, mappingByRow.get(rowKey)!, weekStart);
+    for (const [day, value] of values) {
+      mappedFixed.set(`${day}|${rowKey}`, value.seconds);
+      cells.set(`${day}|${rowKey}`, {
+        descs: value.descs,
+        seconds: byDay.get(day)!.seconds,
+        trimmableSeconds: 0,
+      });
+    }
   }
 
   // Rows: normal rows grouped by project, then tag (both alphabetical), then the

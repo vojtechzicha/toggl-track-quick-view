@@ -14,7 +14,7 @@ import { allocateOvertimeTrim, weekSegments } from './overtime';
 import {
   addToMappedAgg,
   entryBillingTags,
-  finalizeMappedAgg,
+  finalizeMappedWeek,
   mappingFor,
   newMappedAgg,
   type CodeMapping,
@@ -121,6 +121,10 @@ interface ClassifiedDay {
   bill: Row[];
   warnRows: Row[];
   overlaps: string[];
+  // Linked-code aggregates by mapped project id. Closing them is week-scoped
+  // (the mapping may carry the sub-client's weekly no-overtime cap), so the
+  // fixed day blocks are built in buildIndividualWeek, not here.
+  mapped: Map<number, MappedAgg>;
 }
 
 /**
@@ -257,45 +261,22 @@ function classifyDay(
     lastStopMs = e.stopMs;
   }
 
-  // Close the linked-code aggregates: one fixed billable block per mapped project,
-  // rounded per code on the *mapping's* grid so it equals the sub-client sheet's
-  // rounded day total (the invariant), with that sheet's per-code breakdown leading
-  // the block's description. Anchored at the first mapped entry's start; sorted
-  // back into time order with the native lines.
-  for (const [projId, agg] of mappedByProj) {
-    const mapping = mappingFor(codeMappings, projId)!;
-    const value = finalizeMappedAgg(agg, mapping);
-    bill.push({
-      key: `m${projId}`,
-      kind: 'bill',
-      code: mapping.targetCode,
-      projId,
-      seconds: agg.seconds,
-      trimmableSeconds: 0,
-      rounded: value.seconds,
-      descs: value.descs,
-      groupStartMs: agg.firstStartMs,
-      fixed: true,
-    });
-  }
-  bill.sort((a, b) => a.groupStartMs - b.groupStartMs);
-
   // Rows that take part in the day's rounding: billable lines first, then any
   // warning aggregates. Bias the spare quarters toward would-be-zero entries so
-  // small entries surface (a billable line still at zero is then dropped). Fixed
-  // (linked-code) blocks are already rounded on their own grid and stay out — a
-  // re-round here would break the equality with the sub-client's sheet.
+  // small entries surface (a billable line still at zero is then dropped). The
+  // linked-code aggregates stay out — they're rounded (and possibly sub-trimmed)
+  // on their own grid at week level, in buildIndividualWeek.
   const warnRows = ([UNTAGGED, MULTIPLE, TOOLONG] as WarnKind[])
     .map((k) => warnBuckets[k])
     .filter((r): r is Row => r !== null);
-  const allRows = [...bill.filter((r) => !r.fixed), ...warnRows];
+  const allRows = [...bill, ...warnRows];
   const rounded = roundQuartersPreservingTotal(
     allRows.map((r) => r.seconds),
     { biasZero: true, unitSeconds: roundingSeconds }
   );
   allRows.forEach((r, i) => (r.rounded = rounded[i]));
 
-  return { bill, warnRows, overlaps };
+  return { bill, warnRows, overlaps, mapped: mappedByProj };
 }
 
 /**
@@ -381,6 +362,45 @@ export function buildIndividualWeek({
   const classified = byDay.map((dayEntries) =>
     classifyDay(dayEntries, maxBillableSeconds, billingTagPrefix, roundingSeconds, codeMappings)
   );
+
+  // Close the linked-code aggregates at week level: one fixed billable block per
+  // mapped project per day, rounded per code on the *mapping's* grid — and, when
+  // the mapping declares the sub-client's own no-overtime contract, trimmed to
+  // its weekly cap exactly as its own sheet would — so each block equals that
+  // sheet's billed day total, with its per-code breakdown leading the
+  // description. Anchored at the first mapped entry's start and sorted back into
+  // time order with the native lines.
+  const mappedWeeks = new Map<number, Map<number, MappedAgg>>(); // projId -> day -> agg
+  classified.forEach((c, day) => {
+    for (const [projId, agg] of c.mapped) {
+      let byDayAgg = mappedWeeks.get(projId);
+      if (!byDayAgg) {
+        byDayAgg = new Map();
+        mappedWeeks.set(projId, byDayAgg);
+      }
+      byDayAgg.set(day, agg);
+    }
+  });
+  for (const [projId, byDayAgg] of mappedWeeks) {
+    const mapping = mappingFor(codeMappings, projId)!;
+    const values = finalizeMappedWeek(byDayAgg, mapping, weekStart);
+    for (const [day, value] of values) {
+      const agg = byDayAgg.get(day)!;
+      classified[day].bill.push({
+        key: `m${projId}`,
+        kind: 'bill',
+        code: mapping.targetCode,
+        projId,
+        seconds: agg.seconds,
+        trimmableSeconds: 0,
+        rounded: value.seconds,
+        descs: value.descs,
+        groupStartMs: agg.firstStartMs,
+        fixed: true,
+      });
+      classified[day].bill.sort((a, b) => a.groupStartMs - b.groupStartMs);
+    }
+  }
 
   // Week-level overtime pass: if the contract disallows billing overtime and a
   // segment's billable lines exceed its cap, shave whole rounding units off them

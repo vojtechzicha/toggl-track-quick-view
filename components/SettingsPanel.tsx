@@ -105,10 +105,15 @@ export function presetMatches(value: PresetValue, s: SettingsValue): boolean {
       .sort((a, b) => a - b)
       .join(',');
   // Order-insensitive mapping comparison; `?? []` covers presets stored before
-  // linked codes existed.
+  // linked codes existed, and the overtime fields normalise so presets stored
+  // before those existed still match their unchanged settings.
   const maps = (ms: CodeMapping[] | undefined) =>
     (ms ?? [])
-      .map((m) => `${m.projectId}|${m.tagPrefix}|${m.roundingHours}|${m.targetCode}`)
+      .map(
+        (m) =>
+          `${m.projectId}|${m.tagPrefix}|${m.roundingHours}|${m.targetCode}|` +
+          `${m.noOvertime ? m.weeklyHours ?? DEFAULT_WEEKLY_HOURS : ''}`
+      )
       .sort()
       .join(';');
   return (
@@ -292,7 +297,8 @@ export default function SettingsPanel({
     // Linked codes: keep only complete rows on selected projects (one per
     // project). A grid that would take figures off this sheet's rounding unit is
     // coerced to the sheet's own — the equality with the sub-client sheet only
-    // works when its rounded totals still land on this grid.
+    // works when its rounded totals still land on this grid. The sub-client's
+    // weekly cap is clamped like the main weekly field.
     const seenMapped = new Set<number>();
     const cleanedMappings: CodeMapping[] = [];
     for (const m of codeMappings) {
@@ -309,6 +315,10 @@ export default function SettingsPanel({
         tagPrefix,
         roundingHours: validUnit ? m.roundingHours : finalRounding,
         targetCode,
+        noOvertime: !!m.noOvertime,
+        weeklyHours: Number.isFinite(m.weeklyHours as number)
+          ? clampQuarter(m.weeklyHours as number, WEEKLY_MIN, WEEKLY_MAX)
+          : DEFAULT_WEEKLY_HOURS,
       });
     }
     return {
@@ -346,7 +356,14 @@ export default function SettingsPanel({
     setCodeMappings((ms) => [
       ...ms,
       // New rows start on this sheet's own grid — always compatible.
-      { projectId: free ?? 0, tagPrefix: '', roundingHours, targetCode: '' },
+      {
+        projectId: free ?? 0,
+        tagPrefix: '',
+        roundingHours,
+        targetCode: '',
+        noOvertime: false,
+        weeklyHours: DEFAULT_WEEKLY_HOURS,
+      },
     ]);
   };
   const projectNameOf = (id: number) =>
@@ -757,6 +774,28 @@ export default function SettingsPanel({
                           🗑
                         </button>
                       </div>
+                      <label className="map-ot">
+                        <input
+                          type="checkbox"
+                          checked={!!m.noOvertime}
+                          onChange={(e) => updateMapping(i, { noOvertime: e.target.checked })}
+                        />
+                        <span>It doesn&apos;t bill overtime — cap its week at</span>
+                        <input
+                          type="number"
+                          inputMode="decimal"
+                          min={WEEKLY_MIN}
+                          max={WEEKLY_MAX}
+                          step={STEP}
+                          value={m.weeklyHours ?? DEFAULT_WEEKLY_HOURS}
+                          disabled={!m.noOvertime}
+                          onChange={(e) => {
+                            const v = parseFloat(e.target.value);
+                            updateMapping(i, { weeklyHours: Number.isFinite(v) ? v : 0 });
+                          }}
+                        />
+                        <span>h</span>
+                      </label>
                       {!gridOk && (
                         <p className="map-warn">
                           Off this sheet&apos;s {Math.round(roundingHours * 60)}-min grid — will be
@@ -782,8 +821,11 @@ export default function SettingsPanel({
               above), rounded per day on its own grid, and each day&apos;s total lands on the one
               code entered here — so this sheet&apos;s line always equals that project&apos;s own
               timesheet, day for day (its per-code breakdown is kept in the cell description).
-              Linked lines are never trimmed by &ldquo;Don&apos;t bill overtime&rdquo;, and their
-              rounding must be this sheet&apos;s unit or a whole multiple of it.
+              If the linked engagement itself doesn&apos;t bill overtime, tick its cap above: its
+              week is then trimmed by <em>its own</em> rules first and this sheet bills whatever
+              its timesheet shows. This sheet&apos;s own &ldquo;Don&apos;t bill overtime&rdquo;
+              never trims a linked line (it only counts toward the cap), and the linked rounding
+              must be this sheet&apos;s unit or a whole multiple of it.
             </p>
           </div>
 

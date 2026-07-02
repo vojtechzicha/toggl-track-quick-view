@@ -1564,6 +1564,24 @@ body:has(.ts-page) {
   flex: 0 0 auto;
   align-self: flex-end;
 }
+/* The linked project's own no-overtime contract: checkbox + weekly-cap hours. */
+.map-ot {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  margin-top: 8px;
+  font-size: 13px;
+  color: var(--muted);
+}
+.field .map-ot input[type='number'] {
+  width: 74px;
+  padding: 6px 8px;
+  font-size: 13px;
+  border-radius: 8px;
+}
+.field .map-ot input[type='number']:disabled {
+  opacity: 0.5;
+}
 .map-warn {
   margin-top: 6px;
   color: var(--amber);
