@@ -368,7 +368,7 @@ export default function Page() {
       const isFuture = dayStart > todayStart;
       const target =
         isFuture && beforeThursday
-          ? plannedTargetSeconds(date.getDay(), settings.shortFriday, settings)
+          ? plannedTargetSeconds(date, settings.shortFriday, settings)
           : dailyTargetSeconds(
               date,
               isFuture ? projected : norm,

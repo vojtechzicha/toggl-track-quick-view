@@ -128,6 +128,25 @@ Thursday and Friday adapt to what you actually logged earlier in the week, so an
 over- or under-run mid-week is absorbed sensibly. Both are clamped to ≤ 12h (also
 scaled).
 
+### Month boundaries split the week
+
+Billing runs to month-end, so when the 1st of a month falls mid-week the targets
+follow the same rule the timesheet's overtime cap already uses: the week is cut at
+the boundary and each side becomes an independent mini-week with its own budget of
+**week ÷ 5 per weekday (Mon–Fri)** it holds. Hours logged on one side never count
+toward the other, so overtime banked before the rollover no longer (wrongly)
+shortens the new month's days — if the 1st is a Friday, Friday's target is a full
+standard day no matter how much you front-loaded Mon–Thu.
+
+Within each side, the adaptive Thursday/Friday roles shift to its **last two
+weekdays**: the closing weekday takes whatever remains of that side's budget
+(floored at the minimal target working day), the one before it adapts
+Thursday-style, and any earlier weekdays keep their base target (9h short / 8h
+regular). So the old month's half settles its own surplus or shortfall on its
+closing day — with Short Friday on and the 1st on a Friday, front-loading Mon–Wed
+now buys you a short *Thursday* instead. A week wholly inside one month behaves
+exactly as described above.
+
 ### Advanced overrides
 
 Two values under **Advanced targets** in Settings can be pinned independently of
