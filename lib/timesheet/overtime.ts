@@ -25,6 +25,8 @@
 // weekdays are water-filled toward a common (weekTarget − weekend)/5 ceiling — same
 // per-day, trimmable-first cut underneath, just distributed to flatten the week.
 
+import { monthSplitDay } from '../calc';
+
 export interface TrimCell {
   units: number; // current rounded duration, in whole rounding units
   trimmableUnits: number; // the "(X)"-marked portion of those units (0 ≤ this ≤ units)
@@ -247,20 +249,4 @@ export function weekSegments(
 
   const split = monthSplitDay(weekStart);
   return split === null ? [seg(0, 6)] : [seg(0, split - 1), seg(split, 6)];
-}
-
-/** The first day index (1…6) whose calendar month differs from the week's first day, or null. */
-function monthSplitDay(weekStart: number): number | null {
-  const monthKey = (d: number) => {
-    // setDate keeps it on local calendar days, so a DST change at a month-end
-    // midnight can't drift the boundary the way fixed-ms day math could.
-    const dt = new Date(weekStart);
-    dt.setDate(dt.getDate() + d);
-    return dt.getFullYear() * 12 + dt.getMonth();
-  };
-  const first = monthKey(0);
-  for (let d = 1; d <= 6; d++) {
-    if (monthKey(d) !== first) return d;
-  }
-  return null;
 }

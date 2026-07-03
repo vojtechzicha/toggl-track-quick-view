@@ -226,6 +226,43 @@ export function startOfWeek(d: Date): Date {
   return x;
 }
 
+// ---- Month-split weeks ----
+// Billing runs to month-end, so when the 1st of a month falls mid-week the week
+// splits in two and each side settles against its own month — the same rule the
+// timesheet's overtime cap uses (see weekSegments in lib/timesheet/overtime).
+// The targets model follows suit: each side of the split is an independent
+// mini-week with its own budget of weeklyHours/5 per weekday it contains, and
+// hours logged on one side never bank against the other. That's what keeps
+// overtime in the old month's half from (wrongly) shortening the new month's
+// days — the old month's surplus is that month's business, not a credit here.
+
+/** Day index within the Sat-start week: Sat→0, Sun→1, Mon→2 … Fri→6. */
+function weekDayIndex(d: Date): number {
+  return (d.getDay() + 1) % 7;
+}
+
+/** The first day index (1…6) whose calendar month differs from the week's first day, or null. */
+export function monthSplitDay(weekStart: number): number | null {
+  const monthKey = (d: number) => {
+    // setDate keeps it on local calendar days, so a DST change at a month-end
+    // midnight can't drift the boundary the way fixed-ms day math could.
+    const dt = new Date(weekStart);
+    dt.setDate(dt.getDate() + d);
+    return dt.getFullYear() * 12 + dt.getMonth();
+  };
+  const first = monthKey(0);
+  for (let d = 1; d <= 6; d++) {
+    if (monthKey(d) !== first) return d;
+  }
+  return null;
+}
+
+/** The stretch of the week (inclusive day indices) sharing `dayIdx`'s calendar month. */
+function segmentOf(dayIdx: number, split: number | null): { startDay: number; endDay: number } {
+  if (split === null) return { startDay: 0, endDay: 6 };
+  return dayIdx < split ? { startDay: 0, endDay: split - 1 } : { startDay: split, endDay: 6 };
+}
+
 /**
  * Seconds spent on any selected project that overlap [fromMs, toMs). Overlap-based
  * so a running entry contributes live time as `toMs` (now) advances.
@@ -290,14 +327,44 @@ export function coveringEntry(
 }
 
 /**
+ * Target for one weekday given its position within its segment and the segment
+ * time still unaccounted for. The segment's last weekday closes it out
+ * Friday-style (take everything remaining, never below the floor); the
+ * second-to-last adapts Thursday-style (half the remainder regular, reserve-
+ * clamped short); every earlier weekday is a fixed base day. In a whole-month
+ * week the segment is the full week, so these positions are literally Friday,
+ * Thursday and Mon–Wed. Always clamped to the daily maximum.
+ */
+function positionTarget(
+  dayIdx: number,
+  segEndDay: number,
+  remaining: number,
+  shortFriday: boolean,
+  t: ResolvedTargets
+): number {
+  let target: number;
+  if (dayIdx === segEndDay) {
+    target = Math.max(remaining, t.fridayMin);
+  } else if (dayIdx === segEndDay - 1) {
+    target = shortFriday
+      ? clamp(remaining - t.fridayReserve, t.shortThuMin, t.shortThuMax)
+      : Math.max(remaining / 2, t.regularThuFloor);
+  } else {
+    target = shortFriday ? t.shortMidweek : t.standardDay;
+  }
+  return clamp(target, 0, t.maxDaily);
+}
+
+/**
  * Today's target in seconds.
  *
- * Both modes aim for the configured weekly total in three stages — Mon–Wed,
- * Thursday, Friday — and a day's target is fixed for the whole day: it depends
- * only on the selected project's hours logged *before* today (the week's Saturday
- * 00:00 → today 00:00, so a weekend at the week's start counts toward Thu/Fri), so
- * it does not shrink as you work today. Every hour figure below is the
- * 40h-week baseline scaled by weeklyHours / 40 (the Friday floor can be overridden).
+ * Both modes aim for the configured weekly total in three stages — base days,
+ * an adaptive second-to-last day, an adaptive closing day — and a day's target
+ * is fixed for the whole day: it depends only on the selected project's hours
+ * logged *before* today (from the segment's start → today 00:00, so a weekend at
+ * the week's start counts toward Thu/Fri), so it does not shrink as you work
+ * today. Every hour figure below is the 40h-week baseline scaled by
+ * weeklyHours / 40 (the Friday floor can be overridden).
  *
  * Regular week (shortFriday = false):
  *   - Mon/Tue/Wed: 8h each (week / 5).
@@ -308,6 +375,15 @@ export function coveringEntry(
  *   - Mon/Tue/Wed: 9h each.
  *   - Thursday: the time remaining minus a reserved 5h for Friday, clamped to [8h, 9h].
  *   - Friday: whatever remains, but no less than the floor (5h).
+ *
+ * Month rollover: when the 1st falls mid-week the week splits into two
+ * independent segments (see monthSplitDay), each budgeted weeklyHours/5 per
+ * weekday it holds — matching how the timesheet caps billing per month. The
+ * adaptive Thursday/Friday roles shift to each segment's last two weekdays and
+ * settle against the segment's own budget, counting only hours logged inside
+ * that segment. So overtime banked before the boundary no longer (wrongly)
+ * shortens the new month's days, and the old month's half absorbs its own
+ * shortfall/surplus on its closing day instead.
  *
  * In both modes the weekend falls back to the standard day, and every day is
  * finally clamped to at most 12h (scaled) so an unusual week stays sane.
@@ -320,60 +396,58 @@ export function dailyTargetSeconds(
   cfg: WeekConfig
 ): number {
   const t = resolveTargets(cfg);
-  const day = now.getDay();
-  const max = t.maxDaily;
+  const idx = weekDayIndex(now);
+  if (idx < 2) return t.standardDay; // weekend
 
-  if (day === 1 || day === 2 || day === 3) {
-    return shortFriday ? t.shortMidweek : t.standardDay;
-  }
+  const weekStart = startOfWeek(now);
+  const seg = segmentOf(idx, monthSplitDay(weekStart.getTime()));
+  // Base days (more than two weekdays before the segment closes) are fixed and
+  // need no pool arithmetic at all.
+  if (idx < seg.endDay - 1) return shortFriday ? t.shortMidweek : t.standardDay;
 
-  if (day === 4 || day === 5) {
-    const weekStart = startOfWeek(now).getTime();
-    const todayStart = startOfDay(now).getTime();
-    const loggedSoFar = projectSecondsInRange(entries, projects, weekStart, todayStart);
-    const remaining = t.weekly - loggedSoFar;
-
-    if (day === 4) {
-      const target = shortFriday
-        ? clamp(remaining - t.fridayReserve, t.shortThuMin, t.shortThuMax)
-        : Math.max(remaining / 2, t.regularThuFloor);
-      return clamp(target, 0, max);
-    }
-
-    // Friday (both modes): whatever's left to reach the weekly total, floored.
-    const target = Math.max(remaining, t.fridayMin);
-    return clamp(target, 0, max);
-  }
-
-  return t.standardDay; // weekend
+  const firstWeekday = Math.max(seg.startDay, 2); // Sat/Sun contribute no budget
+  const budget = t.standardDay * (seg.endDay - firstWeekday + 1);
+  const segStart = new Date(weekStart);
+  segStart.setDate(segStart.getDate() + seg.startDay);
+  const loggedSoFar = projectSecondsInRange(
+    entries,
+    projects,
+    segStart.getTime(),
+    startOfDay(now).getTime()
+  );
+  return positionTarget(idx, seg.endDay, budget - loggedSoFar, shortFriday, t);
 }
 
 /**
  * The fixed, nominal target for a weekday assuming every day hits its goal —
  * i.e. the plain weekly plan (regular 8/8/8/8/8, short 9/9/9/8/5, all scaled).
- * Friday is fixed (standard day regular, floor short) and Thursday is "the rest"
- * (standard day regular, short floor). Used to show a stable target for days that
- * haven't happened yet, where the adaptive dailyTargetSeconds would otherwise
- * swing to the clamp for want of logged time.
+ * Computed by walking the day's segment as if each prior day landed exactly on
+ * target, so the adaptive positions see the pool the plan leaves them — which
+ * also makes the plan come out right on a month-split week (e.g. a Friday alone
+ * in the new month plans a full standard day, not a short one). Used to show a
+ * stable target for days that haven't happened yet, where the adaptive
+ * dailyTargetSeconds would otherwise swing to the clamp for want of logged time.
  */
 export function plannedTargetSeconds(
-  dayOfWeek: number,
+  date: Date,
   shortFriday: boolean,
   cfg: WeekConfig
 ): number {
   const t = resolveTargets(cfg);
-  switch (dayOfWeek) {
-    case 1: // Mon
-    case 2: // Tue
-    case 3: // Wed
-      return shortFriday ? t.shortMidweek : t.standardDay;
-    case 4: // Thu — the rest, which nets to the standard day in both plans
-      return shortFriday ? t.shortThuMin : t.standardDay;
-    case 5: // Fri — fixed
-      return shortFriday ? t.fridayMin : t.standardDay;
-    default: // weekend fallback
-      return t.standardDay;
+  const idx = weekDayIndex(date);
+  if (idx < 2) return t.standardDay; // weekend fallback
+
+  const seg = segmentOf(idx, monthSplitDay(startOfWeek(date).getTime()));
+  const firstWeekday = Math.max(seg.startDay, 2);
+  const budget = t.standardDay * (seg.endDay - firstWeekday + 1);
+
+  let planned = 0;
+  for (let d = firstWeekday; d <= seg.endDay; d++) {
+    const target = positionTarget(d, seg.endDay, budget - planned, shortFriday, t);
+    if (d === idx) return target;
+    planned += target;
   }
+  return t.standardDay; // unreachable — idx is always a weekday inside its segment
 }
 
 /**
