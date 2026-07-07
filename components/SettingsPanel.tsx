@@ -1,7 +1,7 @@
 'use client';
 
 import { useState } from 'react';
-import type { Project } from '@/lib/toggl';
+import type { TrackProject } from '@/lib/source/types';
 import {
   DEFAULT_WEEKLY_HOURS,
   DEFAULT_BILLING_TAG_PREFIX,
@@ -184,7 +184,7 @@ export default function SettingsPanel({
   canClose,
 }: {
   initial: SettingsValue;
-  projects: Project[];
+  projects: TrackProject[];
   serverManaged: boolean;
   // When non-null, the shared server cache governs the refresh cadence (in
   // seconds) and the per-device refresh picker is hidden.

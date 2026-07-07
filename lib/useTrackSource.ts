@@ -1,27 +1,27 @@
 'use client';
 
-// Shared Toggl connection + polling for the dashboard and the timesheet page.
+// Shared track-source connection + polling for the dashboard and the timesheet
+// page.
 //
-// This hook owns everything that talks to Toggl: loading settings, resolving the
-// server-managed / password-gate status, connecting (cache-first), and the
-// self-scheduling poll that fetches the week's entries. Both pages consume the
-// SAME hook so they share one fetch cadence and never double-spend Toggl's
-// hourly request budget. Page-specific derivations (the ring, timelines, the
-// timesheet grid) live in the pages; this hook just hands back the raw
-// ingredients (entries, nowMs, settings, gate state, errors).
+// This hook owns everything that talks to the data source: loading settings,
+// resolving the server-managed / password-gate status, connecting
+// (cache-first), and the self-scheduling poll that fetches the week's entries.
+// Both pages consume the SAME hook so they share one fetch cadence and never
+// double-spend a metered source's request budget. Page-specific derivations
+// (the ring, timelines, the timesheet grid) live in the pages; this hook just
+// hands back the raw ingredients (entries, nowMs, settings, gate state,
+// errors).
+//
+// The source itself is a TrackBackend (lib/source/types.ts). Today only the
+// Toggl backend exists; Phase 2 of the standalone plan picks the backend from
+// AppConfig.mode here, and nothing else in the app changes.
 
 import { useCallback, useEffect, useRef, useState } from 'react';
-import {
-  getConfig,
-  getMe,
-  getProjects,
-  getEntries,
-  isRateLimit,
-  isAuthRequired,
-  hasValidAuth,
-  login,
-  Project,
-} from '@/lib/toggl';
+import { getConfig } from '@/lib/source/config';
+import { hasValidAuth, login } from '@/lib/source/auth';
+import { isRateLimit, isAuthRequired } from '@/lib/source/errors';
+import { togglBackend } from '@/lib/source/toggl';
+import type { TrackProject } from '@/lib/source/types';
 import type { SettingsValue, SelectedProject, SettingsPreset } from '@/components/SettingsPanel';
 import {
   TimeEntry,
@@ -37,13 +37,12 @@ const CACHE_KEY = 'tqv.cache.v1';
 const REQLOG_KEY = 'tqv.reqlog.v1';
 const CACHE_TTL = 24 * 3600 * 1000; // me/projects cache lifetime
 const HOUR_MS = 3600 * 1000;
-export const HOURLY_LIMIT = 30; // Toggl Free: 30 requests/hour
-const DEFAULT_REFRESH_SEC = 180; // ~20 requests/hour, well under the limit
+const DEFAULT_REFRESH_SEC = 180; // ~20 requests/hour, well under Toggl's limit
 
 export interface StoredSettings extends SettingsValue {
   workspaceId: number | null;
-  // The Toggl account's display name, captured at connect time. Used as the
-  // default "name" on exports; not directly user-edited (see exportName).
+  // The account's display name, captured at connect time. Used as the default
+  // "name" on exports; not directly user-edited (see exportName).
   accountName: string;
   // Saved "workspaces": named snapshots of the configurable settings the user can
   // recall from the dashboard to quick-switch between setups (see SettingsPreset).
@@ -73,13 +72,13 @@ export const DEFAULTS: StoredSettings = {
 /**
  * Apply a stored workspace over the current settings, returning the new value to
  * persist. Refreshes each recalled project's name/color from the live project
- * list (denormalised copies drift as Toggl changes); the token, workspace and
- * stored-workspace list are left untouched.
+ * list (denormalised copies drift as the source changes); the token, workspace
+ * and stored-workspace list are left untouched.
  */
 export function applyPreset(
   settings: StoredSettings,
   preset: SettingsPreset,
-  projects: Project[]
+  projects: TrackProject[]
 ): StoredSettings {
   return {
     ...settings,
@@ -115,7 +114,7 @@ function loadSettings(): StoredSettings {
 // ---- me/projects cache (avoids spending the request budget on every reload) ----
 interface Cache {
   workspaceId: number;
-  projects: Project[];
+  projects: TrackProject[];
   accountName?: string;
   at: number;
 }
@@ -129,10 +128,10 @@ function loadCache(): Cache | null {
 }
 /**
  * Refresh each selected project's denormalised name/color from the freshly loaded
- * list (names/colors can change in Toggl, and migrated v1 selections have no
+ * list (names/colors can change at the source, and migrated v1 selections have no
  * color yet). Unknown ids — e.g. an archived project — keep their stored copy.
  */
-function enrichSelected(selected: SelectedProject[], projects: Project[]): SelectedProject[] {
+function enrichSelected(selected: SelectedProject[], projects: TrackProject[]): SelectedProject[] {
   return selected.map((sp) => {
     const full = projects.find((p) => p.id === sp.id);
     return full ? { id: full.id, name: full.name, color: full.color } : sp;
@@ -173,12 +172,12 @@ export function fmtInterval(sec: number): string {
   return sec % 60 === 0 ? `${sec / 60} min` : `${sec}s`;
 }
 
-export interface UseToggl {
+export interface UseTrackSource {
   hydrated: boolean;
   settings: StoredSettings;
   setSettings: React.Dispatch<React.SetStateAction<StoredSettings>>;
   persist: (s: StoredSettings) => void;
-  projects: Project[];
+  projects: TrackProject[];
   serverManaged: boolean | null;
   passwordRequired: boolean;
   authed: boolean;
@@ -208,11 +207,16 @@ export interface UseToggl {
   loadRange: (startISO: string, endISO: string, opts?: { force?: boolean }) => Promise<TimeEntry[]>;
 }
 
-export function useToggl(): UseToggl {
+export function useTrackSource(): UseTrackSource {
+  // Phase 2 of the standalone plan selects this from AppConfig.mode; until
+  // then Toggl is the only backend.
+  const backend = togglBackend;
+  const metered = backend.hourlyRequestLimit !== null;
+
   const [settings, setSettings] = useState<StoredSettings>(DEFAULTS);
   const [hydrated, setHydrated] = useState(false);
 
-  const [projects, setProjects] = useState<Project[]>([]);
+  const [projects, setProjects] = useState<TrackProject[]>([]);
   const [serverManaged, setServerManaged] = useState<boolean | null>(null); // null = unknown
   const [passwordRequired, setPasswordRequired] = useState(false);
   const [authed, setAuthed] = useState(false);
@@ -318,28 +322,28 @@ export function useToggl(): UseToggl {
             return;
           }
         }
-        setReqThisHour(recordReqs(2)); // me + projects
-        const me = await getMe(token);
-        const workspaceId = me.default_workspace_id;
-        const projs = await getProjects(token, workspaceId);
-        const sorted = (projs ?? [])
-          .filter((p) => p.active !== false)
-          .sort((a, b) => a.name.localeCompare(b.name));
-        setProjects(sorted);
+        if (metered) setReqThisHour(recordReqs(2)); // me + projects
+        const info = await backend.connect(token);
+        setProjects(info.projects);
         setSettings((prev) => ({
           ...prev,
           token,
-          workspaceId,
-          accountName: me.fullname ?? prev.accountName,
-          selectedProjects: enrichSelected(prev.selectedProjects, sorted),
+          workspaceId: info.workspaceId,
+          accountName: info.accountName || prev.accountName,
+          selectedProjects: enrichSelected(prev.selectedProjects, info.projects),
         }));
-        saveCache({ workspaceId, projects: sorted, accountName: me.fullname, at: Date.now() });
+        saveCache({
+          workspaceId: info.workspaceId,
+          projects: info.projects,
+          accountName: info.accountName,
+          at: Date.now(),
+        });
         setReady(true);
       } catch (e) {
         setReady(false);
         setProjects([]);
         // Session missing/expired (or password rotated): drop back to the gate
-        // instead of showing a Toggl auth error.
+        // instead of showing a source auth error.
         if (isAuthRequired(e)) {
           setAuthed(false);
           return;
@@ -356,7 +360,7 @@ export function useToggl(): UseToggl {
         setConnecting(false);
       }
     },
-    [serverManaged]
+    [backend, metered, serverManaged]
   );
 
   // Once we know the server-token status, connect appropriately (cache-first).
@@ -386,9 +390,9 @@ export function useToggl(): UseToggl {
 
     const fetchNow = async () => {
       lastFetchRef.current = Date.now();
-      // In cache mode this device's poll is usually a server cache hit (no Toggl
-      // call), so the per-device hourly meter would over-count — skip it.
-      if (!cacheEnabled) setReqThisHour(recordReqs(1));
+      // In cache mode this device's poll is usually a server cache hit (no
+      // upstream call), so the per-device hourly meter would over-count — skip it.
+      if (metered && !cacheEnabled) setReqThisHour(recordReqs(1));
       try {
         // From the week's start (Saturday — needed for the weekly model and so the
         // leading weekend's entries load) but never later than the start of
@@ -400,7 +404,7 @@ export function useToggl(): UseToggl {
         // Through the end of this week so pre-entered ("scheduled") future entries
         // are included.
         const end = new Date(weekStart + 7 * 24 * 3600 * 1000).toISOString();
-        const ent = await getEntries(settings.token, start, end);
+        const ent = await backend.fetchEntries(settings.token, start, end);
         if (cancelled) return;
         setEntries(ent ?? []);
         setFetchError(null);
@@ -420,7 +424,7 @@ export function useToggl(): UseToggl {
           backoffUntilRef.current = Date.now() + wait;
           setFetchError('Rate limited by Toggl — slowing down automatically.');
         } else {
-          setFetchError('Failed to refresh data from Toggl.');
+          setFetchError('Failed to refresh data.');
         }
       }
     };
@@ -456,21 +460,21 @@ export function useToggl(): UseToggl {
       clearTimeout(timer);
       document.removeEventListener('visibilitychange', onVisible);
     };
-  }, [ready, livePollPaused, settings.token, pollIntervalSec, cacheEnabled]);
+  }, [ready, livePollPaused, settings.token, pollIntervalSec, cacheEnabled, backend, metered]);
 
   // On-demand fetch of an arbitrary range (historical timesheet; future exports).
   // A plain (unforced) fetch in shared-cache mode is normally a server cache hit,
   // so — like the live poll — it isn't charged to the per-device meter; a forced
-  // refresh always hits Toggl, so it is. AuthRequired bubbles up so the caller can
-  // re-gate; other errors surface as thrown TogglErrors.
+  // refresh always hits the source, so it is. AuthRequired bubbles up so the
+  // caller can re-gate; other errors surface as thrown ApiErrors.
   const loadRange = useCallback(
     async (startISO: string, endISO: string, opts?: { force?: boolean }): Promise<TimeEntry[]> => {
       const force = opts?.force === true;
-      if (!cacheEnabled || force) setReqThisHour(recordReqs(1));
-      const ent = await getEntries(settings.token, startISO, endISO, { force });
+      if (metered && (!cacheEnabled || force)) setReqThisHour(recordReqs(1));
+      const ent = await backend.fetchEntries(settings.token, startISO, endISO, { force });
       return ent ?? [];
     },
-    [cacheEnabled, settings.token]
+    [backend, metered, cacheEnabled, settings.token]
   );
 
   return {
