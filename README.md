@@ -58,6 +58,38 @@ adjust **Hours worked per week** (40h by default) for a part-time commitment.
 3. (Optional) Set `APP_PASSWORD` to put the whole dashboard behind a password —
    see below.
 
+## Standalone mode (no Toggl)
+
+Setting **`MONGODB_URI`** switches the deployment to **standalone mode**: the
+app keeps its own store of time entries (MongoDB — e.g. a free Atlas M0
+cluster) instead of reading them from the Toggl Track API, and gains a
+**Tracker** page (`/tracker`) replicating the Toggl timer view — start/stop
+timer, manual entries, inline editing, billing-tag autocomplete, continue,
+delete, entry list grouped by day and (Saturday-start) week.
+
+- **Workspaces become first-class**: each stored workspace owns its settings
+  snapshot *and* its time entries, syncs across devices, and doubles as the
+  selectable "project" on the dashboard/timesheet — so multi-project tracking,
+  billing tags, timesheets and exports all work unchanged.
+- `APP_PASSWORD` is **required** in standalone mode (the store accepts writes);
+  the same password gate and session mechanics as below apply.
+- `MONGODB_DB` (optional) picks the database name, default `toggl-quick-view`.
+- `TOGGL_API_TOKEN` / `TOGGL_CACHE_INTERVAL` are ignored in standalone mode;
+  there is no request budget or meter — every device just refreshes every 30
+  seconds, plus instantly after any change.
+- **Linked billing codes work across workspaces**: the "Linked billing codes"
+  picker offers the other stored workspaces, so a sub-client workspace can bill
+  onto another workspace's timesheet as a single code (see below) — no Toggl
+  projects needed.
+- **Import your Toggl history** on the **Import** page (`/import`): connect
+  with your Toggl API token, map each Toggl project to a workspace (existing,
+  created fresh with the project's name/color, or skipped), pick a range, run.
+  History is paged oldest-first in ~90-day windows within Toggl's 30 req/hour
+  budget (auto-pausing as needed), and the import is safe to re-run — entries
+  already brought in are skipped, never duplicated or overwritten.
+
+See `docs/standalone/` for the full design and phase plan.
+
 ## Install as an app (PWA)
 
 The dashboard ships a web manifest, maskable icons, and Apple touch-icon /

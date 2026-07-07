@@ -1,32 +1,41 @@
 // Reports server-side configuration the client needs on load:
+//  - mode: which track source this deployment serves. MONGODB_URI switches it
+//    to 'standalone' (the app's own MongoDB store); otherwise 'toggl'.
 //  - serverToken: whether the server already holds a Toggl token (via
 //    TOGGL_API_TOKEN). When true, the client runs in "server-managed" mode: it
 //    connects without a browser token and hides the token UI entirely.
+//    Standalone mode is always server-managed (there is no browser credential).
 //  - cache: whether the shared server-side response cache is active (requires
 //    both a server token and TOGGL_CACHE_INTERVAL) and its refresh interval.
-//    When enabled, the client hides the refresh-frequency picker and polls at
-//    the server-driven interval instead.
-//  - passwordRequired: whether a password gate (TOGGL_API_TOKEN + APP_PASSWORD)
-//    is active, so the client knows to prompt for the password before fetching.
+//    Toggl-mode only — the standalone store has no rate limit to work around.
+//  - passwordRequired: whether the password gate is active, so the client
+//    knows to prompt for the password before fetching.
+//  - misconfigured: a human-readable problem the operator must fix (currently
+//    only: standalone mode without APP_PASSWORD — the store routes are writes,
+//    so they refuse to serve until one is set).
 //
 // Neither the token nor the password is ever exposed — only their presence.
 
 import { cacheIntervalSec } from '@/lib/serverCache';
 import { gateEnabled } from '@/lib/serverAuth';
+import { standaloneEnabled } from '@/lib/store/mongo';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 
 export async function GET() {
+  const standalone = standaloneEnabled();
   const serverToken = !!process.env.TOGGL_API_TOKEN;
   const interval = cacheIntervalSec();
-  const cacheEnabled = serverToken && interval !== null;
+  const cacheEnabled = !standalone && serverToken && interval !== null;
   return Response.json({
-    // Which track source this deployment serves. Hard-coded until the
-    // standalone (MongoDB) backend lands; it will then derive from MONGODB_URI.
-    mode: 'toggl',
+    mode: standalone ? 'standalone' : 'toggl',
     serverToken,
     passwordRequired: gateEnabled(),
+    misconfigured:
+      standalone && !process.env.APP_PASSWORD
+        ? 'APP_PASSWORD must be set in standalone mode — the store accepts writes.'
+        : null,
     cache: {
       enabled: cacheEnabled,
       intervalSec: cacheEnabled ? interval : null,

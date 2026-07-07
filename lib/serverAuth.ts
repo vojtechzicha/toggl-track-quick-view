@@ -23,9 +23,17 @@ export const SESSION_TTL_MS = 7 * 24 * 3600 * 1000; // 7 days
 // Domain-separation salt so the derived signing key is specific to this use.
 const KEY_SALT = 'tqv-auth-v1';
 
-/** The gate is active only in server-managed mode WITH a password configured. */
+/**
+ * The gate is active in server-managed deploys WITH a password configured:
+ * either the server holds the Toggl token, or the app runs in standalone mode
+ * (MONGODB_URI), where the store routes mutate data and the password is
+ * therefore required rather than optional (see lib/store/guard.ts).
+ */
 export function gateEnabled(): boolean {
-  return !!process.env.TOGGL_API_TOKEN && !!process.env.APP_PASSWORD;
+  return (
+    !!process.env.APP_PASSWORD &&
+    (!!process.env.TOGGL_API_TOKEN || !!process.env.MONGODB_URI)
+  );
 }
 
 // Signing key = HMAC(salt, password). One-way: a leaked token can't reveal the

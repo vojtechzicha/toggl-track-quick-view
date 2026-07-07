@@ -1,28 +1,49 @@
 'use client';
 
-// Shared track-source connection + polling for the dashboard and the timesheet
-// page.
+// Shared track-source connection + polling for the dashboard, the timesheet
+// and the tracker pages.
 //
 // This hook owns everything that talks to the data source: loading settings,
 // resolving the server-managed / password-gate status, connecting
 // (cache-first), and the self-scheduling poll that fetches the week's entries.
-// Both pages consume the SAME hook so they share one fetch cadence and never
+// Every page consumes the SAME hook so they share one fetch cadence and never
 // double-spend a metered source's request budget. Page-specific derivations
 // (the ring, timelines, the timesheet grid) live in the pages; this hook just
 // hands back the raw ingredients (entries, nowMs, settings, gate state,
 // errors).
 //
-// The source itself is a TrackBackend (lib/source/types.ts). Today only the
-// Toggl backend exists; Phase 2 of the standalone plan picks the backend from
-// AppConfig.mode here, and nothing else in the app changes.
+// The source itself is a TrackBackend (lib/source/types.ts), picked from
+// AppConfig.mode once /api/config resolves: the Toggl proxy client, or — in
+// standalone mode — the app's own MongoDB-backed store. Standalone mode also
+// brings mutations (the tracker writes entries; Settings manages workspaces),
+// which this hook wraps with optimistic updates against its entries state.
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { getConfig } from '@/lib/source/config';
 import { hasValidAuth, login } from '@/lib/source/auth';
-import { isRateLimit, isAuthRequired } from '@/lib/source/errors';
+import { ApiError, errorDetail, isRateLimit, isAuthRequired } from '@/lib/source/errors';
 import { togglBackend } from '@/lib/source/toggl';
-import type { TrackProject } from '@/lib/source/types';
-import type { SettingsValue, SelectedProject, SettingsPreset } from '@/components/SettingsPanel';
+import {
+  standaloneBackend,
+  listWorkspaces,
+  workspacesToProjects,
+  createWorkspaceApi,
+  updateWorkspaceApi,
+  deleteWorkspaceApi,
+  createEntryApi,
+  updateEntryApi,
+  deleteEntryApi,
+  stopEntryApi,
+  type EntryInput,
+  type StoreWorkspace,
+} from '@/lib/source/standalone';
+import type { SourceMode, TrackProject } from '@/lib/source/types';
+import type {
+  SettingsValue,
+  SelectedProject,
+  SettingsPreset,
+  PresetValue,
+} from '@/components/SettingsPanel';
 import {
   TimeEntry,
   startOfDay,
@@ -38,6 +59,9 @@ const REQLOG_KEY = 'tqv.reqlog.v1';
 const CACHE_TTL = 24 * 3600 * 1000; // me/projects cache lifetime
 const HOUR_MS = 3600 * 1000;
 const DEFAULT_REFRESH_SEC = 180; // ~20 requests/hour, well under Toggl's limit
+// The standalone store has no request budget, so it polls briskly at a fixed
+// cadence (plus an instant refetch after every mutation).
+export const STANDALONE_REFRESH_SEC = 30;
 
 export interface StoredSettings extends SettingsValue {
   workspaceId: number | null;
@@ -46,6 +70,7 @@ export interface StoredSettings extends SettingsValue {
   accountName: string;
   // Saved "workspaces": named snapshots of the configurable settings the user can
   // recall from the dashboard to quick-switch between setups (see SettingsPreset).
+  // Toggl mode only — in standalone mode workspaces live in the store instead.
   presets: SettingsPreset[];
 }
 
@@ -112,6 +137,8 @@ function loadSettings(): StoredSettings {
 }
 
 // ---- me/projects cache (avoids spending the request budget on every reload) ----
+// Toggl mode only: the standalone workspace list is unmetered and changes from
+// Settings, so it is always fetched live.
 interface Cache {
   workspaceId: number;
   projects: TrackProject[];
@@ -172,8 +199,72 @@ export function fmtInterval(sec: number): string {
   return sec % 60 === 0 ? `${sec / 60} min` : `${sec}s`;
 }
 
+// The Toggl importer spends the same hourly budget the Toggl poll does, so it
+// shares this rolling log (the /import page throttles itself against it).
+/** Toggl requests recorded in the last rolling hour. */
+export function togglRequestsThisHour(): number {
+  return pruneLoad().length;
+}
+/** Record `n` Toggl requests; returns the new rolling-hour count. */
+export function recordTogglRequests(n: number): number {
+  return recordReqs(n);
+}
+
+// ---- Cross-tab store change notifications (standalone mode) ----
+// A mutation made on the tracker must not leave a dashboard/timesheet that is
+// open in ANOTHER tab or PWA window showing stale numbers until its next 30s
+// poll. Every successful mutation posts here; every hook instance listens and
+// refetches immediately. (Within one tab this is a no-op — a BroadcastChannel
+// never delivers to the instance that posted, and the mutating hook already
+// reconciles + refetches itself. Other devices still catch up via the poll.)
+type StoreChangeKind = 'entries' | 'workspaces';
+let storeBC: BroadcastChannel | null = null;
+function storeChannel(): BroadcastChannel | null {
+  if (typeof window === 'undefined' || typeof BroadcastChannel === 'undefined') return null;
+  if (!storeBC) storeBC = new BroadcastChannel('tqv.store.v1');
+  return storeBC;
+}
+function broadcastStoreChange(kind: StoreChangeKind): void {
+  try {
+    storeChannel()?.postMessage(kind);
+  } catch {
+    /* ignore — freshness falls back to the regular poll */
+  }
+}
+
+/**
+ * The window the shared poll keeps fresh: from the week's start (Saturday —
+ * needed for the weekly model and so the leading weekend's entries load) but
+ * never later than the start of yesterday, so unreported-time detection always
+ * has both yesterday and today even on the first day of the week; through the
+ * end of this week so pre-entered ("scheduled") future entries are included.
+ * Exported so the tracker can load history seamlessly up to this window's edge.
+ */
+export function pollWindow(now: Date): { startMs: number; endMs: number } {
+  const weekStart = startOfWeek(now).getTime();
+  const yesterdayStart = startOfDay(now).getTime() - 24 * 3600 * 1000;
+  return { startMs: Math.min(weekStart, yesterdayStart), endMs: weekStart + 7 * 24 * 3600 * 1000 };
+}
+
+/** Apply an EntryInput patch onto a client-side TimeEntry (optimistic preview). */
+function patchEntry(e: TimeEntry, patch: EntryInput): TimeEntry {
+  const next: TimeEntry = { ...e };
+  if (patch.description !== undefined) next.description = patch.description;
+  if (patch.tags !== undefined) next.tags = patch.tags;
+  if (patch.workspaceId !== undefined) next.project_id = patch.workspaceId;
+  if (patch.start !== undefined) next.start = patch.start;
+  if (patch.stop !== undefined) next.stop = patch.stop;
+  const startMs = Date.parse(next.start);
+  next.duration = next.stop
+    ? Math.max(1, Math.round((Date.parse(next.stop) - startMs) / 1000))
+    : -Math.floor(startMs / 1000);
+  return next;
+}
+
 export interface UseTrackSource {
   hydrated: boolean;
+  /** Which backend this deployment serves; null until /api/config resolves. */
+  mode: SourceMode | null;
   settings: StoredSettings;
   setSettings: React.Dispatch<React.SetStateAction<StoredSettings>>;
   persist: (s: StoredSettings) => void;
@@ -205,20 +296,62 @@ export interface UseTrackSource {
   // Forced fetches bypass the shared server cache; budget is metered the same
   // way the live poll is (skipped when a plain cache hit is expected).
   loadRange: (startISO: string, endISO: string, opts?: { force?: boolean }) => Promise<TimeEntry[]>;
+
+  // ---- Standalone mode only (no-ops / empty elsewhere) ----
+  /** Stored workspaces with their settings snapshots (the Settings section). */
+  workspaces: StoreWorkspace[];
+  /** Ask the live poll to fetch immediately (after an external mutation). */
+  refetchEntries: () => void;
+  /** Last failed mutation, for a toast; cleared via clearMutationError. */
+  mutationError: string | null;
+  clearMutationError: () => void;
+  // Entry mutations (tracker UI). All optimistic against `entries`, reconciled
+  // with the canonical server response; they resolve null on failure (the error
+  // lands in mutationError, or the password gate re-arms on an expired session).
+  startTimer: (input: {
+    description: string;
+    tags: string[];
+    workspaceId: number;
+  }) => Promise<TimeEntry | null>;
+  addEntry: (input: {
+    description: string;
+    tags: string[];
+    workspaceId: number;
+    start: string;
+    stop: string;
+  }) => Promise<TimeEntry | null>;
+  editEntry: (id: number, patch: EntryInput) => Promise<TimeEntry | null>;
+  removeEntry: (id: number) => Promise<boolean>;
+  stopTimer: (id: number) => Promise<TimeEntry | null>;
+  // Workspace CRUD (Settings; the importer also creates). Each refreshes the
+  // workspace/project lists.
+  createWorkspace: (
+    name: string,
+    settings?: PresetValue,
+    color?: string
+  ) => Promise<StoreWorkspace | null>;
+  updateWorkspace: (
+    id: number,
+    patch: { name?: string; color?: string; settings?: PresetValue }
+  ) => Promise<StoreWorkspace | null>;
+  deleteWorkspace: (id: number, force?: boolean) => Promise<'ok' | 'has-entries' | null>;
 }
 
 export function useTrackSource(): UseTrackSource {
-  // Phase 2 of the standalone plan selects this from AppConfig.mode; until
-  // then Toggl is the only backend.
-  const backend = togglBackend;
+  const [mode, setMode] = useState<SourceMode | null>(null);
+  // Until config resolves, mode is unknown; the connect effect waits for it, so
+  // the provisional Toggl backend here is never actually used prematurely.
+  const backend = mode === 'standalone' ? standaloneBackend : togglBackend;
   const metered = backend.hourlyRequestLimit !== null;
 
   const [settings, setSettings] = useState<StoredSettings>(DEFAULTS);
   const [hydrated, setHydrated] = useState(false);
 
   const [projects, setProjects] = useState<TrackProject[]>([]);
+  const [workspaces, setWorkspaces] = useState<StoreWorkspace[]>([]);
   const [serverManaged, setServerManaged] = useState<boolean | null>(null); // null = unknown
   const [passwordRequired, setPasswordRequired] = useState(false);
+  const [misconfigured, setMisconfigured] = useState<string | null>(null);
   const [authed, setAuthed] = useState(false);
   const [pwError, setPwError] = useState<string | null>(null);
   const [pwBusy, setPwBusy] = useState(false);
@@ -229,6 +362,7 @@ export function useTrackSource(): UseTrackSource {
   const [connecting, setConnecting] = useState(false);
   const [authError, setAuthError] = useState<string | null>(null);
   const [fetchError, setFetchError] = useState<string | null>(null);
+  const [mutationError, setMutationError] = useState<string | null>(null);
   const [showSettings, setShowSettings] = useState(false);
 
   const [entries, setEntries] = useState<TimeEntry[]>([]);
@@ -239,9 +373,16 @@ export function useTrackSource(): UseTrackSource {
   const lastFetchRef = useRef(0);
   const backoffUntilRef = useRef(0);
   const backoffStepRef = useRef(0);
+  const refetchRef = useRef<(() => void) | null>(null);
+  // Latest refreshWorkspaces, for the cross-tab listener (defined above it).
+  const refreshWorkspacesRef = useRef<(() => Promise<StoreWorkspace[]>) | null>(null);
+  const entriesRef = useRef<TimeEntry[]>([]);
+  useEffect(() => {
+    entriesRef.current = entries;
+  }, [entries]);
 
   // Hydrate from localStorage after mount (avoids SSR/client mismatch) and
-  // find out whether the server already holds a token.
+  // find out which mode the server runs / whether it already holds a token.
   useEffect(() => {
     setSettings(loadSettings());
     setNowMs(Date.now());
@@ -250,20 +391,37 @@ export function useTrackSource(): UseTrackSource {
     setHydrated(true);
     getConfig()
       .then((c) => {
-        setServerManaged(!!c.serverToken);
+        setMode(c.mode);
+        // Standalone deployments are always server-managed — there is no
+        // browser credential; the store sits behind the password gate.
+        setServerManaged(c.mode === 'standalone' ? true : !!c.serverToken);
         setPasswordRequired(!!c.passwordRequired);
+        setMisconfigured(c.misconfigured ?? null);
         setServerCache(c.cache ?? { enabled: false, intervalSec: null });
       })
-      .catch(() => setServerManaged(false));
+      .catch(() => {
+        setMode('toggl');
+        setServerManaged(false);
+      });
   }, []);
 
   // When the shared server cache is on, its interval governs polling and the
-  // per-device refresh picker is hidden (the server owns the budget).
-  const cacheEnabled = serverCache.enabled && !!serverCache.intervalSec;
-  const effectiveRefreshSec = cacheEnabled ? serverCache.intervalSec! : settings.refreshSec;
+  // per-device refresh picker is hidden (the server owns the budget). The
+  // standalone store polls at a fixed brisk cadence — no budget to manage.
+  const standalone = backend.mode === 'standalone';
+  const cacheEnabled = !standalone && serverCache.enabled && !!serverCache.intervalSec;
+  const effectiveRefreshSec = standalone
+    ? STANDALONE_REFRESH_SEC
+    : cacheEnabled
+    ? serverCache.intervalSec!
+    : settings.refreshSec;
   // Poll one second SLOWER than the cache TTL so a client's poll reliably lands
   // just after the entry has expired (a guaranteed miss → fresh data).
-  const pollIntervalSec = cacheEnabled ? serverCache.intervalSec! + 1 : settings.refreshSec;
+  const pollIntervalSec = standalone
+    ? STANDALONE_REFRESH_SEC
+    : cacheEnabled
+    ? serverCache.intervalSec! + 1
+    : settings.refreshSec;
 
   // 1s tick drives the live clock and lets the request meter decay.
   useEffect(() => {
@@ -300,13 +458,29 @@ export function useTrackSource(): UseTrackSource {
     }
   }, []);
 
-  // Verify token, resolve workspace, load project list. Uses the cache unless
-  // forced (e.g. the user clicks Connect/Reconnect), to conserve requests.
+  // Verify credentials, resolve the workspace/project list. Toggl mode uses the
+  // 24h cache unless forced (e.g. the user clicks Connect/Reconnect), to
+  // conserve requests; standalone always fetches live (unmetered, and the list
+  // changes right here in Settings).
   const connect = useCallback(
     async (token: string, force = false) => {
       setConnecting(true);
       setAuthError(null);
       try {
+        if (standalone) {
+          const ws = await listWorkspaces();
+          setWorkspaces(ws);
+          const projs = workspacesToProjects(ws);
+          setProjects(projs);
+          setSettings((prev) => ({
+            ...prev,
+            token: '',
+            workspaceId: 1,
+            selectedProjects: enrichSelected(prev.selectedProjects, projs),
+          }));
+          setReady(true);
+          return;
+        }
         if (!force) {
           const c = loadCache();
           if (c && c.projects?.length && Date.now() - c.at < CACHE_TTL) {
@@ -351,6 +525,10 @@ export function useTrackSource(): UseTrackSource {
         setAuthError(
           isRateLimit(e)
             ? 'Toggl rate limit reached — wait a bit, then try again.'
+            : standalone
+            ? `Could not reach the store — check MONGODB_URI and the database's network access.${
+                errorDetail(e) ? ` (${errorDetail(e)})` : ''
+              }`
             : serverManaged
             ? 'The server-configured Toggl token was rejected. Check TOGGL_API_TOKEN.'
             : 'Could not authenticate with Toggl. Check your API token.'
@@ -360,24 +538,31 @@ export function useTrackSource(): UseTrackSource {
         setConnecting(false);
       }
     },
-    [backend, metered, serverManaged]
+    [backend, metered, serverManaged, standalone]
   );
 
   // Once we know the server-token status, connect appropriately (cache-first).
   useEffect(() => {
     if (!hydrated || serverManaged === null || ready) return;
+    // A misconfigured deployment (standalone without APP_PASSWORD) can't serve
+    // anything — surface the problem instead of a doomed connect.
+    if (misconfigured) {
+      setAuthError(misconfigured);
+      setShowSettings(true);
+      return;
+    }
     if (serverManaged) {
       // When a password gate is active, wait until we hold a session before
       // connecting — the proxy would reject the fetch anyway.
       if (passwordRequired && !authed) return;
-      connect(''); // server holds the token; ignore any stored browser token
+      connect(''); // server holds the credential; ignore any stored browser token
     } else if (settings.token) {
       connect(settings.token);
     } else {
       setShowSettings(true);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [hydrated, serverManaged, passwordRequired, authed]);
+  }, [hydrated, serverManaged, passwordRequired, authed, misconfigured]);
 
   // Poll time entries. A single request (the entries list already includes the
   // running timer). Self-scheduling so we can pause while the tab is hidden and
@@ -394,17 +579,12 @@ export function useTrackSource(): UseTrackSource {
       // upstream call), so the per-device hourly meter would over-count — skip it.
       if (metered && !cacheEnabled) setReqThisHour(recordReqs(1));
       try {
-        // From the week's start (Saturday — needed for the weekly model and so the
-        // leading weekend's entries load) but never later than the start of
-        // yesterday, so unreported-time detection always has both yesterday and
-        // today even on the first day of the week.
-        const weekStart = startOfWeek(new Date()).getTime();
-        const yesterdayStart = startOfDay(new Date()).getTime() - 24 * 3600 * 1000;
-        const start = new Date(Math.min(weekStart, yesterdayStart)).toISOString();
-        // Through the end of this week so pre-entered ("scheduled") future entries
-        // are included.
-        const end = new Date(weekStart + 7 * 24 * 3600 * 1000).toISOString();
-        const ent = await backend.fetchEntries(settings.token, start, end);
+        const win = pollWindow(new Date());
+        const ent = await backend.fetchEntries(
+          settings.token,
+          new Date(win.startMs).toISOString(),
+          new Date(win.endMs).toISOString()
+        );
         if (cancelled) return;
         setEntries(ent ?? []);
         setFetchError(null);
@@ -427,6 +607,10 @@ export function useTrackSource(): UseTrackSource {
           setFetchError('Failed to refresh data.');
         }
       }
+    };
+    // Let mutations request an immediate canonical refresh out of band.
+    refetchRef.current = () => {
+      fetchNow();
     };
 
     const tick = async () => {
@@ -458,6 +642,7 @@ export function useTrackSource(): UseTrackSource {
     return () => {
       cancelled = true;
       clearTimeout(timer);
+      refetchRef.current = null;
       document.removeEventListener('visibilitychange', onVisible);
     };
   }, [ready, livePollPaused, settings.token, pollIntervalSec, cacheEnabled, backend, metered]);
@@ -477,8 +662,260 @@ export function useTrackSource(): UseTrackSource {
     [backend, metered, cacheEnabled, settings.token]
   );
 
+  const refetchEntries = useCallback(() => {
+    refetchRef.current?.();
+  }, []);
+  const clearMutationError = useCallback(() => setMutationError(null), []);
+
+  // React to store changes made in OTHER tabs/windows: refetch entries at
+  // once (and re-list workspaces when those changed) instead of waiting out
+  // the poll interval on stale data.
+  useEffect(() => {
+    if (!standalone || !ready) return;
+    const ch = storeChannel();
+    if (!ch) return;
+    const onMessage = (e: MessageEvent) => {
+      if (e.data === 'workspaces') refreshWorkspacesRef.current?.();
+      refetchRef.current?.();
+    };
+    ch.addEventListener('message', onMessage);
+    return () => ch.removeEventListener('message', onMessage);
+  }, [standalone, ready]);
+
+  // ---- Standalone mutations ----
+  // Shared shape: apply the optimistic change to the entries state, run the
+  // server call, reconcile with the canonical result, and kick an instant poll
+  // so any side effects (e.g. the previously running entry a new timer closed)
+  // turn canonical too. On failure everything rolls back and the error surfaces
+  // as a toastable message. Resolves null (or false) on failure.
+  const runMutation = useCallback(
+    async <R,>(
+      optimistic: (list: TimeEntry[]) => TimeEntry[],
+      run: () => Promise<R>,
+      reconcile: ((result: R, list: TimeEntry[]) => TimeEntry[]) | null,
+      failMessage: string
+    ): Promise<R | null> => {
+      const snapshot = entriesRef.current;
+      setEntries(optimistic);
+      try {
+        const result = await run();
+        if (reconcile) setEntries((list) => reconcile(result, list));
+        refetchRef.current?.();
+        broadcastStoreChange('entries');
+        return result;
+      } catch (e) {
+        setEntries(snapshot);
+        if (isAuthRequired(e)) {
+          setReady(false);
+          setAuthed(false);
+        } else {
+          const detail = errorDetail(e);
+          setMutationError(detail ? `${failMessage} (${detail})` : failMessage);
+        }
+        return null;
+      }
+    },
+    []
+  );
+
+  const isRunning = (e: TimeEntry) => e.duration < 0 || !e.stop;
+
+  const startTimer = useCallback<UseTrackSource['startTimer']>(
+    async ({ description, tags, workspaceId }) => {
+      const start = new Date().toISOString();
+      const startMs = Date.parse(start);
+      const temp: TimeEntry = {
+        id: -startMs, // provisional; swapped for the canonical id on response
+        start,
+        stop: null,
+        duration: -Math.floor(startMs / 1000),
+        project_id: workspaceId,
+        workspace_id: 1,
+        description,
+        tags,
+      };
+      return runMutation(
+        (list) => [
+          ...list.map((e) =>
+            isRunning(e) ? patchEntry(e, { stop: start }) : e
+          ),
+          temp,
+        ],
+        () => createEntryApi({ description, workspaceId, tags, start, stop: null }),
+        (created, list) => list.map((e) => (e.id === temp.id ? created : e)),
+        'Could not start the timer.'
+      );
+    },
+    [runMutation]
+  );
+
+  const addEntry = useCallback<UseTrackSource['addEntry']>(
+    async ({ description, tags, workspaceId, start, stop }) => {
+      // Only surface the optimistic copy in the shared poll state when it falls
+      // inside the poll's window; a backdated entry belongs to the tracker's
+      // own history list, which reconciles from the returned canonical entry.
+      const inWindow = Date.parse(start) >= pollWindow(new Date()).startMs;
+      const temp: TimeEntry = patchEntry(
+        {
+          id: -Date.parse(start) - 1,
+          start,
+          stop,
+          duration: 0,
+          project_id: workspaceId,
+          workspace_id: 1,
+          description,
+          tags,
+        },
+        {}
+      );
+      return runMutation(
+        (list) => (inWindow ? [...list, temp] : list),
+        () => createEntryApi({ description, workspaceId, tags, start, stop }),
+        (created, list) =>
+          inWindow ? list.map((e) => (e.id === temp.id ? created : e)) : list,
+        'Could not add the entry.'
+      );
+    },
+    [runMutation]
+  );
+
+  const editEntry = useCallback<UseTrackSource['editEntry']>(
+    (id, patch) =>
+      runMutation(
+        (list) => list.map((e) => (e.id === id ? patchEntry(e, patch) : e)),
+        () => updateEntryApi(id, patch),
+        (canon, list) => list.map((e) => (e.id === id ? canon : e)),
+        'Could not save the change.'
+      ),
+    [runMutation]
+  );
+
+  const removeEntry = useCallback<UseTrackSource['removeEntry']>(
+    async (id) => {
+      const res = await runMutation(
+        (list) => list.filter((e) => e.id !== id),
+        () => deleteEntryApi(id),
+        null,
+        'Could not delete the entry.'
+      );
+      return res !== null;
+    },
+    [runMutation]
+  );
+
+  const stopTimer = useCallback<UseTrackSource['stopTimer']>(
+    (id) => {
+      const stop = new Date().toISOString();
+      return runMutation(
+        (list) => list.map((e) => (e.id === id ? patchEntry(e, { stop }) : e)),
+        () => stopEntryApi(id),
+        (canon, list) => list.map((e) => (e.id === id ? canon : e)),
+        'Could not stop the timer.'
+      );
+    },
+    [runMutation]
+  );
+
+  // ---- Standalone workspace CRUD (Settings) ----
+  // Every operation refreshes the workspace + project lists so the pickers and
+  // chips reflect the change at once.
+  const refreshWorkspaces = useCallback(async (): Promise<StoreWorkspace[]> => {
+    const ws = await listWorkspaces();
+    setWorkspaces(ws);
+    const projs = workspacesToProjects(ws);
+    setProjects(projs);
+    setSettings((prev) => ({
+      ...prev,
+      selectedProjects: enrichSelected(prev.selectedProjects, projs),
+    }));
+    return ws;
+  }, []);
+  refreshWorkspacesRef.current = refreshWorkspaces;
+
+  const workspaceOp = useCallback(
+    async <R,>(run: () => Promise<R>, failMessage: string): Promise<R | null> => {
+      try {
+        const result = await run();
+        await refreshWorkspaces();
+        broadcastStoreChange('workspaces');
+        return result;
+      } catch (e) {
+        if (isAuthRequired(e)) {
+          setReady(false);
+          setAuthed(false);
+        } else {
+          const detail = errorDetail(e);
+          setMutationError(detail ? `${failMessage} (${detail})` : failMessage);
+        }
+        return null;
+      }
+    },
+    [refreshWorkspaces]
+  );
+
+  const createWorkspace = useCallback<UseTrackSource['createWorkspace']>(
+    (name, settingsSnapshot, color) =>
+      workspaceOp(
+        () => createWorkspaceApi(name, settingsSnapshot, color),
+        'Could not create the workspace.'
+      ),
+    [workspaceOp]
+  );
+
+  const updateWorkspace = useCallback<UseTrackSource['updateWorkspace']>(
+    (id, patch) =>
+      workspaceOp(() => updateWorkspaceApi(id, patch), 'Could not update the workspace.'),
+    [workspaceOp]
+  );
+
+  const deleteWorkspace = useCallback<UseTrackSource['deleteWorkspace']>(
+    async (id, force = false) => {
+      try {
+        await deleteWorkspaceApi(id, force);
+        // The server strips references out of the OTHER workspace documents;
+        // this device's active settings may reference the deleted workspace
+        // too (as a tracked selection or a linked billing code) — strip those
+        // the same way so nothing keeps pointing at a workspace that's gone.
+        setSettings((prev) => {
+          const selectedProjects = prev.selectedProjects.filter((p) => p.id !== id);
+          const codeMappings = (prev.codeMappings ?? []).filter((m) => m.projectId !== id);
+          if (
+            selectedProjects.length === prev.selectedProjects.length &&
+            codeMappings.length === (prev.codeMappings ?? []).length
+          ) {
+            return prev;
+          }
+          const next = { ...prev, selectedProjects, codeMappings };
+          try {
+            window.localStorage.setItem(LS_KEY, JSON.stringify(next));
+          } catch {
+            /* ignore quota / private-mode errors */
+          }
+          return next;
+        });
+        await refreshWorkspaces();
+        broadcastStoreChange('workspaces');
+        return 'ok';
+      } catch (e) {
+        if (e instanceof ApiError && e.status === 409) return 'has-entries';
+        if (isAuthRequired(e)) {
+          setReady(false);
+          setAuthed(false);
+        } else {
+          const detail = errorDetail(e);
+          setMutationError(
+            detail ? `Could not delete the workspace. (${detail})` : 'Could not delete the workspace.'
+          );
+        }
+        return null;
+      }
+    },
+    [refreshWorkspaces]
+  );
+
   return {
     hydrated,
+    mode,
     settings,
     setSettings,
     persist,
@@ -504,5 +941,17 @@ export function useTrackSource(): UseTrackSource {
     livePollPaused,
     setLivePollPaused,
     loadRange,
+    workspaces,
+    refetchEntries,
+    mutationError,
+    clearMutationError,
+    startTimer,
+    addEntry,
+    editEntry,
+    removeEntry,
+    stopTimer,
+    createWorkspace,
+    updateWorkspace,
+    deleteWorkspace,
   };
 }

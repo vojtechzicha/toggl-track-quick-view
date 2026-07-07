@@ -3,10 +3,11 @@
 import { useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
 import ProgressRing from '@/components/ProgressRing';
-import SettingsPanel, { type SettingsPreset } from '@/components/SettingsPanel';
+import AppSettings from '@/components/AppSettings';
+import MutationToast from '@/components/MutationToast';
 import ProjectChips from '@/components/ProjectChips';
 import PasswordGate from '@/components/PasswordGate';
-import { useTrackSource, applyPreset, fmtInterval } from '@/lib/useTrackSource';
+import { useTrackSource, fmtInterval } from '@/lib/useTrackSource';
 import { HOURLY_LIMIT } from '@/lib/source/toggl';
 import { mappingFor } from '@/lib/timesheet/mapping';
 import {
@@ -39,9 +40,8 @@ export default function Page() {
   const t = useTrackSource();
   const {
     hydrated,
+    mode,
     settings,
-    persist,
-    projects,
     serverManaged,
     passwordRequired,
     authed,
@@ -49,10 +49,7 @@ export default function Page() {
     pwBusy,
     submitPassword,
     ready,
-    connecting,
-    authError,
     fetchError,
-    connect,
     entries,
     nowMs,
     reqThisHour,
@@ -61,6 +58,7 @@ export default function Page() {
     showSettings,
     setShowSettings,
   } = t;
+  const standalone = mode === 'standalone';
 
   const [snoozeUntil, setSnoozeUntil] = useState(0);
   const [dayTab, setDayTab] = useState<'today' | 'yesterday'>('today');
@@ -467,6 +465,12 @@ export default function Page() {
                 <span className="navbtn-text">Details</span>
               </button>
             )}
+            {standalone && (
+              <Link className="navbtn" href="/tracker" aria-label="Tracker">
+                <span className="navbtn-icon">⏱</span>
+                <span className="navbtn-text">Tracker</span>
+              </Link>
+            )}
             <Link className="navbtn" href="/timesheet" aria-label="Timesheet">
               <span className="navbtn-icon">🧾</span>
               <span className="navbtn-text">Timesheet</span>
@@ -560,7 +564,9 @@ export default function Page() {
               </>
             ) : (
               <div className="center-msg" style={{ height: 'auto' }}>
-                {settings.token || serverManaged
+                {standalone
+                  ? 'Create a workspace in settings to begin.'
+                  : settings.token || serverManaged
                   ? 'Pick a project in settings to begin.'
                   : 'Connect Toggl to begin.'}
               </div>
@@ -725,7 +731,7 @@ export default function Page() {
                             {h.missingTag && (
                               <span
                                 className="tag-warn"
-                                title="No billing tag — add one in Toggl"
+                                title={`No billing tag — add one ${standalone ? 'in the tracker' : 'in Toggl'}`}
                               >
                                 ⚠
                               </span>
@@ -733,7 +739,7 @@ export default function Page() {
                             {h.tooLong && (
                               <span
                                 className="tag-warn"
-                                title={`Longer than ${maxBillableLabel} — can't be billed individually; split it in Toggl`}
+                                title={`Longer than ${maxBillableLabel} — can't be billed individually; split it ${standalone ? 'in the tracker' : 'in Toggl'}`}
                               >
                                 ⚠
                               </span>
@@ -765,9 +771,11 @@ export default function Page() {
               devices
             </span>
           ) : (
-            <span>Refreshes every {fmtInterval(settings.refreshSec)} · live counter each second</span>
+            <span>
+              Refreshes every {fmtInterval(effectiveRefreshSec)} · live counter each second
+            </span>
           )}
-          {!cacheEnabled && (
+          {!cacheEnabled && !standalone && (
             <span className={`budget ${budgetClass}`}>
               {' · '}≈{reqThisHour}/{HOURLY_LIMIT} API requests this hour
             </span>
@@ -775,45 +783,13 @@ export default function Page() {
         </footer>
       </div>
 
+      <MutationToast t={t} />
+
       {needsPassword && (
         <PasswordGate onSubmit={submitPassword} error={pwError} busy={pwBusy} />
       )}
 
-      {!needsPassword && showSettings && (
-        <SettingsPanel
-          initial={{
-            token: settings.token,
-            selectedProjects: settings.selectedProjects,
-            groupName: settings.groupName,
-            shortFriday: settings.shortFriday,
-            weeklyHours: settings.weeklyHours,
-            maxBillableHours: settings.maxBillableHours,
-            minWorkingDayHours: settings.minWorkingDayHours,
-            billingTagPrefix: settings.billingTagPrefix,
-            roundingHours: settings.roundingHours,
-            noOvertime: settings.noOvertime,
-            codeMappings: settings.codeMappings,
-            refreshSec: settings.refreshSec,
-            timesheetMode: settings.timesheetMode,
-            exportName: settings.exportName,
-          }}
-          projects={projects}
-          serverManaged={!!serverManaged}
-          cacheInterval={cacheEnabled ? effectiveRefreshSec : null}
-          authError={authError}
-          connecting={connecting}
-          presets={settings.presets}
-          onPresetsChange={(presets: SettingsPreset[]) => persist({ ...settings, presets })}
-          onApply={(p) => persist(applyPreset(settings, p, projects))}
-          onConnect={(token) => connect(token, true)}
-          onSave={(v) => {
-            persist({ ...settings, ...v });
-            setShowSettings(false);
-          }}
-          onClose={() => setShowSettings(false)}
-          canClose={projectIds.size > 0}
-        />
-      )}
+      {!needsPassword && showSettings && <AppSettings t={t} canClose={projectIds.size > 0} />}
     </>
   );
 }
