@@ -164,6 +164,12 @@ function roundingLabel(hours: number): string {
   return `${Math.round(hours * 60)} minutes (${numLabel(hours)}h)`;
 }
 
+// Inline phrasing of a grid unit for prose ("1-hour", "60 min"), used in warnings.
+function gridLabel(hours: number): string {
+  if (Number.isInteger(hours)) return `${hours}-hour`;
+  return `${Math.round(hours * 60)}-min`;
+}
+
 // Each option's implied requests/hour, so the user can see the budget impact
 // (Toggl Free allows 30/hour).
 const REFRESH_OPTIONS = [
@@ -940,8 +946,8 @@ export default function SettingsPanel({
                       </label>
                       {!gridOk && (
                         <p className="map-warn">
-                          Off this sheet&apos;s {Math.round(roundingHours * 60)}-min grid — will be
-                          saved as {Math.round(roundingHours * 60)} min so the figures stay tidy.
+                          Off this sheet&apos;s {gridLabel(roundingHours)} grid — will be saved as{' '}
+                          {gridLabel(roundingHours)} so the figures stay tidy.
                         </p>
                       )}
                     </div>
