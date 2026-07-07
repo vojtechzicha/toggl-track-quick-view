@@ -10,6 +10,7 @@
     "lint": "next lint"
   },
   "dependencies": {
+    "mongodb": "^7.4.0",
     "next": "^15.1.0",
     "pdfmake": "^0.2.23",
     "react": "^19.0.0",

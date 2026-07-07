@@ -1588,3 +1588,429 @@ body:has(.ts-page) {
   font-size: 12px;
   line-height: 1.4;
 }
+
+/* ---------- Tracker page (standalone mode) ---------- */
+.tracker-page {
+  min-height: 100vh;
+  min-height: 100dvh;
+  display: flex;
+  flex-direction: column;
+  /* Full-width like .app and .ts-page — all three pages share the same shell,
+     so switching between them never reflows into a centered column. */
+  /* Safe-area insets for standalone PWA use (viewport-fit=cover). */
+  padding: calc(clamp(14px, 2.4vmin, 28px) + env(safe-area-inset-top, 0px))
+    calc(clamp(14px, 2.4vmin, 28px) + env(safe-area-inset-right, 0px))
+    calc(clamp(14px, 2.4vmin, 28px) + env(safe-area-inset-bottom, 0px))
+    calc(clamp(14px, 2.4vmin, 28px) + env(safe-area-inset-left, 0px));
+  gap: clamp(12px, 2vmin, 20px);
+}
+/* The entry list grows past the viewport — the page scrolls. */
+body:has(.tracker-page) {
+  overflow: auto;
+}
+
+/* ----- Add bar / running strip ----- */
+.addbar {
+  position: sticky;
+  top: calc(8px + env(safe-area-inset-top, 0px));
+  z-index: 5;
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 10px 12px;
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  box-shadow: 0 6px 24px rgba(0, 0, 0, 0.35);
+}
+.addbar.running {
+  border-color: rgba(59, 130, 246, 0.55);
+}
+.addbar input[type='text'],
+.addbar input[type='datetime-local'],
+.addbar select {
+  background: var(--bg);
+  border: 1px solid var(--line);
+  color: var(--text);
+  border-radius: 10px;
+  padding: 10px 12px;
+  font-size: 14px;
+}
+.addbar input:focus,
+.addbar select:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+.addbar-desc {
+  flex: 1 1 220px;
+  min-width: 0;
+}
+.addbar-ws {
+  flex: 0 1 160px;
+  min-width: 0;
+}
+.addbar-dt {
+  flex: 0 1 auto;
+  color-scheme: dark;
+}
+.addbar-arrow {
+  color: var(--muted);
+}
+.addbar-clock {
+  font-variant-numeric: tabular-nums;
+  font-weight: 700;
+  font-size: clamp(16px, 2.4vmin, 22px);
+  padding: 0 6px;
+}
+.btn-start {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #fff;
+  font-weight: 700;
+}
+.btn-start:hover {
+  background: var(--accent-soft);
+  border-color: var(--accent-soft);
+}
+.btn-stop {
+  background: var(--red);
+  border-color: var(--red);
+  color: #fff;
+  font-weight: 700;
+}
+.btn-stop:hover {
+  background: #f87171;
+  border-color: #f87171;
+}
+.addbar-mode {
+  display: inline-flex;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  overflow: hidden;
+}
+.mode-tab {
+  background: var(--bg);
+  border: none;
+  color: var(--muted);
+  width: 34px;
+  height: 38px;
+  font-size: 15px;
+  cursor: pointer;
+}
+.mode-tab.active {
+  background: var(--card2);
+  color: var(--text);
+}
+.addbar-err {
+  flex: 1 0 100%;
+  color: var(--red);
+  font-size: 12px;
+}
+
+/* ----- Billing-tag combobox ----- */
+.tagbox {
+  position: relative;
+  flex: 0 1 150px;
+  min-width: 0;
+}
+.tagbox input {
+  width: 100%;
+  background: var(--bg);
+  border: 1px solid var(--line);
+  color: var(--text);
+  border-radius: 10px;
+  padding: 10px 12px;
+  font-size: 14px;
+}
+.tagbox input:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+.tagbox-list {
+  position: absolute;
+  top: calc(100% + 4px);
+  left: 0;
+  min-width: 100%;
+  max-height: 240px;
+  overflow: auto;
+  z-index: 20;
+  list-style: none;
+  margin: 0;
+  padding: 4px;
+  background: var(--card2);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.45);
+}
+.tagbox-item {
+  display: block;
+  width: 100%;
+  text-align: left;
+  background: none;
+  border: none;
+  color: var(--text);
+  padding: 7px 10px;
+  font-size: 14px;
+  border-radius: 7px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.tagbox-item:hover,
+.tagbox-item.active {
+  background: rgba(59, 130, 246, 0.18);
+}
+
+/* ----- Entry list ----- */
+.tr-list {
+  display: flex;
+  flex-direction: column;
+  gap: clamp(10px, 1.6vmin, 16px);
+}
+.tr-week-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  padding: 4px 6px 0;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+.tr-week-total {
+  font-variant-numeric: tabular-nums;
+}
+.tr-day {
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: var(--card);
+  overflow: visible;
+  margin-top: 8px;
+}
+.tr-day-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--line);
+  font-size: 13px;
+  font-weight: 700;
+}
+.tr-day-total {
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+.tr-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 14px;
+  flex-wrap: wrap;
+}
+.tr-row + .tr-row {
+  border-top: 1px solid rgba(42, 51, 67, 0.55);
+}
+.tr-row.live {
+  background: rgba(59, 130, 246, 0.07);
+}
+.tr-main {
+  flex: 1 1 260px;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.tr-desc {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  background: none;
+  border: none;
+  color: var(--text);
+  font-size: 14px;
+  text-align: left;
+  padding: 4px 0;
+  cursor: text;
+}
+.tr-desc:hover {
+  color: var(--accent-soft);
+}
+.tr-desc.empty {
+  color: var(--muted);
+  font-style: italic;
+}
+.tr-desc-input {
+  flex: 1 1 auto;
+  min-width: 0;
+  background: var(--bg);
+  border: 1px solid var(--accent);
+  color: var(--text);
+  border-radius: 8px;
+  padding: 5px 8px;
+  font-size: 14px;
+}
+.tr-desc-input:focus {
+  outline: none;
+}
+.tr-tagwrap {
+  flex: 0 0 auto;
+  position: relative;
+}
+.tr-tag {
+  background: rgba(59, 130, 246, 0.12);
+  border: 1px solid rgba(59, 130, 246, 0.35);
+  color: var(--accent-soft);
+  border-radius: 999px;
+  padding: 3px 10px;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.tr-tag.missing {
+  background: none;
+  border-color: var(--line);
+  color: var(--muted);
+}
+.tr-tag:hover {
+  border-color: var(--accent);
+}
+.tr-tagwrap .tagbox {
+  flex: 0 0 auto;
+  width: 150px;
+}
+.tr-side {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-left: auto;
+}
+.tr-timewrap {
+  position: relative;
+}
+.tr-time {
+  background: none;
+  border: none;
+  color: var(--muted);
+  font-size: 13px;
+  font-variant-numeric: tabular-nums;
+  cursor: pointer;
+  padding: 4px 0;
+  white-space: nowrap;
+}
+.tr-time:hover {
+  color: var(--accent-soft);
+}
+.tr-timepop {
+  position: absolute;
+  top: calc(100% + 6px);
+  right: 0;
+  z-index: 20;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px;
+  background: var(--card2);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.45);
+}
+.tr-timepop label {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+.tr-timepop input {
+  background: var(--bg);
+  border: 1px solid var(--line);
+  color: var(--text);
+  border-radius: 8px;
+  padding: 7px 9px;
+  font-size: 13px;
+  color-scheme: dark;
+}
+.tr-timepop input:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+.tr-timepop-btns {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+.tr-timepop-btns .btn {
+  padding: 6px 12px;
+  font-size: 13px;
+}
+.tr-dur {
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  font-size: 14px;
+  min-width: 62px;
+  text-align: right;
+}
+.tr-dur.live {
+  color: var(--accent-soft);
+}
+.tr-more {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 0 4px;
+  color: var(--muted);
+  font-size: 13px;
+}
+.tr-more .err {
+  color: var(--red);
+}
+.tr-sentinel {
+  width: 100%;
+  height: 1px;
+}
+
+/* ----- Toast (mutation errors) ----- */
+.toast {
+  position: fixed;
+  left: 50%;
+  bottom: calc(24px + env(safe-area-inset-bottom, 0px));
+  transform: translateX(-50%);
+  z-index: 60;
+  padding: 10px 16px;
+  border-radius: 12px;
+  background: var(--card2);
+  border: 1px solid var(--line);
+  color: var(--text);
+  font-size: 14px;
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.5);
+  cursor: pointer;
+}
+.toast.err {
+  border-color: var(--red);
+}
+
+/* ----- Settings: workspace color swatch (standalone) ----- */
+.ws-color {
+  flex: 0 0 auto;
+  width: 30px;
+  height: 30px;
+  padding: 3px;
+  background: var(--bg);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  cursor: pointer;
+}
+
+@media (max-width: 640px) {
+  .tr-side {
+    width: 100%;
+    justify-content: flex-end;
+  }
+  .addbar-desc {
+    flex-basis: 100%;
+  }
+}
