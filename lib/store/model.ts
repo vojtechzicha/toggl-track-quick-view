@@ -41,14 +41,26 @@ export interface EntryDoc {
 
 /** Allocate the next small numeric id for a collection (atomic $inc upsert). */
 export async function nextSeq(db: Db, key: 'workspaces' | 'entries'): Promise<number> {
+  return nextSeqBlock(db, key, 1);
+}
+
+/**
+ * Allocate `count` consecutive numeric ids in one atomic bump (the importer
+ * inserts whole windows at once); returns the FIRST id of the block.
+ */
+export async function nextSeqBlock(
+  db: Db,
+  key: 'workspaces' | 'entries',
+  count: number
+): Promise<number> {
   const res = await db
     .collection<{ _id: string; seq: number }>('counters')
     .findOneAndUpdate(
       { _id: key },
-      { $inc: { seq: 1 } },
+      { $inc: { seq: count } },
       { upsert: true, returnDocument: 'after' }
     );
-  return res!.seq;
+  return res!.seq - count + 1;
 }
 
 /**

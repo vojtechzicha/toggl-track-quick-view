@@ -3,7 +3,12 @@
 // PATCH  — partial update: name, color, settings (settings replace wholesale —
 //          the client always sends a complete snapshot).
 // DELETE — delete. Refused with 409 while the workspace still has entries;
-//          ?force=1 cascades and deletes them too.
+//          ?force=1 cascades and deletes them too. Other workspaces whose
+//          settings still reference the deleted one — as a linked billing code
+//          (codeMappings.projectId) or a tracked selection (selectedProjects)
+//          — get those references stripped, so no timesheet is left pointing
+//          at a workspace that no longer exists; the response names them so
+//          the client can warn.
 
 import { NextRequest } from 'next/server';
 import { getStoreDb } from '@/lib/store/mongo';
@@ -84,10 +89,36 @@ export async function DELETE(
         409
       );
     }
-    const res = await db.collection<WorkspaceDoc>('workspaces').deleteOne({ numericId: id });
+    const ws = db.collection<WorkspaceDoc>('workspaces');
+    const res = await ws.deleteOne({ numericId: id });
     if (res.deletedCount === 0) return jsonRes({ error: 'Workspace not found.' }, 404);
     if (entryCount > 0) await db.collection('entries').deleteMany({ workspaceId: id });
-    return Response.json({ ok: true, deletedEntries: entryCount });
+
+    // Cross-workspace settings integrity: strip dangling references out of
+    // every surviving workspace that linked or tracked the deleted one.
+    const refFilter = {
+      $or: [
+        { 'settings.codeMappings.projectId': id },
+        { 'settings.selectedProjects.id': id },
+      ],
+    };
+    const referencing = await ws
+      .find(refFilter)
+      .project<{ name: string }>({ name: 1 })
+      .toArray();
+    if (referencing.length > 0) {
+      await ws.updateMany(refFilter, {
+        $pull: {
+          'settings.codeMappings': { projectId: id },
+          'settings.selectedProjects': { id },
+        },
+      } as Parameters<typeof ws.updateMany>[1]);
+    }
+    return Response.json({
+      ok: true,
+      deletedEntries: entryCount,
+      strippedFrom: referencing.map((w) => w.name),
+    });
   } catch (e) {
     return storeError(e);
   }

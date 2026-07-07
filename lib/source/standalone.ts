@@ -72,8 +72,8 @@ async function sApi<T>(
 // ---- Workspaces ----
 export const listWorkspaces = () => sApi<StoreWorkspace[]>('workspaces');
 
-export const createWorkspaceApi = (name: string, settings?: PresetValue) =>
-  sApi<StoreWorkspace>('workspaces', { method: 'POST', body: { name, settings } });
+export const createWorkspaceApi = (name: string, settings?: PresetValue, color?: string) =>
+  sApi<StoreWorkspace>('workspaces', { method: 'POST', body: { name, settings, color } });
 
 export const updateWorkspaceApi = (
   id: number,
@@ -81,7 +81,7 @@ export const updateWorkspaceApi = (
 ) => sApi<StoreWorkspace>(`workspaces/${id}`, { method: 'PATCH', body: patch });
 
 export const deleteWorkspaceApi = (id: number, force = false) =>
-  sApi<{ ok: true }>(`workspaces/${id}`, {
+  sApi<{ ok: true; strippedFrom?: string[] }>(`workspaces/${id}`, {
     method: 'DELETE',
     search: force ? 'force=1' : undefined,
   });
@@ -110,6 +110,23 @@ export const suggestTagsApi = (q: string, prefix: string) =>
   sApi<string[]>('tags', {
     search: `q=${encodeURIComponent(q)}&prefix=${encodeURIComponent(prefix)}`,
   });
+
+// ---- Toggl history import (the /import page) ----
+/** What one bulk-import call reports back, all counts for THIS batch only. */
+export interface ImportResult {
+  imported: number;
+  duplicates: number; // togglId already in the store (re-run) — skipped
+  unmapped: number; // project not assigned a workspace — skipped
+  invalid: number; // unparseable entry — skipped
+  stoppedRunning: number; // running Toggl entries imported as stopped now
+}
+
+/**
+ * Bulk-insert one window of Toggl entries. `mapping` keys are Toggl project
+ * ids, plus '0' (entries without a project) and '*' (any project not listed).
+ */
+export const importEntriesApi = (entries: TimeEntry[], mapping: Record<string, number>) =>
+  sApi<ImportResult>('import', { method: 'POST', body: { entries, mapping } });
 
 /** Map stored workspaces to the picker-ready project list the UI consumes. */
 export function workspacesToProjects(ws: StoreWorkspace[]): ConnectInfo['projects'] {

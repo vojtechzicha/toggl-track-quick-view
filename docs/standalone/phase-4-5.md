@@ -3,6 +3,31 @@
 Prerequisites: Phases 1–3 (standalone mode fully usable for day-to-day
 tracking).
 
+**Status: implemented in this branch.** Decisions taken during implementation
+(confirmed with the owner):
+
+- **Running Toggl entries import as stopped at import time** (owner's pick of
+  the two options below) — never as running, so imported history can't fight
+  the store's single-running-timer invariant.
+- **Re-runs never overwrite**: a `togglId` already in the store is skipped, so
+  local edits made after an import always win over a re-run.
+- **Archived projects**: history references projects the (active-only)
+  projects API no longer returns, so the mapping table has a catch-all "any
+  other project" row besides the plan's explicit "(no project)" row; both
+  default to skip. Mapping keys: the project id, `'0'` (no project),
+  `'*'` (catch-all).
+- **"Create new" is re-run safe**: before creating, the importer reuses an
+  existing workspace with the same name (and pins the row's choice to it), so
+  an interrupted import re-run doesn't spawn duplicate workspaces.
+- **Linked-workspace picker**: the dropdown offers every workspace except the
+  active one (the one whose settings the form mirrors); picking one auto-adds
+  it to the tracked set — the standalone form of "a mapped project must be
+  among the selected projects".
+- **Delete guard**: the client warns (with the referencing workspaces named)
+  before deleting a workspace that others link or track; the server strips the
+  dangling `codeMappings`/`selectedProjects` references from the surviving
+  documents (and the device's own local settings) either way.
+
 ---
 
 # Phase 4 — Linked workspaces

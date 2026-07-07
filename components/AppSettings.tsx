@@ -8,7 +8,7 @@
 // localStorage preset list, and stored workspaces double as the selectable
 // "projects".
 
-import SettingsPanel, { type SettingsPreset } from '@/components/SettingsPanel';
+import SettingsPanel, { presetMatches, type SettingsPreset } from '@/components/SettingsPanel';
 import { applyPreset, type UseTrackSource } from '@/lib/useTrackSource';
 
 export default function AppSettings({
@@ -31,6 +31,13 @@ export default function AppSettings({
         value: w.settings,
       }))
     : settings.presets;
+
+  // The workspace the current settings mirror (the "active" row in the panel's
+  // list) — excluded from the linked-codes picker: a workspace can't bill onto
+  // its own timesheet as a linked code.
+  const activeWorkspaceId = standalone
+    ? t.workspaces.find((w) => presetMatches(w.settings, settings))?.id ?? null
+    : null;
 
   return (
     <SettingsPanel
@@ -66,6 +73,7 @@ export default function AppSettings({
       }}
       onClose={() => t.setShowSettings(false)}
       canClose={canClose}
+      activeWorkspaceId={activeWorkspaceId}
       onWorkspaceCreate={
         standalone
           ? async (name, snapshot) => {
@@ -98,15 +106,37 @@ export default function AppSettings({
       onWorkspaceDelete={
         standalone
           ? async (id) => {
-              const res = await t.deleteWorkspace(Number(id), false);
+              const wsId = Number(id);
+              const ws = t.workspaces.find((w) => w.id === wsId);
+              // Cross-workspace integrity warning: other workspaces may still
+              // point at this one (a linked billing code, or a tracked
+              // selection). The server strips those references on delete —
+              // but only after the user knowingly agrees to break the links.
+              const referencing = t.workspaces.filter(
+                (w) =>
+                  w.id !== wsId &&
+                  ((w.settings.codeMappings ?? []).some((m) => m.projectId === wsId) ||
+                    w.settings.selectedProjects.some((p) => p.id === wsId))
+              );
+              if (referencing.length > 0) {
+                const names = referencing.map((w) => `“${w.name}”`).join(', ');
+                const sure = window.confirm(
+                  `“${ws?.name ?? 'This workspace'}” is used by ${names} — as a linked ` +
+                    'billing code or a tracked workspace. Deleting it removes those links ' +
+                    'from their settings. Continue?'
+                );
+                if (!sure) return false;
+              }
+              const res = await t.deleteWorkspace(wsId, false);
               if (res === 'has-entries') {
-                const ws = t.workspaces.find((w) => w.id === Number(id));
                 const sure = window.confirm(
                   `“${ws?.name ?? 'This workspace'}” still has tracked time entries. ` +
                     'Delete the workspace AND all its entries? This cannot be undone.'
                 );
-                if (sure) await t.deleteWorkspace(Number(id), true);
+                if (!sure) return false;
+                return (await t.deleteWorkspace(wsId, true)) === 'ok';
               }
+              return res === 'ok';
             }
           : undefined
       }

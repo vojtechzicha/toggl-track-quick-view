@@ -2014,3 +2014,158 @@ body:has(.tracker-page) {
     flex-basis: 100%;
   }
 }
+
+/* ---------- Import page (standalone mode) ---------- */
+.imp-page {
+  min-height: 100vh;
+  min-height: 100dvh;
+  max-width: 860px;
+  margin: 0 auto;
+  display: flex;
+  flex-direction: column;
+  padding: calc(clamp(14px, 2.4vmin, 28px) + env(safe-area-inset-top, 0px))
+    calc(clamp(14px, 2.4vmin, 28px) + env(safe-area-inset-right, 0px))
+    calc(clamp(14px, 2.4vmin, 28px) + env(safe-area-inset-bottom, 0px))
+    calc(clamp(14px, 2.4vmin, 28px) + env(safe-area-inset-left, 0px));
+  gap: clamp(12px, 2vmin, 20px);
+}
+body:has(.imp-page) {
+  overflow: auto;
+}
+.imp-card {
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  padding: 16px 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.imp-card h2 {
+  font-size: 15px;
+  font-weight: 700;
+}
+.imp-card input[type='password'],
+.imp-card input[type='date'],
+.imp-card select {
+  background: var(--bg);
+  border: 1px solid var(--line);
+  color: var(--text);
+  border-radius: 10px;
+  padding: 9px 12px;
+  font-size: 14px;
+  color-scheme: dark;
+}
+.imp-card input:focus,
+.imp-card select:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+.imp-connect {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.imp-connect input {
+  flex: 1 1 240px;
+  min-width: 0;
+}
+.imp-maptable {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.imp-maprow {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 8px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--card2);
+}
+.imp-maprow.pseudo {
+  border-style: dashed;
+  color: var(--muted);
+}
+.imp-mapname {
+  flex: 1 1 40%;
+  min-width: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 14px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.imp-maparrow {
+  color: var(--muted);
+}
+.imp-maprow select {
+  flex: 1 1 40%;
+  min-width: 0;
+}
+.imp-range {
+  display: flex;
+  gap: 14px;
+  flex-wrap: wrap;
+}
+.imp-range label {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.imp-progress {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  align-items: flex-start;
+}
+.imp-bar {
+  width: 100%;
+  height: 10px;
+  border-radius: 5px;
+  background: var(--bg);
+  border: 1px solid var(--line);
+  overflow: hidden;
+}
+.imp-bar-fill {
+  height: 100%;
+  background: var(--accent);
+  transition: width 0.4s ease;
+}
+.imp-progress-line {
+  width: 100%;
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  flex-wrap: wrap;
+  color: var(--muted);
+  font-size: 13px;
+  font-variant-numeric: tabular-nums;
+}
+.imp-pause {
+  color: var(--amber);
+  font-size: 13px;
+}
+.imp-done {
+  color: var(--green);
+  font-size: 14px;
+}
+.imp-done a {
+  color: var(--accent-soft);
+}
+
+@media (max-width: 560px) {
+  .imp-maprow {
+    flex-wrap: wrap;
+  }
+  .imp-mapname,
+  .imp-maprow select {
+    flex-basis: 100%;
+  }
+  .imp-maparrow {
+    display: none;
+  }
+}

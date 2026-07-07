@@ -186,6 +186,7 @@ export default function SettingsPanel({
   onSave,
   onClose,
   canClose,
+  activeWorkspaceId,
   onWorkspaceCreate,
   onWorkspaceRecapture,
   onWorkspaceRename,
@@ -218,12 +219,18 @@ export default function SettingsPanel({
   onSave: (value: SettingsValue) => void;
   onClose: () => void;
   canClose: boolean;
+  // Standalone mode: the workspace whose settings the form currently mirrors
+  // (the "active" row in the Workspaces list below). A workspace can't be
+  // linked onto its own timesheet, so it's excluded from the mapping picker.
+  activeWorkspaceId?: number | null;
   // Standalone-mode workspace CRUD. Create resolves the stored workspace (as a
-  // preset) so the form can switch to it, or null when the call failed.
+  // preset) so the form can switch to it, or null when the call failed. Delete
+  // resolves whether the workspace was actually deleted (the wiring may cancel
+  // via a confirm dialog), so the form only drops its references when it was.
   onWorkspaceCreate?: (name: string, settings: PresetValue) => Promise<SettingsPreset | null>;
   onWorkspaceRecapture?: (id: string, settings: PresetValue) => void;
   onWorkspaceRename?: (id: string, name: string) => void;
-  onWorkspaceDelete?: (id: string) => void;
+  onWorkspaceDelete?: (id: string) => Promise<boolean>;
   onWorkspaceColor?: (id: string, color: string) => void;
 }) {
   const [token, setToken] = useState(initial.token);
@@ -373,12 +380,28 @@ export default function SettingsPanel({
   // ---- Linked billing codes ----
   // Rows are edited freely (a half-filled row is fine mid-edit); buildValue keeps
   // only complete rows on selected projects when saving.
-  const updateMapping = (i: number, patch: Partial<CodeMapping>) =>
+  //
+  // What a row may target: in Toggl mode the tracked projects (membership in the
+  // tracked set holds by construction); in standalone mode every OTHER workspace
+  // — a mapped workspace's entries must load with this sheet's, so picking one
+  // adds it to the tracked set (the standalone equivalent of the same rule).
+  const mappingCandidateIds = standalone
+    ? projects.map((p) => p.id).filter((id) => id !== activeWorkspaceId)
+    : selectedIds;
+  const ensureSelected = (id: number) => {
+    if (standalone && id) {
+      setSelectedIds((prev) => (prev.includes(id) ? prev : [...prev, id]));
+    }
+  };
+  const updateMapping = (i: number, patch: Partial<CodeMapping>) => {
+    if (patch.projectId) ensureSelected(patch.projectId);
     setCodeMappings((ms) => ms.map((m, idx) => (idx === i ? { ...m, ...patch } : m)));
+  };
   const removeMapping = (i: number) =>
     setCodeMappings((ms) => ms.filter((_, idx) => idx !== i));
   const addMapping = () => {
-    const free = selectedIds.find((id) => !codeMappings.some((m) => m.projectId === id));
+    const free = mappingCandidateIds.find((id) => !codeMappings.some((m) => m.projectId === id));
+    if (free) ensureSelected(free);
     setCodeMappings((ms) => [
       ...ms,
       // New rows start on this sheet's own grid — always compatible.
@@ -461,9 +484,17 @@ export default function SettingsPanel({
       presets.map((p) => (p.id === id ? { ...p, value: toPresetValue(buildValue()) } : p))
     );
   };
-  const deletePreset = (id: string) => {
+  const deletePreset = async (id: string) => {
     if (standalone) {
-      onWorkspaceDelete?.(id);
+      const deleted = (await onWorkspaceDelete?.(id)) ?? false;
+      if (deleted) {
+        // Drop the form's own references to the deleted workspace (tracked
+        // selection, linked billing code) — mirroring the strip the server
+        // performed on the stored settings.
+        const numId = Number(id);
+        setSelectedIds((prev) => prev.filter((x) => x !== numId));
+        setCodeMappings((ms) => ms.filter((m) => m.projectId !== numId));
+      }
     } else {
       onPresetsChange(presets.filter((p) => p.id !== id));
     }
@@ -500,7 +531,8 @@ export default function SettingsPanel({
           <p className="hint">
             This deployment keeps its own store of time entries — there is no Toggl account to
             connect. Pick the workspace (or workspaces) to view below, and track time on the{' '}
-            <strong>Tracker</strong> page.
+            <strong>Tracker</strong> page. Coming from Toggl? Bring your history over on the{' '}
+            <a href="/import">Import</a> page.
           </p>
         ) : serverManaged ? (
           <p className="hint">
@@ -807,15 +839,21 @@ export default function SettingsPanel({
                     <div key={i} className="map-row">
                       <div className="map-grid">
                         <label className="map-cell">
-                          <span className="map-cap">Project</span>
+                          <span className="map-cap">{standalone ? 'Workspace' : 'Project'}</span>
                           <select
                             value={m.projectId || ''}
                             onChange={(e) =>
                               updateMapping(i, { projectId: Number(e.target.value) || 0 })
                             }
                           >
-                            <option value="">Pick a project…</option>
-                            {selectedIds.map((id) => (
+                            <option value="">Pick a {itemNoun}…</option>
+                            {/* A stored mapping can reference an id the candidate
+                                list no longer offers (e.g. it became the active
+                                workspace) — keep it visible instead of blanking. */}
+                            {m.projectId > 0 && !mappingCandidateIds.includes(m.projectId) && (
+                              <option value={m.projectId}>{projectNameOf(m.projectId)}</option>
+                            )}
+                            {mappingCandidateIds.map((id) => (
                               <option
                                 key={id}
                                 value={id}
@@ -907,15 +945,18 @@ export default function SettingsPanel({
               type="button"
               className="linkbtn"
               onClick={addMapping}
-              disabled={selectedIds.length === 0}
+              disabled={mappingCandidateIds.length === 0}
             >
-              + Link a project&apos;s codes
+              + Link a {itemNoun}&apos;s codes
             </button>
             <p className="hint">
-              Bill a selected project as a <strong>single code</strong> on this timesheet while it
-              keeps its own billing tags. Its entries are grouped by their own tags (the prefix
+              Bill {standalone ? 'another workspace' : 'a selected project'} as a{' '}
+              <strong>single code</strong> on this timesheet while it keeps its own billing tags.
+              {standalone &&
+                ' Linking a workspace also adds it to the tracked set above — its entries have to load with this sheet’s.'}{' '}
+              Its entries are grouped by their own tags (the prefix
               above), rounded per day on its own grid, and each day&apos;s total lands on the one
-              code entered here — so this sheet&apos;s line always equals that project&apos;s own
+              code entered here — so this sheet&apos;s line always equals that {itemNoun}&apos;s own
               timesheet, day for day (its per-code breakdown is kept in the cell description).
               If the linked engagement itself doesn&apos;t bill overtime, tick its cap above: its
               week is then trimmed by <em>its own</em> rules first and this sheet bills whatever

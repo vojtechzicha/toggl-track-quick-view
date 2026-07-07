@@ -199,6 +199,17 @@ export function fmtInterval(sec: number): string {
   return sec % 60 === 0 ? `${sec / 60} min` : `${sec}s`;
 }
 
+// The Toggl importer spends the same hourly budget the Toggl poll does, so it
+// shares this rolling log (the /import page throttles itself against it).
+/** Toggl requests recorded in the last rolling hour. */
+export function togglRequestsThisHour(): number {
+  return pruneLoad().length;
+}
+/** Record `n` Toggl requests; returns the new rolling-hour count. */
+export function recordTogglRequests(n: number): number {
+  return recordReqs(n);
+}
+
 // ---- Cross-tab store change notifications (standalone mode) ----
 // A mutation made on the tracker must not leave a dashboard/timesheet that is
 // open in ANOTHER tab or PWA window showing stale numbers until its next 30s
@@ -312,8 +323,13 @@ export interface UseTrackSource {
   editEntry: (id: number, patch: EntryInput) => Promise<TimeEntry | null>;
   removeEntry: (id: number) => Promise<boolean>;
   stopTimer: (id: number) => Promise<TimeEntry | null>;
-  // Workspace CRUD (Settings). Each refreshes the workspace/project lists.
-  createWorkspace: (name: string, settings?: PresetValue) => Promise<StoreWorkspace | null>;
+  // Workspace CRUD (Settings; the importer also creates). Each refreshes the
+  // workspace/project lists.
+  createWorkspace: (
+    name: string,
+    settings?: PresetValue,
+    color?: string
+  ) => Promise<StoreWorkspace | null>;
   updateWorkspace: (
     id: number,
     patch: { name?: string; color?: string; settings?: PresetValue }
@@ -838,9 +854,9 @@ export function useTrackSource(): UseTrackSource {
   );
 
   const createWorkspace = useCallback<UseTrackSource['createWorkspace']>(
-    (name, settingsSnapshot) =>
+    (name, settingsSnapshot, color) =>
       workspaceOp(
-        () => createWorkspaceApi(name, settingsSnapshot),
+        () => createWorkspaceApi(name, settingsSnapshot, color),
         'Could not create the workspace.'
       ),
     [workspaceOp]
@@ -856,6 +872,27 @@ export function useTrackSource(): UseTrackSource {
     async (id, force = false) => {
       try {
         await deleteWorkspaceApi(id, force);
+        // The server strips references out of the OTHER workspace documents;
+        // this device's active settings may reference the deleted workspace
+        // too (as a tracked selection or a linked billing code) — strip those
+        // the same way so nothing keeps pointing at a workspace that's gone.
+        setSettings((prev) => {
+          const selectedProjects = prev.selectedProjects.filter((p) => p.id !== id);
+          const codeMappings = (prev.codeMappings ?? []).filter((m) => m.projectId !== id);
+          if (
+            selectedProjects.length === prev.selectedProjects.length &&
+            codeMappings.length === (prev.codeMappings ?? []).length
+          ) {
+            return prev;
+          }
+          const next = { ...prev, selectedProjects, codeMappings };
+          try {
+            window.localStorage.setItem(LS_KEY, JSON.stringify(next));
+          } catch {
+            /* ignore quota / private-mode errors */
+          }
+          return next;
+        });
         await refreshWorkspaces();
         broadcastStoreChange('workspaces');
         return 'ok';
