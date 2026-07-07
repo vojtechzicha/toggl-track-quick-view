@@ -157,6 +157,13 @@ function numLabel(n: number): string {
   return String(Number(n.toFixed(2)));
 }
 
+// Dropdown label for a rounding granularity in hours. Whole hours read naturally
+// ("1 hour"); sub-hour units show minutes with the hour value in parentheses.
+function roundingLabel(hours: number): string {
+  if (Number.isInteger(hours)) return `${hours} hour${hours === 1 ? '' : 's'}`;
+  return `${Math.round(hours * 60)} minutes (${numLabel(hours)}h)`;
+}
+
 // Each option's implied requests/hour, so the user can see the budget impact
 // (Toggl Free allows 30/hour).
 const REFRESH_OPTIONS = [
@@ -817,15 +824,16 @@ export default function SettingsPanel({
             >
               {ROUNDING_HOURS_OPTIONS.map((h) => (
                 <option key={h} value={h}>
-                  {Math.round(h * 60)} minutes ({numLabel(h)}h)
+                  {roundingLabel(h)}
                 </option>
               ))}
             </select>
             <p className="hint">
               The unit the timesheet rounds each entry to. Defaults to{' '}
               <strong>15 minutes ({numLabel(DEFAULT_ROUNDING_HOURS)}h)</strong>; pick{' '}
-              <strong>12 minutes (0.2h)</strong> if your client can&apos;t bill quarter-hours. The
-              dashboard and targets are unaffected.
+              <strong>12 minutes (0.2h)</strong> if your client can&apos;t bill quarter-hours, or{' '}
+              <strong>1 hour</strong> if they bill in whole hours. The dashboard and targets are
+              unaffected.
             </p>
           </div>
 
