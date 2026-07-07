@@ -17,7 +17,11 @@ export function standaloneEnabled(): boolean {
 }
 
 async function connect(uri: string): Promise<Db> {
-  const client = new MongoClient(uri);
+  // Fail fast when the cluster is unreachable (wrong URI, Atlas network-access
+  // list rejecting the host): the driver's default 30s server-selection wait
+  // would push a serverless function toward its execution limit and turn a
+  // clear config error into an opaque timeout.
+  const client = new MongoClient(uri, { serverSelectionTimeoutMS: 8000 });
   await client.connect();
   const db = client.db(process.env.MONGODB_DB || DEFAULT_DB);
   await ensureIndexes(db);

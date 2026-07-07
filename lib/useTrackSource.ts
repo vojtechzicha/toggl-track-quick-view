@@ -21,7 +21,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { getConfig } from '@/lib/source/config';
 import { hasValidAuth, login } from '@/lib/source/auth';
-import { ApiError, isRateLimit, isAuthRequired } from '@/lib/source/errors';
+import { ApiError, errorDetail, isRateLimit, isAuthRequired } from '@/lib/source/errors';
 import { togglBackend } from '@/lib/source/toggl';
 import {
   standaloneBackend,
@@ -199,6 +199,28 @@ export function fmtInterval(sec: number): string {
   return sec % 60 === 0 ? `${sec / 60} min` : `${sec}s`;
 }
 
+// ---- Cross-tab store change notifications (standalone mode) ----
+// A mutation made on the tracker must not leave a dashboard/timesheet that is
+// open in ANOTHER tab or PWA window showing stale numbers until its next 30s
+// poll. Every successful mutation posts here; every hook instance listens and
+// refetches immediately. (Within one tab this is a no-op — a BroadcastChannel
+// never delivers to the instance that posted, and the mutating hook already
+// reconciles + refetches itself. Other devices still catch up via the poll.)
+type StoreChangeKind = 'entries' | 'workspaces';
+let storeBC: BroadcastChannel | null = null;
+function storeChannel(): BroadcastChannel | null {
+  if (typeof window === 'undefined' || typeof BroadcastChannel === 'undefined') return null;
+  if (!storeBC) storeBC = new BroadcastChannel('tqv.store.v1');
+  return storeBC;
+}
+function broadcastStoreChange(kind: StoreChangeKind): void {
+  try {
+    storeChannel()?.postMessage(kind);
+  } catch {
+    /* ignore — freshness falls back to the regular poll */
+  }
+}
+
 /**
  * The window the shared poll keeps fresh: from the week's start (Saturday —
  * needed for the weekly model and so the leading weekend's entries load) but
@@ -336,6 +358,8 @@ export function useTrackSource(): UseTrackSource {
   const backoffUntilRef = useRef(0);
   const backoffStepRef = useRef(0);
   const refetchRef = useRef<(() => void) | null>(null);
+  // Latest refreshWorkspaces, for the cross-tab listener (defined above it).
+  const refreshWorkspacesRef = useRef<(() => Promise<StoreWorkspace[]>) | null>(null);
   const entriesRef = useRef<TimeEntry[]>([]);
   useEffect(() => {
     entriesRef.current = entries;
@@ -486,7 +510,9 @@ export function useTrackSource(): UseTrackSource {
           isRateLimit(e)
             ? 'Toggl rate limit reached — wait a bit, then try again.'
             : standalone
-            ? 'Could not reach the store. Check MONGODB_URI on the server.'
+            ? `Could not reach the store — check MONGODB_URI and the database's network access.${
+                errorDetail(e) ? ` (${errorDetail(e)})` : ''
+              }`
             : serverManaged
             ? 'The server-configured Toggl token was rejected. Check TOGGL_API_TOKEN.'
             : 'Could not authenticate with Toggl. Check your API token.'
@@ -625,6 +651,21 @@ export function useTrackSource(): UseTrackSource {
   }, []);
   const clearMutationError = useCallback(() => setMutationError(null), []);
 
+  // React to store changes made in OTHER tabs/windows: refetch entries at
+  // once (and re-list workspaces when those changed) instead of waiting out
+  // the poll interval on stale data.
+  useEffect(() => {
+    if (!standalone || !ready) return;
+    const ch = storeChannel();
+    if (!ch) return;
+    const onMessage = (e: MessageEvent) => {
+      if (e.data === 'workspaces') refreshWorkspacesRef.current?.();
+      refetchRef.current?.();
+    };
+    ch.addEventListener('message', onMessage);
+    return () => ch.removeEventListener('message', onMessage);
+  }, [standalone, ready]);
+
   // ---- Standalone mutations ----
   // Shared shape: apply the optimistic change to the entries state, run the
   // server call, reconcile with the canonical result, and kick an instant poll
@@ -644,6 +685,7 @@ export function useTrackSource(): UseTrackSource {
         const result = await run();
         if (reconcile) setEntries((list) => reconcile(result, list));
         refetchRef.current?.();
+        broadcastStoreChange('entries');
         return result;
       } catch (e) {
         setEntries(snapshot);
@@ -651,7 +693,8 @@ export function useTrackSource(): UseTrackSource {
           setReady(false);
           setAuthed(false);
         } else {
-          setMutationError(failMessage);
+          const detail = errorDetail(e);
+          setMutationError(detail ? `${failMessage} (${detail})` : failMessage);
         }
         return null;
       }
@@ -771,19 +814,22 @@ export function useTrackSource(): UseTrackSource {
     }));
     return ws;
   }, []);
+  refreshWorkspacesRef.current = refreshWorkspaces;
 
   const workspaceOp = useCallback(
     async <R,>(run: () => Promise<R>, failMessage: string): Promise<R | null> => {
       try {
         const result = await run();
         await refreshWorkspaces();
+        broadcastStoreChange('workspaces');
         return result;
       } catch (e) {
         if (isAuthRequired(e)) {
           setReady(false);
           setAuthed(false);
         } else {
-          setMutationError(failMessage);
+          const detail = errorDetail(e);
+          setMutationError(detail ? `${failMessage} (${detail})` : failMessage);
         }
         return null;
       }
@@ -811,6 +857,7 @@ export function useTrackSource(): UseTrackSource {
       try {
         await deleteWorkspaceApi(id, force);
         await refreshWorkspaces();
+        broadcastStoreChange('workspaces');
         return 'ok';
       } catch (e) {
         if (e instanceof ApiError && e.status === 409) return 'has-entries';
@@ -818,7 +865,10 @@ export function useTrackSource(): UseTrackSource {
           setReady(false);
           setAuthed(false);
         } else {
-          setMutationError('Could not delete the workspace.');
+          const detail = errorDetail(e);
+          setMutationError(
+            detail ? `Could not delete the workspace. (${detail})` : 'Could not delete the workspace.'
+          );
         }
         return null;
       }

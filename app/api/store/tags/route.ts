@@ -7,7 +7,7 @@
 
 import { NextRequest } from 'next/server';
 import { getStoreDb } from '@/lib/store/mongo';
-import { storeGuard, jsonRes } from '@/lib/store/guard';
+import { storeGuard, jsonRes, storeError } from '@/lib/store/guard';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -40,7 +40,7 @@ export async function GET(req: NextRequest) {
       ])
       .toArray();
     return Response.json(rows.map((r) => r._id));
-  } catch {
-    return jsonRes({ error: 'Failed to reach the store.' }, 502);
+  } catch (e) {
+    return storeError(e);
   }
 }

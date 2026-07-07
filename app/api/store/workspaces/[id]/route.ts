@@ -7,7 +7,7 @@
 
 import { NextRequest } from 'next/server';
 import { getStoreDb } from '@/lib/store/mongo';
-import { storeGuard, jsonRes } from '@/lib/store/guard';
+import { storeGuard, jsonRes, storeError } from '@/lib/store/guard';
 import { isHexColor, toStoreWorkspace, type WorkspaceDoc } from '@/lib/store/model';
 import type { PresetValue } from '@/components/SettingsPanel';
 
@@ -60,8 +60,8 @@ export async function PATCH(
     if (!doc) return jsonRes({ error: 'Workspace not found.' }, 404);
     if (Object.keys(patch).length > 0) await ws.updateOne({ numericId: id }, { $set: patch });
     return Response.json(toStoreWorkspace({ ...doc, ...patch }));
-  } catch {
-    return jsonRes({ error: 'Failed to reach the store.' }, 502);
+  } catch (e) {
+    return storeError(e);
   }
 }
 
@@ -88,7 +88,7 @@ export async function DELETE(
     if (res.deletedCount === 0) return jsonRes({ error: 'Workspace not found.' }, 404);
     if (entryCount > 0) await db.collection('entries').deleteMany({ workspaceId: id });
     return Response.json({ ok: true, deletedEntries: entryCount });
-  } catch {
-    return jsonRes({ error: 'Failed to reach the store.' }, 502);
+  } catch (e) {
+    return storeError(e);
   }
 }

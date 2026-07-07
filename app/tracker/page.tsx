@@ -13,6 +13,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import Link from 'next/link';
 import AppSettings from '@/components/AppSettings';
+import MutationToast from '@/components/MutationToast';
 import PasswordGate from '@/components/PasswordGate';
 import AddBar from '@/components/tracker/AddBar';
 import EntryRow from '@/components/tracker/EntryRow';
@@ -57,8 +58,6 @@ export default function TrackerPage() {
     entries,
     nowMs,
     fetchError,
-    mutationError,
-    clearMutationError,
     showSettings,
     setShowSettings,
   } = t;
@@ -230,13 +229,6 @@ export default function TrackerPage() {
       workspaceId: e.project_id ?? defaultWorkspaceId,
     });
 
-  // Toasted mutation errors clear themselves.
-  useEffect(() => {
-    if (!mutationError) return;
-    const id = setTimeout(clearMutationError, 5000);
-    return () => clearTimeout(id);
-  }, [mutationError, clearMutationError]);
-
   // First run: nothing to track against yet — open settings, where the
   // Workspaces section creates the first workspace (same as the dashboard's
   // pick-a-project prompt).
@@ -389,11 +381,7 @@ export default function TrackerPage() {
         </footer>
       </div>
 
-      {mutationError && (
-        <div className="toast err" role="alert" onClick={clearMutationError}>
-          {mutationError}
-        </div>
-      )}
+      <MutationToast t={t} />
 
       {needsPassword && <PasswordGate onSubmit={submitPassword} error={pwError} busy={pwBusy} />}
 

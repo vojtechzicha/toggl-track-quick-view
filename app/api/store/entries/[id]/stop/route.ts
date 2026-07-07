@@ -3,7 +3,7 @@
 
 import { NextRequest } from 'next/server';
 import { getStoreDb } from '@/lib/store/mongo';
-import { storeGuard, jsonRes } from '@/lib/store/guard';
+import { storeGuard, jsonRes, storeError } from '@/lib/store/guard';
 import { toTimeEntry, type EntryDoc } from '@/lib/store/model';
 
 export const runtime = 'nodejs';
@@ -32,7 +32,7 @@ export async function POST(
     const stop = new Date(Math.max(now.getTime(), doc.start.getTime() + 1000));
     await entries.updateOne({ numericId: id }, { $set: { stop, updatedAt: now } });
     return Response.json(toTimeEntry({ ...doc, stop, updatedAt: now }));
-  } catch {
-    return jsonRes({ error: 'Failed to reach the store.' }, 502);
+  } catch (e) {
+    return storeError(e);
   }
 }

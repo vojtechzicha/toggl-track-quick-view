@@ -13,7 +13,7 @@
 
 import { NextRequest } from 'next/server';
 import { getStoreDb } from '@/lib/store/mongo';
-import { storeGuard, jsonRes } from '@/lib/store/guard';
+import { storeGuard, jsonRes, storeError } from '@/lib/store/guard';
 import {
   autoColor,
   defaultWorkspaceSettings,
@@ -38,8 +38,8 @@ export async function GET(req: NextRequest) {
       .sort({ name: 1 })
       .toArray();
     return Response.json(docs.map(toStoreWorkspace));
-  } catch {
-    return jsonRes({ error: 'Failed to reach the store.' }, 502);
+  } catch (e) {
+    return storeError(e);
   }
 }
 
@@ -72,7 +72,7 @@ export async function POST(req: NextRequest) {
     const doc: WorkspaceDoc = { numericId, name, color, settings, createdAt: new Date() };
     await db.collection<WorkspaceDoc>('workspaces').insertOne(doc);
     return Response.json(toStoreWorkspace(doc), { status: 201 });
-  } catch {
-    return jsonRes({ error: 'Failed to reach the store.' }, 502);
+  } catch (e) {
+    return storeError(e);
   }
 }

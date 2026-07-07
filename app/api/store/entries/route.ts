@@ -13,7 +13,7 @@
 
 import { NextRequest } from 'next/server';
 import { getStoreDb } from '@/lib/store/mongo';
-import { storeGuard, jsonRes } from '@/lib/store/guard';
+import { storeGuard, jsonRes, storeError } from '@/lib/store/guard';
 import { nextSeq, toTimeEntry, type EntryDoc, type WorkspaceDoc } from '@/lib/store/model';
 
 export const runtime = 'nodejs';
@@ -55,8 +55,8 @@ export async function GET(req: NextRequest) {
     if (limit) cursor = cursor.limit(limit);
     const docs = await cursor.toArray();
     return Response.json(docs.map(toTimeEntry));
-  } catch {
-    return jsonRes({ error: 'Failed to reach the store.' }, 502);
+  } catch (e) {
+    return storeError(e);
   }
 }
 
@@ -130,7 +130,7 @@ export async function POST(req: NextRequest) {
       }
     }
     return Response.json(toTimeEntry(doc), { status: 201 });
-  } catch {
-    return jsonRes({ error: 'Failed to reach the store.' }, 502);
+  } catch (e) {
+    return storeError(e);
   }
 }

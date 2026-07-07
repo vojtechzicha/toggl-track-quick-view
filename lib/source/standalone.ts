@@ -52,10 +52,20 @@ async function sApi<T>(
     clearAuth();
     throw new AuthRequiredError();
   }
-  if (!res.ok) {
-    throw new ApiError(res.status);
-  }
   const text = await res.text();
+  if (!res.ok) {
+    // The store's error responses carry the underlying cause in `detail`
+    // (see lib/store/guard.ts) — surface it so a misconfigured database is
+    // diagnosable from the UI instead of a mute 502.
+    let detail: string | undefined;
+    try {
+      const body = JSON.parse(text) as { detail?: string; error?: string };
+      detail = body.detail ?? body.error;
+    } catch {
+      /* non-JSON body — no detail to surface */
+    }
+    throw new ApiError(res.status, detail);
+  }
   return (text ? JSON.parse(text) : null) as T;
 }
 

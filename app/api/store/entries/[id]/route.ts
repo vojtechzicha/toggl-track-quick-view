@@ -7,7 +7,7 @@
 
 import { NextRequest } from 'next/server';
 import { getStoreDb } from '@/lib/store/mongo';
-import { storeGuard, jsonRes } from '@/lib/store/guard';
+import { storeGuard, jsonRes, storeError } from '@/lib/store/guard';
 import { toTimeEntry, type EntryDoc, type WorkspaceDoc } from '@/lib/store/model';
 
 export const runtime = 'nodejs';
@@ -93,8 +93,8 @@ export async function PATCH(
       throw e;
     }
     return Response.json(toTimeEntry(next));
-  } catch {
-    return jsonRes({ error: 'Failed to reach the store.' }, 502);
+  } catch (e) {
+    return storeError(e);
   }
 }
 
@@ -112,7 +112,7 @@ export async function DELETE(
     const res = await db.collection<EntryDoc>('entries').deleteOne({ numericId: id });
     if (res.deletedCount === 0) return jsonRes({ error: 'Entry not found.' }, 404);
     return Response.json({ ok: true });
-  } catch {
-    return jsonRes({ error: 'Failed to reach the store.' }, 502);
+  } catch (e) {
+    return storeError(e);
   }
 }

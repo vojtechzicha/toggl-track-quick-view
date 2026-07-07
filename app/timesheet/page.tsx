@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState, type ComponentType }
 import Link from 'next/link';
 import { type TimesheetMode } from '@/components/SettingsPanel';
 import AppSettings from '@/components/AppSettings';
+import MutationToast from '@/components/MutationToast';
 import ProjectChips from '@/components/ProjectChips';
 import PasswordGate from '@/components/PasswordGate';
 import SummaryTimesheet from '@/components/timesheet/SummaryTimesheet';
@@ -331,6 +332,8 @@ export default function TimesheetPage() {
           onClose={() => setShowExport(false)}
         />
       )}
+
+      <MutationToast t={t} />
 
       {needsPassword && <PasswordGate onSubmit={submitPassword} error={pwError} busy={pwBusy} />}
 

@@ -4,6 +4,7 @@ import { useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
 import ProgressRing from '@/components/ProgressRing';
 import AppSettings from '@/components/AppSettings';
+import MutationToast from '@/components/MutationToast';
 import ProjectChips from '@/components/ProjectChips';
 import PasswordGate from '@/components/PasswordGate';
 import { useTrackSource, fmtInterval } from '@/lib/useTrackSource';
@@ -781,6 +782,8 @@ export default function Page() {
           )}
         </footer>
       </div>
+
+      <MutationToast t={t} />
 
       {needsPassword && (
         <PasswordGate onSubmit={submitPassword} error={pwError} busy={pwBusy} />

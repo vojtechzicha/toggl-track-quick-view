@@ -18,6 +18,19 @@ export function jsonRes(body: unknown, status: number): Response {
 }
 
 /**
+ * The 502 every store route returns when the database layer throws. The
+ * underlying error is logged (it shows up in the host's function logs, e.g.
+ * Vercel's) AND echoed in the response `detail` — these routes sit behind the
+ * password gate, so the operator is the only one who can see it, and a
+ * misconfigured Atlas URI / network-access list is otherwise undiagnosable.
+ */
+export function storeError(e: unknown): Response {
+  const detail = e instanceof Error ? `${e.name}: ${e.message}` : String(e);
+  console.error('[store]', e);
+  return jsonRes({ error: 'Failed to reach the store.', detail }, 502);
+}
+
+/**
  * Returns an error Response when the request may not touch the store, or null
  * to proceed. The `x-app-auth: required` header on the 401 is what lets the
  * client tell "log in again" apart from any other failure.
