@@ -2,14 +2,15 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState, type ComponentType } from 'react';
 import Link from 'next/link';
-import SettingsPanel, { TimesheetMode, type SettingsPreset } from '@/components/SettingsPanel';
+import { type TimesheetMode } from '@/components/SettingsPanel';
+import AppSettings from '@/components/AppSettings';
 import ProjectChips from '@/components/ProjectChips';
 import PasswordGate from '@/components/PasswordGate';
 import SummaryTimesheet from '@/components/timesheet/SummaryTimesheet';
 import IndividualTimesheet from '@/components/timesheet/IndividualTimesheet';
 import ExportDialog from '@/components/export/ExportDialog';
 import type { TimesheetViewProps } from '@/components/timesheet/types';
-import { useTrackSource, applyPreset } from '@/lib/useTrackSource';
+import { useTrackSource } from '@/lib/useTrackSource';
 import { isAuthRequired } from '@/lib/source/errors';
 import {
   startOfWeek,
@@ -50,29 +51,26 @@ interface CachedWeek {
 }
 
 export default function TimesheetPage() {
+  const t = useTrackSource();
   const {
     hydrated,
+    mode: sourceMode,
     settings,
-    persist,
-    projects,
     serverManaged,
     passwordRequired,
     authed,
     pwError,
     pwBusy,
     submitPassword,
-    connecting,
-    authError,
-    connect,
     entries,
     nowMs,
     cacheEnabled,
-    effectiveRefreshSec,
     showSettings,
     setShowSettings,
     setLivePollPaused,
     loadRange,
-  } = useTrackSource();
+  } = t;
+  const standalone = sourceMode === 'standalone';
 
   const [mode, setMode] = useState<Mode>('current');
   const [showExport, setShowExport] = useState(false);
@@ -127,7 +125,7 @@ export default function TimesheetPage() {
         setHistError(
           isAuthRequired(e)
             ? 'Session expired — return to this week to sign in again.'
-            : 'Could not load this week from Toggl. Try refresh.'
+            : 'Could not load this week. Try refresh.'
         );
       } finally {
         setHistLoading(false);
@@ -220,6 +218,12 @@ export default function TimesheetPage() {
                 <span className="navbtn-icon">⤓</span>
                 <span className="navbtn-text">Export</span>
               </button>
+            )}
+            {standalone && (
+              <Link className="navbtn" href="/tracker" aria-label="Tracker">
+                <span className="navbtn-icon">⏱</span>
+                <span className="navbtn-text">Tracker</span>
+              </Link>
             )}
             <Link className="navbtn" href="/" aria-label="Dashboard">
               <span className="navbtn-icon">⌂</span>
@@ -330,41 +334,7 @@ export default function TimesheetPage() {
 
       {needsPassword && <PasswordGate onSubmit={submitPassword} error={pwError} busy={pwBusy} />}
 
-      {!needsPassword && showSettings && (
-        <SettingsPanel
-          initial={{
-            token: settings.token,
-            selectedProjects: settings.selectedProjects,
-            groupName: settings.groupName,
-            shortFriday: settings.shortFriday,
-            weeklyHours: settings.weeklyHours,
-            maxBillableHours: settings.maxBillableHours,
-            minWorkingDayHours: settings.minWorkingDayHours,
-            billingTagPrefix: settings.billingTagPrefix,
-            roundingHours: settings.roundingHours,
-            noOvertime: settings.noOvertime,
-            codeMappings: settings.codeMappings,
-            refreshSec: settings.refreshSec,
-            timesheetMode: settings.timesheetMode,
-            exportName: settings.exportName,
-          }}
-          projects={projects}
-          serverManaged={!!serverManaged}
-          cacheInterval={cacheEnabled ? effectiveRefreshSec : null}
-          authError={authError}
-          connecting={connecting}
-          presets={settings.presets}
-          onPresetsChange={(presets: SettingsPreset[]) => persist({ ...settings, presets })}
-          onApply={(p) => persist(applyPreset(settings, p, projects))}
-          onConnect={(token) => connect(token, true)}
-          onSave={(v) => {
-            persist({ ...settings, ...v });
-            setShowSettings(false);
-          }}
-          onClose={() => setShowSettings(false)}
-          canClose={hasProject}
-        />
-      )}
+      {!needsPassword && showSettings && <AppSettings t={t} canClose={hasProject} />}
     </>
   );
 }

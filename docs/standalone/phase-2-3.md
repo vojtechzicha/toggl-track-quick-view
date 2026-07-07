@@ -2,6 +2,28 @@
 
 Prerequisite: Phase 1 (the `TrackBackend` abstraction) is merged.
 
+**Status: implemented in this branch.** Decisions taken during implementation
+(confirmed with the owner):
+
+- **Tracker history**: the initial view is the live current week plus the last
+  ~14 days (capped at 100 entries); scrolling auto-loads older history in
+  14-day chunks down to a 2-month horizon, and a "Load older entries" button
+  extends the horizon by 2 months at a time. The `GET /api/store/entries`
+  route gained an optional `limit` param (newest-first) for this.
+- **New workspace semantics**: creating a workspace snapshots the current
+  form's settings but always points its `selectedProjects` at **itself** — a
+  new client tracks itself by default; the ↻ re-capture button snapshots the
+  full form (including multi-workspace selections) into an existing one.
+- **Colors**: auto-assigned from a Toggl-ish palette by numeric id, editable
+  via a color input on each workspace row in Settings.
+- **Tags**: the tracker edits exactly **one billing tag** per entry (the first
+  tag matching the workspace's billing prefix); other tags on an entry are
+  preserved untouched. That matches everything downstream, which only ever
+  reads the billing tag.
+- Settings wiring for all three pages is centralized in
+  `components/AppSettings.tsx` so the standalone workspace CRUD exists in one
+  place.
+
 ---
 
 # Phase 2 — MongoDB backend + store API

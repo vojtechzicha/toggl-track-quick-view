@@ -4,10 +4,12 @@
 import type { SourceMode } from './types';
 
 export interface AppConfig {
-  /** Which backend this deployment serves ('toggl' until standalone lands). */
+  /** Which backend this deployment serves. */
   mode: SourceMode;
   serverToken: boolean;
   passwordRequired: boolean;
+  /** A deployment problem the operator must fix (e.g. standalone without APP_PASSWORD). */
+  misconfigured: string | null;
   cache: { enabled: boolean; intervalSec: number | null };
 }
 
@@ -15,6 +17,7 @@ const CONFIG_FALLBACK: AppConfig = {
   mode: 'toggl',
   serverToken: false,
   passwordRequired: false,
+  misconfigured: null,
   cache: { enabled: false, intervalSec: null },
 };
 
