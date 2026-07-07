@@ -195,8 +195,9 @@ change the weekly hours):
 
 Also under **Advanced** is **Round timesheet to** — the unit the timesheet rounds
 each entry to. It defaults to **15 minutes (0.25h)**; pick **12 minutes (0.2h)**
-for a client that can't bill quarter-hours. Only the timesheet and exports are
-affected — the dashboard and the targets above are not.
+for a client that can't bill quarter-hours, or **1 hour** for one that bills in
+whole hours. Only the timesheet and exports are affected — the dashboard and the
+targets above are not.
 
 ### Don't bill overtime
 

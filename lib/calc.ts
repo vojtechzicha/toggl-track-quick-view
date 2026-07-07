@@ -569,8 +569,9 @@ export function unreportedGaps(
 export const QUARTER_SECONDS = 15 * 60; // default timesheet rounding granularity (15 min)
 export const DEFAULT_ROUNDING_HOURS = 0.25; // 15 minutes, the default rounding unit
 // Granularities a user can pick (hours). 0.25 = 15 min; 0.2 = 12 min (some clients
-// can't enter quarter-hours). Both are exact divisors that keep figures tidy.
-export const ROUNDING_HOURS_OPTIONS = [0.25, 0.2] as const;
+// can't enter quarter-hours); 1 = a full hour (clients that bill in whole hours).
+// All are exact divisors that keep figures tidy.
+export const ROUNDING_HOURS_OPTIONS = [0.25, 0.2, 1] as const;
 // The billable cap is per-config now; see effectiveMaxBillableHours / WeekConfig.
 
 /** Convert a rounding granularity in hours (e.g. 0.25) to whole seconds (900). */
