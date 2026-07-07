@@ -9,8 +9,8 @@ import SummaryTimesheet from '@/components/timesheet/SummaryTimesheet';
 import IndividualTimesheet from '@/components/timesheet/IndividualTimesheet';
 import ExportDialog from '@/components/export/ExportDialog';
 import type { TimesheetViewProps } from '@/components/timesheet/types';
-import { useToggl, applyPreset } from '@/lib/useToggl';
-import { isAuthRequired } from '@/lib/toggl';
+import { useTrackSource, applyPreset } from '@/lib/useTrackSource';
+import { isAuthRequired } from '@/lib/source/errors';
 import {
   startOfWeek,
   effectiveMaxBillableHours,
@@ -72,7 +72,7 @@ export default function TimesheetPage() {
     setShowSettings,
     setLivePollPaused,
     loadRange,
-  } = useToggl();
+  } = useTrackSource();
 
   const [mode, setMode] = useState<Mode>('current');
   const [showExport, setShowExport] = useState(false);

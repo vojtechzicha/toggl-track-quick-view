@@ -6,7 +6,8 @@ import ProgressRing from '@/components/ProgressRing';
 import SettingsPanel, { type SettingsPreset } from '@/components/SettingsPanel';
 import ProjectChips from '@/components/ProjectChips';
 import PasswordGate from '@/components/PasswordGate';
-import { useToggl, applyPreset, HOURLY_LIMIT, fmtInterval } from '@/lib/useToggl';
+import { useTrackSource, applyPreset, fmtInterval } from '@/lib/useTrackSource';
+import { HOURLY_LIMIT } from '@/lib/source/toggl';
 import { mappingFor } from '@/lib/timesheet/mapping';
 import {
   NormEntry,
@@ -35,7 +36,7 @@ import {
 const SNOOZE_MS = 15 * 60_000;
 
 export default function Page() {
-  const t = useToggl();
+  const t = useTrackSource();
   const {
     hydrated,
     settings,

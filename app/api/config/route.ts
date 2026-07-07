@@ -22,6 +22,9 @@ export async function GET() {
   const interval = cacheIntervalSec();
   const cacheEnabled = serverToken && interval !== null;
   return Response.json({
+    // Which track source this deployment serves. Hard-coded until the
+    // standalone (MongoDB) backend lands; it will then derive from MONGODB_URI.
+    mode: 'toggl',
     serverToken,
     passwordRequired: gateEnabled(),
     cache: {

@@ -3,8 +3,8 @@ import type { SelectedProject } from '@/components/SettingsPanel';
 import type { CodeMapping } from '@/lib/timesheet/mapping';
 
 /**
- * Props every timesheet view receives. The page owns the single Toggl poll (via
- * useToggl) and hands each view the same week's data; a view is only ever mounted
+ * Props every timesheet view receives. The page owns the single source poll (via
+ * useTrackSource) and hands each view the same week's data; a view is only ever mounted
  * once at least one project is selected, so `projects` is non-empty.
  *
  * A project is a group of billing tags: entries are kept separate per project even

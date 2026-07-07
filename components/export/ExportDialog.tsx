@@ -4,7 +4,7 @@ import { useMemo, useState } from 'react';
 import type { SelectedProject } from '@/components/SettingsPanel';
 import type { TimesheetMode } from '@/components/SettingsPanel';
 import type { TimeEntry } from '@/lib/calc';
-import { isAuthRequired, isRateLimit } from '@/lib/toggl';
+import { isAuthRequired, isRateLimit } from '@/lib/source/errors';
 import {
   type ExportPreset,
   PRESET_LABELS,
