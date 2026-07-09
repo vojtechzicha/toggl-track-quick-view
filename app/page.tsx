@@ -332,7 +332,12 @@ export default function Page() {
       settings
     );
     const todayLogged = projectSecondsInRange(norm, projectIds, todayStart, nowMs);
-    const shortfall = Math.max(0, todayTarget - todayLogged);
+    // Time the rest of today is already covered by real entries (scheduled blocks
+    // and the running tail). The synthetic fill below must only make up whatever
+    // those leave short of target, or today would be double-counted and future
+    // days' targets would wrongly collapse to the floor.
+    const todayCovered = projectSecondsInRange(norm, projectIds, nowMs, todayStart + dayMs);
+    const shortfall = Math.max(0, todayTarget - todayLogged - todayCovered);
     const projected: NormEntry[] =
       shortfall > 0
         ? [
