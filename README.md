@@ -382,8 +382,8 @@ the hourly budget — it resumes when you click **This week**.
 
 Some clients' timesheet systems reject entry messages over a character limit.
 Set **Maximal description length** (under **Advanced**) and every description
-the timesheet produces — on screen, via the copy buttons, and in every export —
-is guaranteed to fit:
+the timesheet produces — on screen, via the copy buttons, and in the technical
+exports (CSV/XLSX) — is guaranteed to fit:
 
 - A **single entry** whose description fits passes through **untouched** — the
   common case needs nothing.
@@ -401,6 +401,11 @@ shows the full text, so you can shorten the source entry in Toggl (or the
 tracker) if you'd rather choose what stays. Warning rows (no/multiple billing
 tag) are never shortened — their text is the pointer to the entries to fix.
 Leave the field blank for no limit (the default; nothing changes).
+
+**PDF exports show the full text by default** — a PDF is read by people, not
+pasted into the client's system. When a limit is set, the export dialog offers
+a **Descriptions** picker (PDF only): keep **Full text**, or pick **Shortened**
+to match the on-screen and CSV/XLSX text.
 
 ### Linked billing codes (subcontracting)
 

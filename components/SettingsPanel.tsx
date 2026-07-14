@@ -883,7 +883,8 @@ export default function SettingsPanel({
             />
             <p className="hint">
               Some clients&apos; systems reject timesheet messages over a character limit. Set it
-              here and every description this timesheet produces (on screen, copied, exported)
+              here and every description this timesheet produces (on screen, copied, and in
+              CSV/XLSX exports — PDFs show the full text by default, with a per-export choice)
               stays within it: combined descriptions keep the parts that fit and drop the rest
               behind a <strong>&ldquo;; …&rdquo;</strong> marker (a linked code&apos;s per-code
               breakdown always comes first, so it survives). A single entry whose own description
