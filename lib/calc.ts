@@ -146,27 +146,94 @@ export function billingTagsOf(tags?: string[], prefix?: string): string[] {
   return tags.filter((t) => t.startsWith(p));
 }
 
-// ---- Overtime marker ----
-// A billing code ending in this literal suffix is an internal "trimmable" marker:
-// the time is tracked but flagged as the first thing to drop when a contract
-// disallows billing overtime (see lib/timesheet/overtime). The suffix is private —
-// it's stripped from every displayed/exported code so a client never sees it.
+// ---- Overtime markers ----
+// A billing code ending in one of these literal suffixes carries an internal
+// overtime-trim marker (see lib/timesheet/overtime):
+//   "(X)" — trimmable: the first time to drop when a contract disallows billing
+//           overtime.
+//   "(!)" — never trimmed: the overtime cap must not touch this time; the cut
+//           falls on the other lines instead (it still consumes the cap).
+// Both suffixes are private — they're stripped from every displayed/exported
+// code so a client never sees them, and `D123(X)` / `D123(!)` merge into the
+// same displayed `D123` line as their plain twin.
 export const OVERTIME_TAG_SUFFIX = '(X)';
+export const NO_TRIM_TAG_SUFFIX = '(!)';
 
 /**
- * Split a billing code into its displayed base and whether it carries the internal
- * "(X)" overtime marker. The suffix (and any whitespace before it) is removed from
- * the base, so `D123(X)` and `D123 (X)` both display as `D123` with trimmable=true.
+ * Split a billing code into its displayed base and which internal overtime
+ * marker it carries. The suffix (and any whitespace before it) is removed from
+ * the base, so `D123(X)` and `D123 (X)` both display as `D123` with
+ * trimmable=true, and `D123(!)` displays as `D123` with neverTrim=true.
  */
-export function parseBillingCode(code: string): { base: string; trimmable: boolean } {
-  const trimmable = code.endsWith(OVERTIME_TAG_SUFFIX);
-  const base = trimmable ? code.slice(0, -OVERTIME_TAG_SUFFIX.length).trimEnd() : code;
-  return { base, trimmable };
+export function parseBillingCode(code: string): {
+  base: string;
+  trimmable: boolean;
+  neverTrim: boolean;
+} {
+  if (code.endsWith(OVERTIME_TAG_SUFFIX)) {
+    const base = code.slice(0, -OVERTIME_TAG_SUFFIX.length).trimEnd();
+    return { base, trimmable: true, neverTrim: false };
+  }
+  if (code.endsWith(NO_TRIM_TAG_SUFFIX)) {
+    const base = code.slice(0, -NO_TRIM_TAG_SUFFIX.length).trimEnd();
+    return { base, trimmable: false, neverTrim: true };
+  }
+  return { base: code, trimmable: false, neverTrim: false };
 }
 
 /** True when an entry carries at least one billing tag. */
 export function hasBillingTag(tags?: string[], prefix?: string): boolean {
   return billingTagOf(tags, prefix) !== null;
+}
+
+// ---- Time off (state holidays etc.) ----
+// An entry carrying the time-off tag marks its whole day as a non-working day —
+// a "holiday" that behaves exactly like a weekend: 0h expected, the weekly goal
+// and the no-overtime cap drop by a day's worth (weeklyHours / 5). The marker
+// entry itself is never billed, counted or exported; its duration is irrelevant.
+// Any OTHER entry on such a day still counts normally — work done on a holiday
+// is real work, billed in full on top of the reduced cap like weekend work.
+export const DEFAULT_TIME_OFF_TAG = '.Time Off';
+
+/** The effective time-off tag, falling back to the default when none/empty. */
+function timeOffMarker(tag?: string): string {
+  const t = tag?.trim();
+  return t && t.length > 0 ? t.toLowerCase() : DEFAULT_TIME_OFF_TAG.toLowerCase();
+}
+
+/** True when an entry carries the time-off tag (case-insensitive). */
+export function isTimeOffEntry(tags: string[] | undefined, timeOffTag?: string): boolean {
+  if (!tags) return false;
+  const marker = timeOffMarker(timeOffTag);
+  return tags.some((t) => t.trim().toLowerCase() === marker);
+}
+
+/** Day indices (0=Sat … 6=Fri) that hold a non-working day beyond the weekend. */
+export type HolidaySet = ReadonlySet<number>;
+const NO_HOLIDAYS: HolidaySet = new Set<number>();
+
+/**
+ * The week's holiday days: indices (0=Sat … 6=Fri) of days on which a selected
+ * project carries a time-off entry. Only the current selection counts — a day
+ * can be time off in one workspace and a normal working day in another.
+ */
+export function holidayDaysOfWeek(
+  entries: TimeEntry[],
+  projects: ProjectSet,
+  weekStart: number,
+  timeOffTag?: string
+): Set<number> {
+  const dayMs = 24 * HOUR * MS;
+  const days = new Set<number>();
+  for (const e of entries) {
+    if (!inSet(e.project_id, projects)) continue;
+    if (!isTimeOffEntry(e.tags, timeOffTag)) continue;
+    const startMs = new Date(e.start).getTime();
+    if (!Number.isFinite(startMs)) continue;
+    const dayIdx = Math.floor((startMs - weekStart) / dayMs);
+    if (dayIdx >= 0 && dayIdx <= 6) days.add(dayIdx);
+  }
+  return days;
 }
 
 /** Normalised entry with absolute millisecond bounds (running => stop is "now"). */
@@ -190,8 +257,14 @@ function inSet(projectId: number | null, projects: ProjectSet): boolean {
   return projectId != null && projects.has(projectId);
 }
 
-export function normalize(entries: TimeEntry[], nowMs: number): NormEntry[] {
+/**
+ * Normalise entries to ms bounds. When `timeOffTag` is given, time-off marker
+ * entries are dropped — they flag a holiday, they are not tracked work, so
+ * nothing downstream (rings, targets, streaks, gaps) should ever count them.
+ */
+export function normalize(entries: TimeEntry[], nowMs: number, timeOffTag?: string): NormEntry[] {
   return entries
+    .filter((e) => timeOffTag === undefined || !isTimeOffEntry(e.tags, timeOffTag))
     .map((e) => {
       const startMs = new Date(e.start).getTime();
       const running = e.duration < 0 || !e.stop;
@@ -327,25 +400,42 @@ export function coveringEntry(
 }
 
 /**
- * Target for one weekday given its position within its segment and the segment
- * time still unaccounted for. The segment's last weekday closes it out
- * Friday-style (take everything remaining, never below the floor); the
- * second-to-last adapts Thursday-style (half the remainder regular, reserve-
- * clamped short); every earlier weekday is a fixed base day. In a whole-month
- * week the segment is the full week, so these positions are literally Friday,
- * Thursday and Mon–Wed. Always clamped to the daily maximum.
+ * The ordered working-day indices of a segment: its weekdays (Mon–Fri, idx ≥ 2)
+ * minus any holidays. Weekends and holidays contribute no budget and take no
+ * position — a holiday behaves exactly like a weekend day inside the model.
+ */
+function workingDaysOfSegment(
+  seg: { startDay: number; endDay: number },
+  holidays: HolidaySet
+): number[] {
+  const days: number[] = [];
+  for (let d = Math.max(seg.startDay, 2); d <= seg.endDay; d++) {
+    if (!holidays.has(d)) days.push(d);
+  }
+  return days;
+}
+
+/**
+ * Target for one working day given its position within its segment's working
+ * days and the segment time still unaccounted for. The segment's last working
+ * day closes it out Friday-style (take everything remaining, never below the
+ * floor); the second-to-last adapts Thursday-style (half the remainder regular,
+ * reserve-clamped short); every earlier working day is a fixed base day. In a
+ * whole-month week with no holidays these positions are literally Friday,
+ * Thursday and Mon–Wed; a Friday holiday shifts the closing role to Thursday.
+ * Always clamped to the daily maximum.
  */
 function positionTarget(
   dayIdx: number,
-  segEndDay: number,
+  workingDays: number[],
   remaining: number,
   shortFriday: boolean,
   t: ResolvedTargets
 ): number {
   let target: number;
-  if (dayIdx === segEndDay) {
+  if (dayIdx === workingDays[workingDays.length - 1]) {
     target = Math.max(remaining, t.fridayMin);
-  } else if (dayIdx === segEndDay - 1) {
+  } else if (workingDays.length > 1 && dayIdx === workingDays[workingDays.length - 2]) {
     target = shortFriday
       ? clamp(remaining - t.fridayReserve, t.shortThuMin, t.shortThuMax)
       : Math.max(remaining / 2, t.regularThuFloor);
@@ -385,6 +475,11 @@ function positionTarget(
  * shortens the new month's days, and the old month's half absorbs its own
  * shortfall/surplus on its closing day instead.
  *
+ * Holidays: days in `holidays` (marked by a time-off entry, see isTimeOffEntry)
+ * are non-working days exactly like the weekend — their target is 0h, they add
+ * no budget (the segment shrinks by weeklyHours/5 per holiday) and the adaptive
+ * closing roles shift to the segment's last actual working days.
+ *
  * In both modes the weekend falls back to the standard day, and every day is
  * finally clamped to at most 12h (scaled) so an unusual week stays sane.
  */
@@ -393,20 +488,23 @@ export function dailyTargetSeconds(
   entries: NormEntry[],
   projects: ProjectSet,
   shortFriday: boolean,
-  cfg: WeekConfig
+  cfg: WeekConfig,
+  holidays: HolidaySet = NO_HOLIDAYS
 ): number {
   const t = resolveTargets(cfg);
   const idx = weekDayIndex(now);
   if (idx < 2) return t.standardDay; // weekend
+  if (holidays.has(idx)) return 0; // holiday — no work expected
 
   const weekStart = startOfWeek(now);
   const seg = segmentOf(idx, monthSplitDay(weekStart.getTime()));
-  // Base days (more than two weekdays before the segment closes) are fixed and
-  // need no pool arithmetic at all.
-  if (idx < seg.endDay - 1) return shortFriday ? t.shortMidweek : t.standardDay;
+  const workingDays = workingDaysOfSegment(seg, holidays);
+  const pos = workingDays.indexOf(idx);
+  // Base days (more than two working days before the segment closes) are fixed
+  // and need no pool arithmetic at all.
+  if (pos < workingDays.length - 2) return shortFriday ? t.shortMidweek : t.standardDay;
 
-  const firstWeekday = Math.max(seg.startDay, 2); // Sat/Sun contribute no budget
-  const budget = t.standardDay * (seg.endDay - firstWeekday + 1);
+  const budget = t.standardDay * workingDays.length; // Sat/Sun/holidays add nothing
   const segStart = new Date(weekStart);
   segStart.setDate(segStart.getDate() + seg.startDay);
   const loggedSoFar = projectSecondsInRange(
@@ -415,7 +513,7 @@ export function dailyTargetSeconds(
     segStart.getTime(),
     startOfDay(now).getTime()
   );
-  return positionTarget(idx, seg.endDay, budget - loggedSoFar, shortFriday, t);
+  return positionTarget(idx, workingDays, budget - loggedSoFar, shortFriday, t);
 }
 
 /**
@@ -431,23 +529,25 @@ export function dailyTargetSeconds(
 export function plannedTargetSeconds(
   date: Date,
   shortFriday: boolean,
-  cfg: WeekConfig
+  cfg: WeekConfig,
+  holidays: HolidaySet = NO_HOLIDAYS
 ): number {
   const t = resolveTargets(cfg);
   const idx = weekDayIndex(date);
   if (idx < 2) return t.standardDay; // weekend fallback
+  if (holidays.has(idx)) return 0; // holiday — no work expected
 
   const seg = segmentOf(idx, monthSplitDay(startOfWeek(date).getTime()));
-  const firstWeekday = Math.max(seg.startDay, 2);
-  const budget = t.standardDay * (seg.endDay - firstWeekday + 1);
+  const workingDays = workingDaysOfSegment(seg, holidays);
+  const budget = t.standardDay * workingDays.length;
 
   let planned = 0;
-  for (let d = firstWeekday; d <= seg.endDay; d++) {
-    const target = positionTarget(d, seg.endDay, budget - planned, shortFriday, t);
+  for (const d of workingDays) {
+    const target = positionTarget(d, workingDays, budget - planned, shortFriday, t);
     if (d === idx) return target;
     planned += target;
   }
-  return t.standardDay; // unreachable — idx is always a weekday inside its segment
+  return t.standardDay; // unreachable — idx is always a working day inside its segment
 }
 
 /**

@@ -28,6 +28,7 @@ export default function IndividualTimesheet({
   maxDescriptionLength,
   noOvertime,
   weeklyHours,
+  timeOffTag,
   codeMappings,
 }: TimesheetViewProps) {
   const week = useMemo(
@@ -43,6 +44,7 @@ export default function IndividualTimesheet({
         maxDescriptionLength,
         noOvertime,
         weeklyHours,
+        timeOffTag,
         codeMappings,
       }),
     [
@@ -56,6 +58,7 @@ export default function IndividualTimesheet({
       maxDescriptionLength,
       noOvertime,
       weeklyHours,
+      timeOffTag,
       codeMappings,
     ]
   );
@@ -80,6 +83,14 @@ export default function IndividualTimesheet({
             <div className="ind-day-head">
               <span className="ind-day-name">
                 {DAY_LABELS[day.dayIdx]} · {dateLabel}
+                {day.holiday && (
+                  <span
+                    className="ts-holiday"
+                    title="Time off — no work expected; the weekly cap drops by a day's worth"
+                  >
+                    holiday
+                  </span>
+                )}
               </span>
               <span className="ind-day-total">{fmtHours(day.total)}</span>
             </div>

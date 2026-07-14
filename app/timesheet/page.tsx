@@ -297,6 +297,7 @@ export default function TimesheetPage() {
             maxDescriptionLength={settings.maxDescriptionLength}
             noOvertime={settings.noOvertime}
             weeklyHours={settings.weeklyHours}
+            timeOffTag={settings.timeOffTag}
             codeMappings={settings.codeMappings}
           />
         )}
@@ -326,6 +327,7 @@ export default function TimesheetPage() {
           maxDescriptionLength={settings.maxDescriptionLength}
           noOvertime={settings.noOvertime}
           weeklyHours={settings.weeklyHours}
+          timeOffTag={settings.timeOffTag}
           codeMappings={settings.codeMappings}
           title={projectTitle}
           personName={settings.exportName.trim() || settings.accountName}

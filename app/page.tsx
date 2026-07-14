@@ -24,6 +24,8 @@ import {
   mergeIntervals,
   subtractIntervals,
   hasBillingTag,
+  holidayDaysOfWeek,
+  isTimeOffEntry,
   startOfDay,
   startOfWeek,
   fmtHM,
@@ -98,16 +100,36 @@ export default function Page() {
     if (ready && projectIds.size === 0) setShowSettings(true);
   }, [ready, projectIds, setShowSettings]);
 
+  // Days of the current week marked as time off by a selected project's entry
+  // (see isTimeOffEntry). They behave exactly like weekend days: 0h target, and
+  // the week's goal drops by weeklyHours/5 for each.
+  const weekHolidays = useMemo(() => {
+    if (projectIds.size === 0 || !nowMs) return new Set<number>();
+    return holidayDaysOfWeek(
+      entries,
+      projectIds,
+      startOfWeek(new Date(nowMs)).getTime(),
+      settings.timeOffTag
+    );
+  }, [entries, nowMs, projectIds, settings.timeOffTag]);
+
   const view = useMemo(() => {
     if (projectIds.size === 0 || !nowMs) return null;
-    const norm = normalize(entries, nowMs);
+    const norm = normalize(entries, nowMs, settings.timeOffTag);
     const inSel = (id: number | null) => id != null && projectIds.has(id);
     const now = new Date(nowMs);
     const dayStart = startOfDay(now).getTime();
     const dayEnd = dayStart + 24 * 3600 * 1000;
 
     const trackedToday = projectSecondsInRange(norm, projectIds, dayStart, nowMs);
-    const target = dailyTargetSeconds(now, norm, projectIds, settings.shortFriday, settings);
+    const target = dailyTargetSeconds(
+      now,
+      norm,
+      projectIds,
+      settings.shortFriday,
+      settings,
+      weekHolidays
+    );
     const remaining = Math.max(0, target - trackedToday);
     const fraction = target > 0 ? trackedToday / target : 1;
 
@@ -179,6 +201,8 @@ export default function Page() {
     settings.shortFriday,
     settings.weeklyHours,
     settings.minWorkingDayHours,
+    settings.timeOffTag,
+    weekHolidays,
   ]);
 
   // Day timelines for the side panel (no extra API calls — both days come from
@@ -200,7 +224,7 @@ export default function Page() {
   const timelines = useMemo(() => {
     const empty = { today: [] as TLItem[], yesterday: [] as TLItem[] };
     if (!nowMs) return empty;
-    const norm = normalize(entries, nowMs);
+    const norm = normalize(entries, nowMs, settings.timeOffTag);
     const dayMs = 24 * 3600 * 1000;
     const maxBillSec = effectiveMaxBillableHours(settings) * 3600;
 
@@ -208,6 +232,9 @@ export default function Page() {
       const dayEnd = dayStart + dayMs;
       const liveCap = isToday ? Math.min(nowMs, dayEnd) : dayEnd;
       const dayEntries = entries
+        // Time-off markers flag a holiday; they're not tracked work, so they
+        // don't belong on the timeline (and must not read as a "Break").
+        .filter((e) => !isTimeOffEntry(e.tags, settings.timeOffTag))
         .map((e) => {
           const startMs = new Date(e.start).getTime();
           const running = e.duration < 0 || !e.stop;
@@ -310,6 +337,7 @@ export default function Page() {
     settings.weeklyHours,
     settings.maxBillableHours,
     settings.billingTagPrefix,
+    settings.timeOffTag,
     settings.codeMappings,
   ]);
 
@@ -317,7 +345,7 @@ export default function Page() {
   // always show; Sat/Sun appear only when the selected project was tracked then.
   const weekSummary = useMemo(() => {
     if (projectIds.size === 0 || !nowMs) return null;
-    const norm = normalize(entries, nowMs);
+    const norm = normalize(entries, nowMs, settings.timeOffTag);
     const repId = [...projectIds][0]; // a representative project for the projection
     const dayMs = 24 * 3600 * 1000;
     const weekStart = startOfWeek(new Date(nowMs)).getTime();
@@ -329,7 +357,8 @@ export default function Page() {
       norm,
       projectIds,
       settings.shortFriday,
-      settings
+      settings,
+      weekHolidays
     );
     const todayLogged = projectSecondsInRange(norm, projectIds, todayStart, nowMs);
     // Time the rest of today is already covered by real entries (scheduled blocks
@@ -360,25 +389,30 @@ export default function Page() {
       target: number;
       met: boolean;
       onTrack: boolean;
+      holiday: boolean;
     }[] = [];
     for (let i = 0; i < 7; i++) {
       const dayStart = weekStart + i * dayMs;
       const dayEnd = dayStart + dayMs;
       const date = new Date(dayStart);
       const isWeekend = date.getDay() === 6 || date.getDay() === 0; // Sat/Sun
+      const holiday = weekHolidays.has(i);
       const logged = projectSecondsInRange(norm, projectIds, dayStart, Math.min(dayEnd, nowMs));
       const scheduled = projectSecondsInRange(norm, projectIds, Math.max(dayStart, nowMs), dayEnd);
       if (isWeekend && logged === 0 && scheduled === 0) continue; // hide untouched weekend days
       const isFuture = dayStart > todayStart;
+      // A weekday holiday stays visible (unlike an untouched weekend) — it
+      // explains why the week's remaining targets shrank — with a 0h target.
       const target =
         isFuture && beforeThursday
-          ? plannedTargetSeconds(date, settings.shortFriday, settings)
+          ? plannedTargetSeconds(date, settings.shortFriday, settings, weekHolidays)
           : dailyTargetSeconds(
               date,
               isFuture ? projected : norm,
               projectIds,
               settings.shortFriday,
-              settings
+              settings,
+              weekHolidays
             );
       days.push({
         key: dayStart,
@@ -388,6 +422,7 @@ export default function Page() {
         target,
         met: logged >= target,
         onTrack: logged + scheduled >= target,
+        holiday,
       });
     }
     const totalLogged = days.reduce((s, d) => s + d.logged, 0);
@@ -400,19 +435,21 @@ export default function Page() {
     settings.shortFriday,
     settings.weeklyHours,
     settings.minWorkingDayHours,
+    settings.timeOffTag,
+    weekHolidays,
   ]);
 
   // Unreported time (no entry at all) for the side card — today and yesterday.
   const unreported = useMemo(() => {
     if (!nowMs) return null;
-    const norm = normalize(entries, nowMs);
+    const norm = normalize(entries, nowMs, settings.timeOffTag);
     const todayStart = startOfDay(new Date(nowMs)).getTime();
     const yesterdayStart = todayStart - 24 * 3600 * 1000;
     const today = unreportedGaps(norm, todayStart, nowMs);
     const yesterday = unreportedGaps(norm, yesterdayStart, todayStart);
     const sum = (gs: Gap[]) => gs.reduce((s, g) => s + g.seconds, 0);
     return { today, yesterday, todayTotal: sum(today), yestTotal: sum(yesterday) };
-  }, [entries, nowMs]);
+  }, [entries, nowMs, settings.timeOffTag]);
 
   const showBreakAlert = !!view?.breakDue && nowMs > snoozeUntil;
 
@@ -435,6 +472,10 @@ export default function Page() {
 
   const done = view ? view.remaining <= 0 : false;
   const maxBillableLabel = fmtHoursLabel(effectiveMaxBillableHours(settings));
+  // The week's effective goal: each weekday marked as time off shaves a day's
+  // worth (weeklyHours / 5) off it, exactly like the targets and the billing cap.
+  const holidayWeekdays = [...weekHolidays].filter((d) => d >= 2).length;
+  const effectiveWeeklyHours = (settings.weeklyHours * (5 - holidayWeekdays)) / 5;
   const timeline = dayTab === 'today' ? timelines.today : timelines.yesterday;
   const budgetClass =
     reqThisHour >= HOURLY_LIMIT ? 'over' : reqThisHour >= HOURLY_LIMIT - 6 ? 'warn' : '';
@@ -452,7 +493,9 @@ export default function Page() {
             </h1>
             <p>
               {settings.shortFriday ? 'Short week' : 'Regular week'} ·{' '}
-              {fmtHoursLabel(settings.weeklyHours)} goal
+              {fmtHoursLabel(effectiveWeeklyHours)} goal
+              {holidayWeekdays > 0 &&
+                ` (${holidayWeekdays} day${holidayWeekdays > 1 ? 's' : ''} off)`}
               {' · '}
               {new Date(nowMs || Date.now()).toLocaleDateString(undefined, {
                 weekday: 'long',
@@ -651,7 +694,7 @@ export default function Page() {
                     <div className="week-proj">
                       <div className="week-proj-main">
                         Projected <strong>{fmtHM(weekSummary.projected)}</strong> /{' '}
-                        {fmtHoursLabel(settings.weeklyHours)}
+                        {fmtHoursLabel(effectiveWeeklyHours)}
                       </div>
                       <div className="week-proj-sub">
                         <span>{fmtHM(weekSummary.totalLogged)} worked</span>
@@ -662,7 +705,14 @@ export default function Page() {
                   <div className="week-list">
                     {weekSummary.days.map((d) => (
                       <div key={d.key} className="week-row">
-                        <span className="week-day">{d.label}</span>
+                        <span className="week-day">
+                          {d.label}
+                          {d.holiday && (
+                            <span className="week-holiday" title="Time off — no work expected">
+                              off
+                            </span>
+                          )}
+                        </span>
                         <span className="week-vals">
                           <span className={`week-logged ${d.met ? 'met' : ''}`}>
                             {d.logged > 0 || d.scheduled === 0 ? fmtHM(d.logged) : '—'}

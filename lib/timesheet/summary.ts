@@ -3,6 +3,8 @@
 // figures to what's on screen (same per-day quarter-hour rounding, same grouping).
 
 import {
+  holidayDaysOfWeek,
+  isTimeOffEntry,
   parseBillingCode,
   roundQuartersPreservingTotal,
   type TimeEntry,
@@ -32,6 +34,7 @@ export interface Cell {
   descTruncated: boolean;
   seconds: number;
   trimmableSeconds: number; // of `seconds`, how much came from "(X)"-marked entries
+  noTrimSeconds: number; // of `seconds`, how much came from "(!)"-marked entries (never trimmed)
 }
 
 // A normal row is one (project, billing-tag) pair; warning rows are the sentinels.
@@ -62,6 +65,8 @@ export interface SummaryGrid {
   overtimeByDay: number[];
   /** Total billable seconds stripped this week by the overtime cap. */
   overtimeTotal: number;
+  /** Day indices (0=Sat … 6=Fri) marked as time off (holiday) this week. */
+  holidays: Set<number>;
 }
 
 export interface SummaryInput {
@@ -80,6 +85,10 @@ export interface SummaryInput {
   // When false, neither input has any effect.
   noOvertime: boolean;
   weeklyHours: number;
+  // The tag marking a time-off entry (state holiday etc.). Such an entry turns
+  // its day into a non-working day (like a weekend: no cap budget, no target)
+  // and is itself never billed or shown. Empty/absent falls back to the default.
+  timeOffTag?: string;
   // Linked billing codes: projects whose entries carry another client's tags and
   // bill here as one fixed row per day (see lib/timesheet/mapping).
   codeMappings?: CodeMapping[];
@@ -104,12 +113,18 @@ export function buildSummaryGrid({
   maxDescriptionLength,
   noOvertime,
   weeklyHours,
+  timeOffTag,
   codeMappings,
 }: SummaryInput): SummaryGrid | null {
   if (!weekStart) return null;
   const ids = new Set(projects.map((p) => p.id));
   const nameById = new Map(projects.map((p) => [p.id, p.name]));
   const weekEnd = weekStart + 7 * DAY_MS;
+
+  // Days marked as time off by a selected project's entry: non-working days for
+  // the overtime cap below. The marker entries themselves never bill (skipped in
+  // the loop); other entries on such a day still bill — in full, like weekend work.
+  const holidays = holidayDaysOfWeek(entries, ids, weekStart, timeOffTag);
 
   const cells = new Map<string, Cell>(); // key: `${dayIdx}|${rowKey}`
   const rowMeta = new Map<string, RowMeta>(); // rowKey -> meta (normal rows only)
@@ -139,6 +154,9 @@ export function buildSummaryGrid({
     if (!Number.isFinite(startMs) || startMs < weekStart || startMs >= weekEnd) continue;
     const dayIdx = Math.floor((startMs - weekStart) / DAY_MS);
     if (dayIdx < 0 || dayIdx > 6) continue;
+    // The time-off marker only classifies its day (see `holidays` above) — the
+    // entry itself is never billed, warned about, or shown.
+    if (isTimeOffEntry(e.tags, timeOffTag)) continue;
 
     const running = e.duration < 0 || !e.stop;
     const stopMs = running ? nowMs : new Date(e.stop as string).getTime();
@@ -185,10 +203,11 @@ export function buildSummaryGrid({
       addToMappedAgg(agg, tags[0], seconds, e.description, startMs);
       continue;
     } else {
-      // The "(X)" marker is just a trimmable version of the same billing code, so
-      // it shares one row with its plain twin (keyed by the stripped base); the
-      // "(X)" seconds are tracked per cell as the trim budget. The marker is
-      // internal, so only the base is displayed.
+      // The "(X)" / "(!)" markers are just trim variants of the same billing code,
+      // so they share one row with their plain twin (keyed by the stripped base);
+      // the "(X)" seconds are tracked per cell as the trim budget and the "(!)"
+      // seconds as the untouchable floor. The markers are internal, so only the
+      // base is displayed.
       const { base } = parseBillingCode(tags[0]);
       rowKey = `p${e.project_id}|${base}`;
       if (!rowMeta.has(rowKey)) {
@@ -204,12 +223,14 @@ export function buildSummaryGrid({
     const key = `${dayIdx}|${rowKey}`;
     let cell = cells.get(key);
     if (!cell) {
-      cell = { descs: [], desc: '', descTruncated: false, seconds: 0, trimmableSeconds: 0 };
+      cell = { descs: [], desc: '', descTruncated: false, seconds: 0, trimmableSeconds: 0, noTrimSeconds: 0 };
       cells.set(key, cell);
     }
     cell.seconds += seconds;
-    if (rowKey !== UNTAGGED && rowKey !== MULTIPLE && parseBillingCode(tags[0]).trimmable) {
-      cell.trimmableSeconds += seconds;
+    if (rowKey !== UNTAGGED && rowKey !== MULTIPLE) {
+      const { trimmable, neverTrim } = parseBillingCode(tags[0]);
+      if (trimmable) cell.trimmableSeconds += seconds;
+      if (neverTrim) cell.noTrimSeconds += seconds;
     }
     addDesc(cell, e.description ?? '');
   }
@@ -228,7 +249,7 @@ export function buildSummaryGrid({
   // descriptions for traceability.
   const mappedFixed = new Map<string, number>(); // key: `${dayIdx}|${rowKey}`
   for (const [rowKey, byDay] of mappedAggs) {
-    const values = finalizeMappedWeek(byDay, mappingByRow.get(rowKey)!, weekStart);
+    const values = finalizeMappedWeek(byDay, mappingByRow.get(rowKey)!, weekStart, holidays);
     for (const [day, value] of values) {
       mappedFixed.set(`${day}|${rowKey}`, value.seconds);
       cells.set(`${day}|${rowKey}`, {
@@ -237,6 +258,7 @@ export function buildSummaryGrid({
         descTruncated: false,
         seconds: byDay.get(day)!.seconds,
         trimmableSeconds: 0,
+        noTrimSeconds: 0,
       });
     }
   }
@@ -270,20 +292,28 @@ export function buildSummaryGrid({
 
   // Overtime pass: when the contract disallows billing overtime and a segment's
   // billable cells exceed its cap, shave whole rounding units off them. Unlike the
-  // Individual view's proportional cut, the Summary evens out the days — the weekend
-  // is billed in full and the weekdays are water-filled toward a common
-  // (weeklyHours − weekend)/5 ceiling — while the segment still drops to its cap.
-  // Within a day the cut still takes trimmable "(X)" portions first. A month boundary
-  // mid-week splits the week into two independently-capped segments; otherwise it's
-  // one full-week segment. Warning rows are never billed, so they're excluded from
+  // Individual view's proportional cut, the Summary evens out the days — the
+  // non-working days (weekend + holidays) are billed in full and the working
+  // weekdays are water-filled toward a common (cap − non-working)/workdays ceiling
+  // — while the segment still drops to its cap. A holiday also shrinks the cap
+  // itself by a day's worth (weeklyHours / 5, see weekSegments). Within a day the
+  // cut still takes trimmable "(X)" portions first. A month boundary mid-week
+  // splits the week into two independently-capped segments; otherwise it's one
+  // full-week segment. Warning rows are never billed, so they're excluded from
   // both the cap measurement and the trimming. Mapped rows are protected — they must
   // keep equalling the sub-client sheet's day totals — so they still consume the cap
   // (their units are subtracted from the segment's budget) but the cut itself lands
   // only on native rows.
   const overtimeByDay = new Array<number>(7).fill(0);
   if (noOvertime && weeklyHours > 0) {
-    for (const seg of weekSegments(weekStart, weeklyHours, roundingSeconds)) {
-      const billCells: { key: string; day: number; units: number; trimmableUnits: number }[] = [];
+    for (const seg of weekSegments(weekStart, weeklyHours, roundingSeconds, holidays)) {
+      const billCells: {
+        key: string;
+        day: number;
+        units: number;
+        trimmableUnits: number;
+        noTrimUnits: number;
+      }[] = [];
       let mappedUnits = 0;
       for (const d of dayCols) {
         if (d < seg.startDay || d > seg.endDay) continue;
@@ -295,15 +325,25 @@ export function buildSummaryGrid({
             continue;
           }
           const cell = cells.get(`${d}|${r}`);
-          // The trimmable budget is the "(X)" share of this cell's rounded units.
+          // The trimmable budget is the "(X)" share of this cell's rounded units;
+          // the protected floor is its "(!)" share (never cut, capped so the two
+          // shares can't overlap).
           const frac = cell && cell.seconds > 0 ? cell.trimmableSeconds / cell.seconds : 0;
           const trimmableUnits = Math.min(units, Math.round(units * frac));
-          billCells.push({ key: `${d}|${r}`, day: d, units, trimmableUnits });
+          const fracKeep = cell && cell.seconds > 0 ? cell.noTrimSeconds / cell.seconds : 0;
+          const noTrimUnits = Math.min(units - trimmableUnits, Math.round(units * fracKeep));
+          billCells.push({ key: `${d}|${r}`, day: d, units, trimmableUnits, noTrimUnits });
         }
       }
       const removed = allocateOvertimeTrimPerDay(
-        billCells.map((c) => ({ units: c.units, trimmableUnits: c.trimmableUnits, day: c.day })),
-        Math.max(0, seg.capUnits - mappedUnits)
+        billCells.map((c) => ({
+          units: c.units,
+          trimmableUnits: c.trimmableUnits,
+          noTrimUnits: c.noTrimUnits,
+          day: c.day,
+        })),
+        Math.max(0, seg.capUnits - mappedUnits),
+        holidays
       );
       billCells.forEach((c, i) => {
         if (removed[i] > 0) {
@@ -351,5 +391,6 @@ export function buildSummaryGrid({
     grandTotal,
     overtimeByDay,
     overtimeTotal,
+    holidays,
   };
 }

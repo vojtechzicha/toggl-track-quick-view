@@ -12,6 +12,7 @@ import {
   DEFAULT_WEEKLY_HOURS,
   DEFAULT_BILLING_TAG_PREFIX,
   DEFAULT_ROUNDING_HOURS,
+  DEFAULT_TIME_OFF_TAG,
 } from '@/lib/calc';
 // Type-only import from a client module — erased at compile time, so the
 // server bundle never pulls the component in.
@@ -141,6 +142,7 @@ export function defaultWorkspaceSettings(): PresetValue {
     maxBillableHours: null,
     minWorkingDayHours: null,
     billingTagPrefix: DEFAULT_BILLING_TAG_PREFIX,
+    timeOffTag: DEFAULT_TIME_OFF_TAG,
     roundingHours: DEFAULT_ROUNDING_HOURS,
     maxDescriptionLength: null,
     noOvertime: false,

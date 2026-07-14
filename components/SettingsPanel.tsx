@@ -6,6 +6,7 @@ import {
   DEFAULT_WEEKLY_HOURS,
   DEFAULT_BILLING_TAG_PREFIX,
   DEFAULT_ROUNDING_HOURS,
+  DEFAULT_TIME_OFF_TAG,
   ROUNDING_HOURS_OPTIONS,
   defaultMaxBillableHours,
   defaultMinWorkingDayHours,
@@ -43,6 +44,11 @@ export interface SettingsValue {
   minWorkingDayHours: number | null;
   // The prefix that marks a tag as a billing tag (default "D", e.g. "D123").
   billingTagPrefix: string;
+  // The tag that marks an entry as time off (default ".Time Off"). Its day
+  // becomes a non-working day like a weekend — 0h target, the weekly goal and
+  // the no-overtime cap drop by a day's worth — and the entry itself is never
+  // billed, counted or exported. Other entries on that day still count in full.
+  timeOffTag: string;
   // Granularity the timesheet rounds entries to, in hours. 0.25 (15 min) by
   // default; some clients can't enter quarter-hours, so 0.2 (12 min) is offered.
   roundingHours: number;
@@ -93,6 +99,7 @@ export function toPresetValue(s: SettingsValue): PresetValue {
     maxBillableHours: s.maxBillableHours,
     minWorkingDayHours: s.minWorkingDayHours,
     billingTagPrefix: s.billingTagPrefix,
+    timeOffTag: s.timeOffTag,
     roundingHours: s.roundingHours,
     maxDescriptionLength: s.maxDescriptionLength,
     noOvertime: s.noOvertime,
@@ -133,6 +140,8 @@ export function presetMatches(value: PresetValue, s: SettingsValue): boolean {
     value.maxBillableHours === s.maxBillableHours &&
     value.minWorkingDayHours === s.minWorkingDayHours &&
     value.billingTagPrefix === s.billingTagPrefix &&
+    // `?? default` covers presets stored before the time-off tag existed.
+    (value.timeOffTag ?? DEFAULT_TIME_OFF_TAG) === (s.timeOffTag ?? DEFAULT_TIME_OFF_TAG) &&
     value.roundingHours === s.roundingHours &&
     // `?? null` covers presets stored before the description limit existed.
     (value.maxDescriptionLength ?? null) === (s.maxDescriptionLength ?? null) &&
@@ -289,6 +298,7 @@ export default function SettingsPanel({
     initial.minWorkingDayHours === null ? '' : numLabel(initial.minWorkingDayHours)
   );
   const [billingPrefix, setBillingPrefix] = useState(initial.billingTagPrefix);
+  const [timeOffTag, setTimeOffTag] = useState(initial.timeOffTag ?? DEFAULT_TIME_OFF_TAG);
   const [roundingHours, setRoundingHours] = useState(initial.roundingHours);
   // Kept as a raw string like the hours fields; empty = no limit (null).
   const [maxDescLenStr, setMaxDescLenStr] = useState(
@@ -300,6 +310,7 @@ export default function SettingsPanel({
     initial.maxBillableHours !== null ||
       initial.minWorkingDayHours !== null ||
       initial.billingTagPrefix !== DEFAULT_BILLING_TAG_PREFIX ||
+      (initial.timeOffTag ?? DEFAULT_TIME_OFF_TAG) !== DEFAULT_TIME_OFF_TAG ||
       initial.roundingHours !== DEFAULT_ROUNDING_HOURS ||
       initial.maxDescriptionLength != null ||
       initial.noOvertime ||
@@ -401,6 +412,8 @@ export default function SettingsPanel({
       minWorkingDayHours: parseOverride(minDayStr, 0),
       // An empty prefix would match every tag, so fall back to the default.
       billingTagPrefix: billingPrefix.trim() || DEFAULT_BILLING_TAG_PREFIX,
+      // An empty tag can't mark anything, so fall back to the default.
+      timeOffTag: timeOffTag.trim() || DEFAULT_TIME_OFF_TAG,
       roundingHours: finalRounding,
       maxDescriptionLength: parseMaxDescLen(maxDescLenStr),
       noOvertime,
@@ -477,6 +490,8 @@ export default function SettingsPanel({
     setMaxBillStr(v.maxBillableHours === null ? '' : numLabel(v.maxBillableHours));
     setMinDayStr(v.minWorkingDayHours === null ? '' : numLabel(v.minWorkingDayHours));
     setBillingPrefix(v.billingTagPrefix);
+    // `??` covers presets stored before the time-off tag existed.
+    setTimeOffTag(v.timeOffTag ?? DEFAULT_TIME_OFF_TAG);
     setRoundingHours(v.roundingHours);
     // `== null` covers presets stored before the description limit existed.
     setMaxDescLenStr(v.maxDescriptionLength == null ? '' : String(v.maxDescriptionLength));
@@ -486,6 +501,7 @@ export default function SettingsPanel({
       v.maxBillableHours !== null ||
       v.minWorkingDayHours !== null ||
       v.billingTagPrefix !== DEFAULT_BILLING_TAG_PREFIX ||
+      (v.timeOffTag ?? DEFAULT_TIME_OFF_TAG) !== DEFAULT_TIME_OFF_TAG ||
       v.roundingHours !== DEFAULT_ROUNDING_HOURS ||
       v.maxDescriptionLength != null ||
       v.noOvertime ||
@@ -848,6 +864,27 @@ export default function SettingsPanel({
           </div>
 
           <div className="field">
+            <label htmlFor="time-off-tag">Time off tag</label>
+            <input
+              id="time-off-tag"
+              type="text"
+              value={timeOffTag}
+              placeholder={DEFAULT_TIME_OFF_TAG}
+              onChange={(e) => setTimeOffTag(e.target.value)}
+            />
+            <p className="hint">
+              An entry carrying this tag (any length) marks its whole day as{' '}
+              <strong>time off</strong> — a state holiday or vacation day. The day then behaves
+              like a weekend: 0h expected, and the weekly goal and the &ldquo;Don&apos;t bill
+              overtime&rdquo; cap drop by a day&apos;s worth (currently{' '}
+              <strong>{fmtHoursLabel(previewWeekly / 5)}</strong> each). The marker entry itself is
+              never billed, counted or exported; any <em>other</em> work tracked that day still
+              counts in full, like weekend work. Only entries on the tracked{' '}
+              {itemNoun}s mark a day off. Defaults to <strong>{DEFAULT_TIME_OFF_TAG}</strong>.
+            </p>
+          </div>
+
+          <div className="field">
             <label htmlFor="rounding">Round timesheet to</label>
             <select
               id="rounding"
@@ -1037,10 +1074,12 @@ export default function SettingsPanel({
                 Cap each week&apos;s billed total at your{' '}
                 {fmtHoursLabel(previewWeekly)} weekly hours. Anything over is trimmed off the
                 timesheet (rounding down) and shown as an &ldquo;Overtime&rdquo; line — still tracked,
-                just not billed. Codes ending in <strong>(X)</strong> are trimmed first; the
-                &ldquo;(X)&rdquo; itself is never shown. In the <strong>Summary</strong> view the
-                weekdays are also evened out — the weekend stays billed in full and Mon–Fri are
-                levelled toward (weekly hours − weekend) ÷ 5.
+                just not billed. Codes ending in <strong>(X)</strong> are trimmed first; codes
+                ending in <strong>(!)</strong> are <em>never</em> trimmed (they bill whole and the
+                cut falls on the rest). Neither marker is ever shown. In the{' '}
+                <strong>Summary</strong> view the weekdays are also evened out — the weekend and
+                any time-off days stay billed in full and the working days are levelled toward
+                (weekly hours − those days) ÷ their count.
               </span>
             </div>
             <label className="switch">

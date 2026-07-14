@@ -11,7 +11,11 @@
 //      part trimmable (some of its time tagged "(X)", some not), so the budget is
 //      per-line, not all-or-nothing.
 //   2. Only if emptying every "(X)" portion still isn't enough, the firm remainder
-//      of the lines is trimmed too.
+//      of the lines is trimmed too — except any "(!)"-marked portion (a line's
+//      `noTrimUnits`), which is NEVER touched: it always bills whole while still
+//      consuming the cap, so the cut lands on the other lines instead. When the
+//      protected time alone exceeds the cap the billed total stays above it — the
+//      same precedent the fixed linked-code lines already set.
 //
 // Within each tier the cut is spread proportionally to each line's available size
 // (the same largest-remainder / Hamilton method the rounding uses), so the reduction
@@ -21,21 +25,39 @@
 //
 // The Individual view trims a segment as one pool with `allocateOvertimeTrim`, so a
 // busy day stays proportionally busy. The Summary view instead evens out the *days*
-// with `allocateOvertimeTrimPerDay`: the weekend is billed in full and the five
-// weekdays are water-filled toward a common (weekTarget − weekend)/5 ceiling — same
-// per-day, trimmable-first cut underneath, just distributed to flatten the week.
+// with `allocateOvertimeTrimPerDay`: the non-working days (weekend + holidays) are
+// billed in full and the working weekdays are water-filled toward a common
+// (weekTarget − non-working)/workdays ceiling — same per-day, trimmable-first cut
+// underneath, just distributed to flatten the week.
+//
+// Holidays (days marked by a time-off entry, see isTimeOffEntry in lib/calc) are
+// non-working days exactly like the weekend: they contribute no cap budget (the
+// weekly cap drops by weeklyHours/5 per holiday) and any work actually tracked on
+// them is billed in full on top, never water-filled down.
 
-import { monthSplitDay } from '../calc';
+import { monthSplitDay, type HolidaySet } from '../calc';
+
+const NO_HOLIDAYS: HolidaySet = new Set<number>();
 
 export interface TrimCell {
   units: number; // current rounded duration, in whole rounding units
   trimmableUnits: number; // the "(X)"-marked portion of those units (0 ≤ this ≤ units)
+  // The "(!)"-marked portion of those units — never removed. Disjoint from the
+  // trimmable share; trimmableUnits + noTrimUnits ≤ units. Absent = 0.
+  noTrimUnits?: number;
+}
+
+/** The units of a cell the trim may still take (everything but the "(!)" share). */
+function flexibleUnits(c: TrimCell): number {
+  return Math.max(0, c.units - (c.noTrimUnits ?? 0));
 }
 
 /**
  * Whole rounding units to remove from each cell so the billable total drops to
  * `capUnits`. Returns an array aligned with the input (0 = untouched). When already
- * at or under the cap, nothing is removed.
+ * at or under the cap, nothing is removed. "(!)"-marked portions are never removed,
+ * so when the protected time alone exceeds the cap the result under-trims — the
+ * billed total then stays above the cap by exactly that protected excess.
  */
 export function allocateOvertimeTrim(cells: TrimCell[], capUnits: number): number[] {
   const removed = new Array<number>(cells.length).fill(0);
@@ -43,11 +65,12 @@ export function allocateOvertimeTrim(cells: TrimCell[], capUnits: number): numbe
   let excess = total - Math.max(0, capUnits);
   if (excess <= 0) return removed;
 
-  // Tier 1: each line's trimmable "(X)" portion. Tier 2: whatever firm time is left.
+  // Tier 1: each line's trimmable "(X)" portion. Tier 2: whatever firm time is
+  // left, never touching the protected "(!)" share.
   excess = trimTier(cells, removed, excess, (c, i) =>
-    Math.max(0, Math.min(c.trimmableUnits, c.units) - removed[i])
+    Math.max(0, Math.min(c.trimmableUnits, flexibleUnits(c)) - removed[i])
   );
-  trimTier(cells, removed, excess, (c, i) => c.units - removed[i]);
+  trimTier(cells, removed, excess, (c, i) => flexibleUnits(c) - removed[i]);
   return removed;
 }
 
@@ -58,22 +81,30 @@ export interface DayTrimCell extends TrimCell {
 
 /**
  * Like {@link allocateOvertimeTrim}, but instead of shrinking the whole segment
- * proportionally it evens out the *weekdays*. The weekend (Sat/Sun, day < 2) is kept
- * billed in full and the five weekdays are water-filled down to a common ceiling so
- * each lands as close as possible to `(capUnits − weekend) / 5`, while the segment
- * total still drops to `capUnits`. When every weekday sits above the line the ceiling
- * is exactly that per-day target; when one is short the others float up to absorb the
+ * proportionally it evens out the *working weekdays*. The non-working days — the
+ * weekend (Sat/Sun, day < 2) plus any `holidays` — are kept billed in full and the
+ * working weekdays are water-filled down to a common ceiling so each lands as close
+ * as possible to `(capUnits − non-working) / workdays`, while the segment total
+ * still drops to `capUnits`. When every workday sits above the line the ceiling is
+ * exactly that per-day target; when one is short the others float up to absorb the
  * slack, so the week still hits the cap rather than billing under it.
  *
  * The per-day reduction is shared across that day's own cells with the same
  * trimmable-"(X)"-first apportionment as `allocateOvertimeTrim`. Returns removals
  * aligned with the input (0 = untouched). When already under the cap, nothing moves.
  *
- * Degenerate case: when the weekend alone exceeds `capUnits` (rare — month-split
- * segments cap below a full week), the weekdays drop to zero and the weekend itself
- * is evened down to the cap, so the contract cap is never exceeded.
+ * Every day's kept total is floored at its protected "(!)" units — that share is
+ * never removed, even when it means the billed total stays above the cap.
+ *
+ * Degenerate case: when the non-working days alone exceed `capUnits` (rare —
+ * month-split segments cap below a full week), the workdays drop to their
+ * protected floor and the non-working days are evened down toward the cap.
  */
-export function allocateOvertimeTrimPerDay(cells: DayTrimCell[], capUnits: number): number[] {
+export function allocateOvertimeTrimPerDay(
+  cells: DayTrimCell[],
+  capUnits: number,
+  holidays: HolidaySet = NO_HOLIDAYS
+): number[] {
   const removed = new Array<number>(cells.length).fill(0);
   const cap = Math.max(0, capUnits);
   const total = cells.reduce((s, c) => s + c.units, 0);
@@ -82,23 +113,29 @@ export function allocateOvertimeTrimPerDay(cells: DayTrimCell[], capUnits: numbe
   const days = [...new Set(cells.map((c) => c.day))];
   const unitsOf = (d: number) =>
     cells.reduce((s, c) => (c.day === d ? s + c.units : s), 0);
-  const weekend = days.filter((d) => d < 2);
-  const weekdays = days.filter((d) => d >= 2);
-  const weekendUnits = weekend.reduce((s, d) => s + unitsOf(d), 0);
+  // A day's protected "(!)" units — the floor its kept total can never drop below.
+  const noTrimOf = (d: number) =>
+    cells.reduce((s, c) => (c.day === d ? s + Math.min(c.noTrimUnits ?? 0, c.units) : s), 0);
+  const offDays = days.filter((d) => d < 2 || holidays.has(d)); // weekend + holidays
+  const workdays = days.filter((d) => d >= 2 && !holidays.has(d));
+  const offUnits = offDays.reduce((s, d) => s + unitsOf(d), 0);
 
-  // Per-day units to keep. Normally the weekend rides along whole and the weekdays
-  // are water-filled into whatever the cap leaves; if the weekend alone blows the
-  // cap, the weekdays go to zero and the weekend is evened down to the cap instead.
+  // Per-day units to keep. Normally the non-working days ride along whole and the
+  // workdays are water-filled into whatever the cap leaves; if the non-working days
+  // alone blow the cap, the workdays keep only their protected floor and the
+  // non-working days are evened down to the cap instead. Every day's kept total is
+  // floored at its protected "(!)" units, so the within-day cut below never has to
+  // reach into them (the billed total may then exceed the cap — by design).
   const keepByDay = new Map<number, number>();
-  const budget = cap - weekendUnits;
+  const budget = cap - offUnits;
   if (budget >= 0) {
-    weekend.forEach((d) => keepByDay.set(d, unitsOf(d)));
-    const keep = waterfillKeep(weekdays.map(unitsOf), budget);
-    weekdays.forEach((d, i) => keepByDay.set(d, keep[i]));
+    offDays.forEach((d) => keepByDay.set(d, unitsOf(d)));
+    const keep = waterfillKeep(workdays.map(unitsOf), budget, workdays.map(noTrimOf));
+    workdays.forEach((d, i) => keepByDay.set(d, keep[i]));
   } else {
-    weekdays.forEach((d) => keepByDay.set(d, 0));
-    const keep = waterfillKeep(weekend.map(unitsOf), cap);
-    weekend.forEach((d, i) => keepByDay.set(d, keep[i]));
+    workdays.forEach((d) => keepByDay.set(d, noTrimOf(d)));
+    const keep = waterfillKeep(offDays.map(unitsOf), cap, offDays.map(noTrimOf));
+    offDays.forEach((d, i) => keepByDay.set(d, keep[i]));
   }
 
   // Reduce each day to its kept budget, trimmable "(X)" first, within that day alone.
@@ -116,30 +153,38 @@ export function allocateOvertimeTrimPerDay(cells: DayTrimCell[], capUnits: numbe
 /**
  * Water-fill: keep as much of each day's `units` as a single common ceiling allows
  * without the kept total exceeding `target`, raising the ceiling until the total is
- * met. Days below the ceiling keep everything; days above are levelled to it. Returns
- * kept units per day. With `target ≥ sum` nothing is trimmed; with `target ≤ 0` all
- * goes. The few units that don't divide evenly land on the largest days first.
+ * met. Days below the ceiling keep everything; days above are levelled to it. Each
+ * day's kept units never drop below its `floors` entry (the protected "(!)" share)
+ * — a day whose floor sits above the ceiling simply keeps its floor. Returns kept
+ * units per day. With `target ≥ sum` nothing is trimmed; with `target ≤ Σfloors`
+ * only the floors survive (the kept total may then exceed `target` — protected
+ * time is never cut). The few units that don't divide evenly land on the largest
+ * days first.
  */
-function waterfillKeep(units: number[], target: number): number[] {
+function waterfillKeep(units: number[], target: number, floors?: number[]): number[] {
+  const flo = units.map((u, i) => Math.min(Math.max(0, floors?.[i] ?? 0), u));
   const total = units.reduce((a, b) => a + b, 0);
   if (target >= total) return [...units];
-  if (target <= 0) return units.map(() => 0);
+  const floorSum = flo.reduce((a, b) => a + b, 0);
+  if (target <= floorSum) return flo;
 
-  // Largest integer ceiling L with Σ min(u, L) ≤ target (binary search the staircase).
+  // Largest integer ceiling L with Σ max(floor, min(u, L)) ≤ target (binary search
+  // the staircase — still monotone in L with the floors in place).
+  const keptAt = (level: number) =>
+    units.reduce((a, u, i) => a + Math.max(flo[i], Math.min(u, level)), 0);
   let lo = 0;
   let hi = Math.max(...units);
   let level = 0;
   while (lo <= hi) {
     const mid = (lo + hi) >> 1;
-    const sum = units.reduce((a, u) => a + Math.min(u, mid), 0);
-    if (sum <= target) {
+    if (keptAt(mid) <= target) {
       level = mid;
       lo = mid + 1;
     } else {
       hi = mid - 1;
     }
   }
-  const keep = units.map((u) => Math.min(u, level));
+  const keep = units.map((u, i) => Math.max(flo[i], Math.min(u, level)));
   // Hand the remainder to the days still above the ceiling, largest first, so the
   // kept total reaches `target` exactly while staying as level as the integers allow.
   let leftover = target - keep.reduce((a, b) => a + b, 0);
@@ -224,21 +269,24 @@ export interface WeekSegment {
  * Split a week into the segments the overtime cap applies to.
  *
  * Billing runs to month-end, so when a month boundary falls mid-week the week is
- * cut there and each side gets its own cap, proportional to the number of weekdays
- * (Mon–Fri) it contains: `weeklyHours / 5 × that count`. A weekend-only segment
- * therefore caps at zero — its work isn't billed — e.g. when the 1st lands on a
- * Monday the leading Sat–Sun is capped at nothing. A week wholly inside one month
- * is a single full-week segment (cap = weeklyHours), exactly as before.
+ * cut there and each side gets its own cap, proportional to the number of working
+ * weekdays (Mon–Fri, minus `holidays`) it contains: `weeklyHours / 5 × that count`.
+ * A holiday therefore drops the cap by a day's worth — a 40h week with one state
+ * holiday caps at 32h. A weekend-only segment caps at zero — its work isn't billed
+ * — e.g. when the 1st lands on a Monday the leading Sat–Sun is capped at nothing.
+ * A week wholly inside one month is a single full-week segment, exactly as before.
  */
 export function weekSegments(
   weekStart: number,
   weeklyHours: number,
-  roundingSeconds: number
+  roundingSeconds: number,
+  holidays: HolidaySet = NO_HOLIDAYS
 ): WeekSegment[] {
-  // Mon–Fri are day indices 2…6; Sat/Sun (0,1) are weekend and add nothing.
+  // Mon–Fri are day indices 2…6; Sat/Sun (0,1) are weekend and add nothing —
+  // and neither does a weekday marked as a holiday.
   const segHours = (start: number, end: number) => {
     let weekdays = 0;
-    for (let d = start; d <= end; d++) if (d >= 2) weekdays++;
+    for (let d = start; d <= end; d++) if (d >= 2 && !holidays.has(d)) weekdays++;
     return (weeklyHours / 5) * weekdays;
   };
   const seg = (start: number, end: number): WeekSegment => ({

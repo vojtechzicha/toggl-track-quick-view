@@ -29,6 +29,7 @@ export default function SummaryTimesheet({
   maxDescriptionLength,
   noOvertime,
   weeklyHours,
+  timeOffTag,
   codeMappings,
 }: TimesheetViewProps) {
   const grid = useMemo(
@@ -43,9 +44,10 @@ export default function SummaryTimesheet({
         maxDescriptionLength,
         noOvertime,
         weeklyHours,
+        timeOffTag,
         codeMappings,
       }),
-    [entries, weekStart, nowMs, projects, billingTagPrefix, roundingSeconds, maxDescriptionLength, noOvertime, weeklyHours, codeMappings]
+    [entries, weekStart, nowMs, projects, billingTagPrefix, roundingSeconds, maxDescriptionLength, noOvertime, weeklyHours, timeOffTag, codeMappings]
   );
 
   if (!grid || grid.rows.length === 0) {
@@ -65,6 +67,14 @@ export default function SummaryTimesheet({
             {grid.dayCols.map((d) => (
               <th key={d} className="ts-day-head">
                 {DAY_LABELS[d]}
+                {grid.holidays.has(d) && (
+                  <span
+                    className="ts-holiday"
+                    title="Time off — no work expected; the weekly cap drops by a day's worth"
+                  >
+                    holiday
+                  </span>
+                )}
               </th>
             ))}
             <th className="ts-total-head">Total</th>

@@ -51,6 +51,7 @@ import {
   DEFAULT_WEEKLY_HOURS,
   DEFAULT_BILLING_TAG_PREFIX,
   DEFAULT_ROUNDING_HOURS,
+  DEFAULT_TIME_OFF_TAG,
 } from '@/lib/calc';
 
 const LS_KEY = 'tqv.settings.v1';
@@ -85,6 +86,7 @@ export const DEFAULTS: StoredSettings = {
   maxBillableHours: null,
   minWorkingDayHours: null,
   billingTagPrefix: DEFAULT_BILLING_TAG_PREFIX,
+  timeOffTag: DEFAULT_TIME_OFF_TAG,
   roundingHours: DEFAULT_ROUNDING_HOURS,
   maxDescriptionLength: null,
   noOvertime: false,
@@ -115,6 +117,8 @@ export function applyPreset(
     codeMappings: preset.value.codeMappings ?? [],
     // Same for presets stored before the description limit existed.
     maxDescriptionLength: preset.value.maxDescriptionLength ?? null,
+    // And for presets stored before the time-off tag existed.
+    timeOffTag: preset.value.timeOffTag ?? DEFAULT_TIME_OFF_TAG,
   };
 }
 

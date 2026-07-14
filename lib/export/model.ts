@@ -33,6 +33,8 @@ export interface ExportOptions {
   noOvertime: boolean;
   /** Weekly cap (hours) the overtime trim reduces the billed total to. */
   weeklyHours: number;
+  /** Tag marking a time-off entry (its day is a holiday; the entry never exports). */
+  timeOffTag?: string;
   /** Linked billing codes (see lib/timesheet/mapping); empty/omitted = none. */
   codeMappings?: CodeMapping[];
   /** Title shown on the document (project / group name). */
@@ -112,7 +114,7 @@ function codeLabel(
 }
 
 function buildSummaryDoc(o: ExportOptions): SummaryDoc {
-  const { range, entries, nowMs, projects, multi, billingTagPrefix, roundingSeconds, maxDescriptionLength, noOvertime, weeklyHours, codeMappings } = o;
+  const { range, entries, nowMs, projects, multi, billingTagPrefix, roundingSeconds, maxDescriptionLength, noOvertime, weeklyHours, timeOffTag, codeMappings } = o;
   const weeks: SummaryWeekBlock[] = [];
 
   for (const weekStart of weeksInRange(range.fromMs, range.toMs)) {
@@ -126,6 +128,7 @@ function buildSummaryDoc(o: ExportOptions): SummaryDoc {
       maxDescriptionLength,
       noOvertime,
       weeklyHours,
+      timeOffTag,
       codeMappings,
     });
     if (!grid || grid.rows.length === 0) continue;
@@ -197,7 +200,7 @@ function buildSummaryDoc(o: ExportOptions): SummaryDoc {
 }
 
 function buildIndividualDoc(o: ExportOptions): IndividualDoc {
-  const { range, entries, nowMs, projects, multi, maxBillableHours, billingTagPrefix, roundingSeconds, maxDescriptionLength, noOvertime, weeklyHours, codeMappings } = o;
+  const { range, entries, nowMs, projects, multi, maxBillableHours, billingTagPrefix, roundingSeconds, maxDescriptionLength, noOvertime, weeklyHours, timeOffTag, codeMappings } = o;
   const nameById = new Map(projects.map((p) => [p.id, p.name]));
   const days: IndividualDayBlock[] = [];
 
@@ -213,6 +216,7 @@ function buildIndividualDoc(o: ExportOptions): IndividualDoc {
       maxDescriptionLength,
       noOvertime,
       weeklyHours,
+      timeOffTag,
       codeMappings,
     });
     if (!week) continue;

@@ -39,6 +39,10 @@ export interface TimesheetViewProps {
   noOvertime: boolean;
   // The weekly cap (hours) overtime trimming reduces the billed total to.
   weeklyHours: number;
+  // The tag marking a time-off entry (state holiday etc.): its day becomes a
+  // non-working day — 0h expected, the weekly cap drops by a day's worth — and
+  // the marker entry itself is never billed or shown.
+  timeOffTag: string;
   // Linked billing codes: projects billed here as one fixed code per day, rounded
   // on their own grid (see lib/timesheet/mapping).
   codeMappings: CodeMapping[];
