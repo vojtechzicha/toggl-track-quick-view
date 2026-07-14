@@ -511,7 +511,13 @@ export function buildIndividualWeek({
         holidays.has(dayIdx)
       )
     )
-    .filter((d) => d.rows.length > 0 || d.overlaps.length > 0 || d.overtime > 0);
+    // A weekday holiday stays visible even when the marker was its only entry —
+    // the empty day block with its "holiday" pill is what explains the shrunken
+    // weekly cap. (A weekend marker changes nothing, so it isn't surfaced.)
+    .filter(
+      (d) =>
+        d.rows.length > 0 || d.overlaps.length > 0 || d.overtime > 0 || (d.holiday && d.dayIdx >= 2)
+    );
 
   const grandTotal = days.reduce((s, d) => s + d.total, 0);
   return { days, grandTotal };
