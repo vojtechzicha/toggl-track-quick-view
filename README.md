@@ -241,6 +241,30 @@ job. **Exports stay clean**: the XLSX / CSV / PDF contain only the billable
 timesheet — no overtime line and no warning/overlap rows — and every billable
 figure (and the totals) matches the view exactly.
 
+### Time off (state holidays)
+
+Add an entry carrying the **time off tag** (default **`.Time Off`**, configurable
+under **Settings → Advanced**) on any day — its length doesn't matter — and that
+day becomes a **non-working day**, exactly like a weekend:
+
+- Its **daily target is 0h**, and the dashboard's weekly goal drops by a day's
+  worth (`weeklyHours / 5`) — a 40h week with one state holiday becomes a 32h
+  week, with the adaptive Thursday/Friday targets settling against that.
+- The **"Don't bill overtime" cap shrinks the same way** (per segment, so a
+  month-split week counts each side's own holidays), and the per-day evening-out
+  in the Summary view levels the *remaining* working days — the holiday is never
+  treated as one of them.
+- The **marker entry itself is never billed, counted or exported** — it doesn't
+  show on the timesheet, doesn't trigger the "No billing tag" warning, and
+  doesn't count as tracked time on the dashboard.
+- Any **other** work tracked on that day still counts in full, like weekend
+  work: it's billed whole (never water-filled down) and consumes the reduced cap.
+
+Only entries on the **tracked projects/workspaces** mark a day off, so a day can
+be time off in one workspace and a normal working day in another. Days marked
+this way carry a small **"holiday"** pill in the timesheet views and an **"off"**
+pill in the dashboard's week summary.
+
 ## Break detection
 
 You're reminded to take a break once you've worked **4.5h continuously** on the

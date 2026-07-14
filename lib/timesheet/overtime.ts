@@ -21,11 +21,19 @@
 //
 // The Individual view trims a segment as one pool with `allocateOvertimeTrim`, so a
 // busy day stays proportionally busy. The Summary view instead evens out the *days*
-// with `allocateOvertimeTrimPerDay`: the weekend is billed in full and the five
-// weekdays are water-filled toward a common (weekTarget − weekend)/5 ceiling — same
-// per-day, trimmable-first cut underneath, just distributed to flatten the week.
+// with `allocateOvertimeTrimPerDay`: the non-working days (weekend + holidays) are
+// billed in full and the working weekdays are water-filled toward a common
+// (weekTarget − non-working)/workdays ceiling — same per-day, trimmable-first cut
+// underneath, just distributed to flatten the week.
+//
+// Holidays (days marked by a time-off entry, see isTimeOffEntry in lib/calc) are
+// non-working days exactly like the weekend: they contribute no cap budget (the
+// weekly cap drops by weeklyHours/5 per holiday) and any work actually tracked on
+// them is billed in full on top, never water-filled down.
 
-import { monthSplitDay } from '../calc';
+import { monthSplitDay, type HolidaySet } from '../calc';
+
+const NO_HOLIDAYS: HolidaySet = new Set<number>();
 
 export interface TrimCell {
   units: number; // current rounded duration, in whole rounding units
@@ -58,22 +66,27 @@ export interface DayTrimCell extends TrimCell {
 
 /**
  * Like {@link allocateOvertimeTrim}, but instead of shrinking the whole segment
- * proportionally it evens out the *weekdays*. The weekend (Sat/Sun, day < 2) is kept
- * billed in full and the five weekdays are water-filled down to a common ceiling so
- * each lands as close as possible to `(capUnits − weekend) / 5`, while the segment
- * total still drops to `capUnits`. When every weekday sits above the line the ceiling
- * is exactly that per-day target; when one is short the others float up to absorb the
+ * proportionally it evens out the *working weekdays*. The non-working days — the
+ * weekend (Sat/Sun, day < 2) plus any `holidays` — are kept billed in full and the
+ * working weekdays are water-filled down to a common ceiling so each lands as close
+ * as possible to `(capUnits − non-working) / workdays`, while the segment total
+ * still drops to `capUnits`. When every workday sits above the line the ceiling is
+ * exactly that per-day target; when one is short the others float up to absorb the
  * slack, so the week still hits the cap rather than billing under it.
  *
  * The per-day reduction is shared across that day's own cells with the same
  * trimmable-"(X)"-first apportionment as `allocateOvertimeTrim`. Returns removals
  * aligned with the input (0 = untouched). When already under the cap, nothing moves.
  *
- * Degenerate case: when the weekend alone exceeds `capUnits` (rare — month-split
- * segments cap below a full week), the weekdays drop to zero and the weekend itself
- * is evened down to the cap, so the contract cap is never exceeded.
+ * Degenerate case: when the non-working days alone exceed `capUnits` (rare —
+ * month-split segments cap below a full week), the workdays drop to zero and the
+ * non-working days are evened down to the cap, so the contract cap is never exceeded.
  */
-export function allocateOvertimeTrimPerDay(cells: DayTrimCell[], capUnits: number): number[] {
+export function allocateOvertimeTrimPerDay(
+  cells: DayTrimCell[],
+  capUnits: number,
+  holidays: HolidaySet = NO_HOLIDAYS
+): number[] {
   const removed = new Array<number>(cells.length).fill(0);
   const cap = Math.max(0, capUnits);
   const total = cells.reduce((s, c) => s + c.units, 0);
@@ -82,23 +95,24 @@ export function allocateOvertimeTrimPerDay(cells: DayTrimCell[], capUnits: numbe
   const days = [...new Set(cells.map((c) => c.day))];
   const unitsOf = (d: number) =>
     cells.reduce((s, c) => (c.day === d ? s + c.units : s), 0);
-  const weekend = days.filter((d) => d < 2);
-  const weekdays = days.filter((d) => d >= 2);
-  const weekendUnits = weekend.reduce((s, d) => s + unitsOf(d), 0);
+  const offDays = days.filter((d) => d < 2 || holidays.has(d)); // weekend + holidays
+  const workdays = days.filter((d) => d >= 2 && !holidays.has(d));
+  const offUnits = offDays.reduce((s, d) => s + unitsOf(d), 0);
 
-  // Per-day units to keep. Normally the weekend rides along whole and the weekdays
-  // are water-filled into whatever the cap leaves; if the weekend alone blows the
-  // cap, the weekdays go to zero and the weekend is evened down to the cap instead.
+  // Per-day units to keep. Normally the non-working days ride along whole and the
+  // workdays are water-filled into whatever the cap leaves; if the non-working days
+  // alone blow the cap, the workdays go to zero and the non-working days are evened
+  // down to the cap instead.
   const keepByDay = new Map<number, number>();
-  const budget = cap - weekendUnits;
+  const budget = cap - offUnits;
   if (budget >= 0) {
-    weekend.forEach((d) => keepByDay.set(d, unitsOf(d)));
-    const keep = waterfillKeep(weekdays.map(unitsOf), budget);
-    weekdays.forEach((d, i) => keepByDay.set(d, keep[i]));
+    offDays.forEach((d) => keepByDay.set(d, unitsOf(d)));
+    const keep = waterfillKeep(workdays.map(unitsOf), budget);
+    workdays.forEach((d, i) => keepByDay.set(d, keep[i]));
   } else {
-    weekdays.forEach((d) => keepByDay.set(d, 0));
-    const keep = waterfillKeep(weekend.map(unitsOf), cap);
-    weekend.forEach((d, i) => keepByDay.set(d, keep[i]));
+    workdays.forEach((d) => keepByDay.set(d, 0));
+    const keep = waterfillKeep(offDays.map(unitsOf), cap);
+    offDays.forEach((d, i) => keepByDay.set(d, keep[i]));
   }
 
   // Reduce each day to its kept budget, trimmable "(X)" first, within that day alone.
@@ -224,21 +238,24 @@ export interface WeekSegment {
  * Split a week into the segments the overtime cap applies to.
  *
  * Billing runs to month-end, so when a month boundary falls mid-week the week is
- * cut there and each side gets its own cap, proportional to the number of weekdays
- * (Mon–Fri) it contains: `weeklyHours / 5 × that count`. A weekend-only segment
- * therefore caps at zero — its work isn't billed — e.g. when the 1st lands on a
- * Monday the leading Sat–Sun is capped at nothing. A week wholly inside one month
- * is a single full-week segment (cap = weeklyHours), exactly as before.
+ * cut there and each side gets its own cap, proportional to the number of working
+ * weekdays (Mon–Fri, minus `holidays`) it contains: `weeklyHours / 5 × that count`.
+ * A holiday therefore drops the cap by a day's worth — a 40h week with one state
+ * holiday caps at 32h. A weekend-only segment caps at zero — its work isn't billed
+ * — e.g. when the 1st lands on a Monday the leading Sat–Sun is capped at nothing.
+ * A week wholly inside one month is a single full-week segment, exactly as before.
  */
 export function weekSegments(
   weekStart: number,
   weeklyHours: number,
-  roundingSeconds: number
+  roundingSeconds: number,
+  holidays: HolidaySet = NO_HOLIDAYS
 ): WeekSegment[] {
-  // Mon–Fri are day indices 2…6; Sat/Sun (0,1) are weekend and add nothing.
+  // Mon–Fri are day indices 2…6; Sat/Sun (0,1) are weekend and add nothing —
+  // and neither does a weekday marked as a holiday.
   const segHours = (start: number, end: number) => {
     let weekdays = 0;
-    for (let d = start; d <= end; d++) if (d >= 2) weekdays++;
+    for (let d = start; d <= end; d++) if (d >= 2 && !holidays.has(d)) weekdays++;
     return (weeklyHours / 5) * weekdays;
   };
   const seg = (start: number, end: number): WeekSegment => ({

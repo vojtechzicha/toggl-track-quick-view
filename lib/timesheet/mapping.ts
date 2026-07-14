@@ -29,6 +29,7 @@ import {
   parseBillingCode,
   roundQuartersPreservingTotal,
   roundingUnitSeconds,
+  type HolidaySet,
 } from '@/lib/calc';
 import { allocateOvertimeTrimPerDay, weekSegments } from './overtime';
 
@@ -166,12 +167,16 @@ export interface MappedDayValue {
  *    here is what that sheet bills, trimmed or not.
  *
  * Week-scoped because the cap is a weekly affair; days with no mapped time simply
- * have no aggregate and produce no value.
+ * have no aggregate and produce no value. `holidays` is the sheet's holiday set
+ * (days marked by a time-off entry): a holiday shrinks the sub-client's weekly cap
+ * exactly as it shrinks this sheet's — the person's day off is the same day off on
+ * both engagements.
  */
 export function finalizeMappedWeek(
   aggByDay: ReadonlyMap<number, MappedAgg>,
   mapping: CodeMapping,
-  weekStart: number
+  weekStart: number,
+  holidays?: HolidaySet
 ): Map<number, MappedDayValue> {
   const unit = roundingUnitSeconds(mapping.roundingHours);
 
@@ -195,7 +200,7 @@ export function finalizeMappedWeek(
 
   // The sub-client's own overtime pass, when declared on the mapping.
   if (mapping.noOvertime && (mapping.weeklyHours ?? 0) > 0) {
-    for (const seg of weekSegments(weekStart, mapping.weeklyHours as number, unit)) {
+    for (const seg of weekSegments(weekStart, mapping.weeklyHours as number, unit, holidays)) {
       const idx = cells
         .map((_, i) => i)
         .filter((i) => cells[i].day >= seg.startDay && cells[i].day <= seg.endDay);
@@ -205,7 +210,8 @@ export function finalizeMappedWeek(
           trimmableUnits: cells[i].trimmableUnits,
           day: cells[i].day,
         })),
-        seg.capUnits
+        seg.capUnits,
+        holidays
       );
       idx.forEach((i, k) => (cells[i].units -= removed[k]));
     }

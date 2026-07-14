@@ -567,6 +567,20 @@ body {
   font-size: clamp(12px, 1.7vmin, 14px);
   font-weight: 600;
 }
+/* Small "off" pill on a week row whose day is marked as time off. */
+.week-holiday {
+  display: inline-block;
+  margin-left: 6px;
+  padding: 0 5px;
+  border-radius: 999px;
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--accent-soft);
+  border: 1px solid var(--accent-soft);
+  vertical-align: middle;
+}
 .week-vals {
   font-size: clamp(11px, 1.6vmin, 13px);
   color: var(--muted);
@@ -1141,6 +1155,20 @@ body:has(.ts-page) {
 .ts-overtime {
   white-space: normal;
   overflow-wrap: anywhere;
+}
+/* Small "holiday" pill on a day marked as time off (timesheet day headers). */
+.ts-holiday {
+  display: inline-block;
+  margin-left: 6px;
+  padding: 1px 6px;
+  border-radius: 999px;
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--accent-soft);
+  border: 1px solid var(--accent-soft);
+  vertical-align: middle;
 }
 .ts-overtime-cell {
   text-align: right;

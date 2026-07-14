@@ -5,6 +5,8 @@
 import {
   fmtHoursLabel,
   fmtTimeOfDay,
+  holidayDaysOfWeek,
+  isTimeOffEntry,
   parseBillingCode,
   roundQuartersPreservingTotal,
   type TimeEntry,
@@ -74,6 +76,9 @@ export interface IndividualDay {
   // overtime isn't billable (seconds). Shown on a separate "Overtime" line; not
   // part of `total` (which is what's actually billed).
   overtime: number;
+  // True when the day carries a time-off entry (state holiday etc.): a
+  // non-working day — the weekly cap dropped by a day's worth because of it.
+  holiday: boolean;
 }
 
 export interface IndividualWeek {
@@ -98,6 +103,10 @@ export interface IndividualInput {
   // "Overtime" line. When false, neither input has any effect.
   noOvertime: boolean;
   weeklyHours: number;
+  // The tag marking a time-off entry (state holiday etc.). Such an entry turns
+  // its day into a non-working day (like a weekend: no cap budget, no target)
+  // and is itself never billed or shown. Empty/absent falls back to the default.
+  timeOffTag?: string;
   // Linked billing codes: projects whose entries carry another client's tags and
   // bill here as one fixed day block per project (see lib/timesheet/mapping).
   codeMappings?: CodeMapping[];
@@ -310,7 +319,8 @@ function finalizeDay(
   { bill, warnRows, overlaps }: ClassifiedDay,
   roundingMs: number,
   overtimeStripped: number,
-  maxDescLen: number | null | undefined
+  maxDescLen: number | null | undefined,
+  holiday: boolean
 ): IndividualDay {
   const billKept = bill.filter((r) => r.rounded > 0);
 
@@ -336,7 +346,7 @@ function finalizeDay(
 
   const rows = [...billKept, ...warnRows];
   const total = billKept.reduce((s, r) => s + r.rounded, 0);
-  return { dayIdx, dateMs, rows, total, overlaps, overtime: overtimeStripped };
+  return { dayIdx, dateMs, rows, total, overlaps, overtime: overtimeStripped, holiday };
 }
 
 /**
@@ -355,6 +365,7 @@ export function buildIndividualWeek({
   maxDescriptionLength,
   noOvertime,
   weeklyHours,
+  timeOffTag,
   codeMappings,
 }: IndividualInput): IndividualWeek | null {
   if (!weekStart) return null;
@@ -363,6 +374,11 @@ export function buildIndividualWeek({
   const roundingMs = roundingSeconds * 1000;
   const weekEnd = weekStart + 7 * DAY_MS;
 
+  // Days marked as time off by a selected project's entry: non-working days for
+  // the overtime cap below. The marker entries themselves never bill (skipped in
+  // the loop); other entries on such a day still bill — in full, like weekend work.
+  const holidays = holidayDaysOfWeek(entries, ids, weekStart, timeOffTag);
+
   const byDay: DayEntry[][] = Array.from({ length: 7 }, () => []);
   for (const e of entries) {
     if (e.project_id == null || !ids.has(e.project_id)) continue;
@@ -370,6 +386,9 @@ export function buildIndividualWeek({
     if (!Number.isFinite(startMs) || startMs < weekStart || startMs >= weekEnd) continue;
     const dayIdx = Math.floor((startMs - weekStart) / DAY_MS);
     if (dayIdx < 0 || dayIdx > 6) continue;
+    // The time-off marker only classifies its day (see `holidays` above) — the
+    // entry itself is never billed, warned about, or shown.
+    if (isTimeOffEntry(e.tags, timeOffTag)) continue;
 
     const running = e.duration < 0 || !e.stop;
     const stopMs = running ? nowMs : new Date(e.stop as string).getTime();
@@ -407,7 +426,7 @@ export function buildIndividualWeek({
   });
   for (const [projId, byDayAgg] of mappedWeeks) {
     const mapping = mappingFor(codeMappings, projId)!;
-    const values = finalizeMappedWeek(byDayAgg, mapping, weekStart);
+    const values = finalizeMappedWeek(byDayAgg, mapping, weekStart, holidays);
     for (const [day, value] of values) {
       const agg = byDayAgg.get(day)!;
       classified[day].bill.push({
@@ -431,9 +450,11 @@ export function buildIndividualWeek({
   // Week-level overtime pass: if the contract disallows billing overtime and a
   // segment's billable lines exceed its cap, shave whole rounding units off them
   // (trimmable "(X)" portions first), spread proportionally over codes and days.
-  // A month boundary mid-week splits the week into two independently-capped
-  // segments; otherwise it's one full-week segment. Each line's `rounded` is
-  // reduced in place and the per-day strip recorded.
+  // A holiday shrinks the segment's cap by a day's worth (weeklyHours / 5, see
+  // weekSegments), so a 40h week with a state holiday caps at 32h. A month
+  // boundary mid-week splits the week into two independently-capped segments;
+  // otherwise it's one full-week segment. Each line's `rounded` is reduced in
+  // place and the per-day strip recorded.
   const overtimeByDay = new Array<number>(7).fill(0);
   if (noOvertime && weeklyHours > 0) {
     const toCell = (row: Row) => {
@@ -443,7 +464,7 @@ export function buildIndividualWeek({
       const frac = row.seconds > 0 ? (row.trimmableSeconds ?? 0) / row.seconds : 0;
       return { units, trimmableUnits: Math.min(units, Math.round(units * frac)) };
     };
-    for (const seg of weekSegments(weekStart, weeklyHours, roundingSeconds)) {
+    for (const seg of weekSegments(weekStart, weeklyHours, roundingSeconds, holidays)) {
       // Fixed (linked-code) blocks are protected from the cut — they must keep
       // equalling the sub-client sheet's day totals — but still consume the cap,
       // so the trim takes that much more off the native lines instead.
@@ -477,7 +498,8 @@ export function buildIndividualWeek({
         c,
         roundingMs,
         overtimeByDay[dayIdx],
-        maxDescriptionLength
+        maxDescriptionLength,
+        holidays.has(dayIdx)
       )
     )
     .filter((d) => d.rows.length > 0 || d.overlaps.length > 0 || d.overtime > 0);
