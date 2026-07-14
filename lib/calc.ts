@@ -146,22 +146,39 @@ export function billingTagsOf(tags?: string[], prefix?: string): string[] {
   return tags.filter((t) => t.startsWith(p));
 }
 
-// ---- Overtime marker ----
-// A billing code ending in this literal suffix is an internal "trimmable" marker:
-// the time is tracked but flagged as the first thing to drop when a contract
-// disallows billing overtime (see lib/timesheet/overtime). The suffix is private —
-// it's stripped from every displayed/exported code so a client never sees it.
+// ---- Overtime markers ----
+// A billing code ending in one of these literal suffixes carries an internal
+// overtime-trim marker (see lib/timesheet/overtime):
+//   "(X)" — trimmable: the first time to drop when a contract disallows billing
+//           overtime.
+//   "(!)" — never trimmed: the overtime cap must not touch this time; the cut
+//           falls on the other lines instead (it still consumes the cap).
+// Both suffixes are private — they're stripped from every displayed/exported
+// code so a client never sees them, and `D123(X)` / `D123(!)` merge into the
+// same displayed `D123` line as their plain twin.
 export const OVERTIME_TAG_SUFFIX = '(X)';
+export const NO_TRIM_TAG_SUFFIX = '(!)';
 
 /**
- * Split a billing code into its displayed base and whether it carries the internal
- * "(X)" overtime marker. The suffix (and any whitespace before it) is removed from
- * the base, so `D123(X)` and `D123 (X)` both display as `D123` with trimmable=true.
+ * Split a billing code into its displayed base and which internal overtime
+ * marker it carries. The suffix (and any whitespace before it) is removed from
+ * the base, so `D123(X)` and `D123 (X)` both display as `D123` with
+ * trimmable=true, and `D123(!)` displays as `D123` with neverTrim=true.
  */
-export function parseBillingCode(code: string): { base: string; trimmable: boolean } {
-  const trimmable = code.endsWith(OVERTIME_TAG_SUFFIX);
-  const base = trimmable ? code.slice(0, -OVERTIME_TAG_SUFFIX.length).trimEnd() : code;
-  return { base, trimmable };
+export function parseBillingCode(code: string): {
+  base: string;
+  trimmable: boolean;
+  neverTrim: boolean;
+} {
+  if (code.endsWith(OVERTIME_TAG_SUFFIX)) {
+    const base = code.slice(0, -OVERTIME_TAG_SUFFIX.length).trimEnd();
+    return { base, trimmable: true, neverTrim: false };
+  }
+  if (code.endsWith(NO_TRIM_TAG_SUFFIX)) {
+    const base = code.slice(0, -NO_TRIM_TAG_SUFFIX.length).trimEnd();
+    return { base, trimmable: false, neverTrim: true };
+  }
+  return { base: code, trimmable: false, neverTrim: false };
 }
 
 /** True when an entry carries at least one billing tag. */

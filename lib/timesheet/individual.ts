@@ -49,6 +49,7 @@ export interface Row {
   projId?: number | null; // owning project, for 'bill' rows
   seconds: number; // raw, pre-rounding
   trimmableSeconds?: number; // of `seconds`, how much came from "(X)"-marked entries
+  noTrimSeconds?: number; // of `seconds`, how much came from "(!)"-marked entries (never trimmed)
   rounded: number; // filled in after rounding
   startMs?: number; // anchored display start (bill rows, after rounding)
   endMs?: number; // start + rounded duration
@@ -246,11 +247,12 @@ function classifyDay(
       continue;
     }
 
-    // The "(X)" marker is just a trimmable *version* of the same billing code, so
-    // it merges into its plain twin: one displayed line, with the "(X)" seconds
-    // tracked separately as the trim budget. Same code under two different projects
-    // still stays separate (a project is a group of billing tags).
-    const { base, trimmable } = parseBillingCode(tags[0]);
+    // The "(X)" / "(!)" markers are just trim *versions* of the same billing code,
+    // so they merge into their plain twin: one displayed line, with the "(X)"
+    // seconds tracked separately as the trim budget and the "(!)" seconds as the
+    // untouchable floor. Same code under two different projects still stays
+    // separate (a project is a group of billing tags).
+    const { base, trimmable, neverTrim } = parseBillingCode(tags[0]);
     const canCombine =
       current !== null &&
       current.code === base &&
@@ -261,6 +263,7 @@ function classifyDay(
     if (canCombine && current) {
       current.seconds += e.seconds;
       if (trimmable) current.trimmableSeconds = (current.trimmableSeconds ?? 0) + e.seconds;
+      if (neverTrim) current.noTrimSeconds = (current.noTrimSeconds ?? 0) + e.seconds;
       mergeDesc(current.descs, e.desc);
     } else {
       current = {
@@ -270,6 +273,7 @@ function classifyDay(
         projId: e.projId,
         seconds: e.seconds,
         trimmableSeconds: trimmable ? e.seconds : 0,
+        noTrimSeconds: neverTrim ? e.seconds : 0,
         rounded: 0,
         descs: [],
         desc: '',
@@ -436,6 +440,7 @@ export function buildIndividualWeek({
         projId,
         seconds: agg.seconds,
         trimmableSeconds: 0,
+        noTrimSeconds: 0,
         rounded: value.seconds,
         descs: value.descs,
         desc: '',
@@ -461,8 +466,12 @@ export function buildIndividualWeek({
       const units = row.rounded / roundingSeconds;
       // The trimmable budget is the "(X)" share of this line's *rounded* units, so
       // a fully-"(X)" line is fully trimmable and a half-"(X)" line gives up half.
+      // The protected floor is its "(!)" share, capped so the shares can't overlap.
       const frac = row.seconds > 0 ? (row.trimmableSeconds ?? 0) / row.seconds : 0;
-      return { units, trimmableUnits: Math.min(units, Math.round(units * frac)) };
+      const trimmableUnits = Math.min(units, Math.round(units * frac));
+      const fracKeep = row.seconds > 0 ? (row.noTrimSeconds ?? 0) / row.seconds : 0;
+      const noTrimUnits = Math.min(units - trimmableUnits, Math.round(units * fracKeep));
+      return { units, trimmableUnits, noTrimUnits };
     };
     for (const seg of weekSegments(weekStart, weeklyHours, roundingSeconds, holidays)) {
       // Fixed (linked-code) blocks are protected from the cut — they must keep

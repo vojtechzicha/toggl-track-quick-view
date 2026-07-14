@@ -11,7 +11,11 @@
 //      part trimmable (some of its time tagged "(X)", some not), so the budget is
 //      per-line, not all-or-nothing.
 //   2. Only if emptying every "(X)" portion still isn't enough, the firm remainder
-//      of the lines is trimmed too.
+//      of the lines is trimmed too — except any "(!)"-marked portion (a line's
+//      `noTrimUnits`), which is NEVER touched: it always bills whole while still
+//      consuming the cap, so the cut lands on the other lines instead. When the
+//      protected time alone exceeds the cap the billed total stays above it — the
+//      same precedent the fixed linked-code lines already set.
 //
 // Within each tier the cut is spread proportionally to each line's available size
 // (the same largest-remainder / Hamilton method the rounding uses), so the reduction
@@ -38,12 +42,22 @@ const NO_HOLIDAYS: HolidaySet = new Set<number>();
 export interface TrimCell {
   units: number; // current rounded duration, in whole rounding units
   trimmableUnits: number; // the "(X)"-marked portion of those units (0 ≤ this ≤ units)
+  // The "(!)"-marked portion of those units — never removed. Disjoint from the
+  // trimmable share; trimmableUnits + noTrimUnits ≤ units. Absent = 0.
+  noTrimUnits?: number;
+}
+
+/** The units of a cell the trim may still take (everything but the "(!)" share). */
+function flexibleUnits(c: TrimCell): number {
+  return Math.max(0, c.units - (c.noTrimUnits ?? 0));
 }
 
 /**
  * Whole rounding units to remove from each cell so the billable total drops to
  * `capUnits`. Returns an array aligned with the input (0 = untouched). When already
- * at or under the cap, nothing is removed.
+ * at or under the cap, nothing is removed. "(!)"-marked portions are never removed,
+ * so when the protected time alone exceeds the cap the result under-trims — the
+ * billed total then stays above the cap by exactly that protected excess.
  */
 export function allocateOvertimeTrim(cells: TrimCell[], capUnits: number): number[] {
   const removed = new Array<number>(cells.length).fill(0);
@@ -51,11 +65,12 @@ export function allocateOvertimeTrim(cells: TrimCell[], capUnits: number): numbe
   let excess = total - Math.max(0, capUnits);
   if (excess <= 0) return removed;
 
-  // Tier 1: each line's trimmable "(X)" portion. Tier 2: whatever firm time is left.
+  // Tier 1: each line's trimmable "(X)" portion. Tier 2: whatever firm time is
+  // left, never touching the protected "(!)" share.
   excess = trimTier(cells, removed, excess, (c, i) =>
-    Math.max(0, Math.min(c.trimmableUnits, c.units) - removed[i])
+    Math.max(0, Math.min(c.trimmableUnits, flexibleUnits(c)) - removed[i])
   );
-  trimTier(cells, removed, excess, (c, i) => c.units - removed[i]);
+  trimTier(cells, removed, excess, (c, i) => flexibleUnits(c) - removed[i]);
   return removed;
 }
 
@@ -78,9 +93,12 @@ export interface DayTrimCell extends TrimCell {
  * trimmable-"(X)"-first apportionment as `allocateOvertimeTrim`. Returns removals
  * aligned with the input (0 = untouched). When already under the cap, nothing moves.
  *
+ * Every day's kept total is floored at its protected "(!)" units — that share is
+ * never removed, even when it means the billed total stays above the cap.
+ *
  * Degenerate case: when the non-working days alone exceed `capUnits` (rare —
- * month-split segments cap below a full week), the workdays drop to zero and the
- * non-working days are evened down to the cap, so the contract cap is never exceeded.
+ * month-split segments cap below a full week), the workdays drop to their
+ * protected floor and the non-working days are evened down toward the cap.
  */
 export function allocateOvertimeTrimPerDay(
   cells: DayTrimCell[],
@@ -95,23 +113,28 @@ export function allocateOvertimeTrimPerDay(
   const days = [...new Set(cells.map((c) => c.day))];
   const unitsOf = (d: number) =>
     cells.reduce((s, c) => (c.day === d ? s + c.units : s), 0);
+  // A day's protected "(!)" units — the floor its kept total can never drop below.
+  const noTrimOf = (d: number) =>
+    cells.reduce((s, c) => (c.day === d ? s + Math.min(c.noTrimUnits ?? 0, c.units) : s), 0);
   const offDays = days.filter((d) => d < 2 || holidays.has(d)); // weekend + holidays
   const workdays = days.filter((d) => d >= 2 && !holidays.has(d));
   const offUnits = offDays.reduce((s, d) => s + unitsOf(d), 0);
 
   // Per-day units to keep. Normally the non-working days ride along whole and the
   // workdays are water-filled into whatever the cap leaves; if the non-working days
-  // alone blow the cap, the workdays go to zero and the non-working days are evened
-  // down to the cap instead.
+  // alone blow the cap, the workdays keep only their protected floor and the
+  // non-working days are evened down to the cap instead. Every day's kept total is
+  // floored at its protected "(!)" units, so the within-day cut below never has to
+  // reach into them (the billed total may then exceed the cap — by design).
   const keepByDay = new Map<number, number>();
   const budget = cap - offUnits;
   if (budget >= 0) {
     offDays.forEach((d) => keepByDay.set(d, unitsOf(d)));
-    const keep = waterfillKeep(workdays.map(unitsOf), budget);
+    const keep = waterfillKeep(workdays.map(unitsOf), budget, workdays.map(noTrimOf));
     workdays.forEach((d, i) => keepByDay.set(d, keep[i]));
   } else {
-    workdays.forEach((d) => keepByDay.set(d, 0));
-    const keep = waterfillKeep(offDays.map(unitsOf), cap);
+    workdays.forEach((d) => keepByDay.set(d, noTrimOf(d)));
+    const keep = waterfillKeep(offDays.map(unitsOf), cap, offDays.map(noTrimOf));
     offDays.forEach((d, i) => keepByDay.set(d, keep[i]));
   }
 
@@ -130,30 +153,38 @@ export function allocateOvertimeTrimPerDay(
 /**
  * Water-fill: keep as much of each day's `units` as a single common ceiling allows
  * without the kept total exceeding `target`, raising the ceiling until the total is
- * met. Days below the ceiling keep everything; days above are levelled to it. Returns
- * kept units per day. With `target ≥ sum` nothing is trimmed; with `target ≤ 0` all
- * goes. The few units that don't divide evenly land on the largest days first.
+ * met. Days below the ceiling keep everything; days above are levelled to it. Each
+ * day's kept units never drop below its `floors` entry (the protected "(!)" share)
+ * — a day whose floor sits above the ceiling simply keeps its floor. Returns kept
+ * units per day. With `target ≥ sum` nothing is trimmed; with `target ≤ Σfloors`
+ * only the floors survive (the kept total may then exceed `target` — protected
+ * time is never cut). The few units that don't divide evenly land on the largest
+ * days first.
  */
-function waterfillKeep(units: number[], target: number): number[] {
+function waterfillKeep(units: number[], target: number, floors?: number[]): number[] {
+  const flo = units.map((u, i) => Math.min(Math.max(0, floors?.[i] ?? 0), u));
   const total = units.reduce((a, b) => a + b, 0);
   if (target >= total) return [...units];
-  if (target <= 0) return units.map(() => 0);
+  const floorSum = flo.reduce((a, b) => a + b, 0);
+  if (target <= floorSum) return flo;
 
-  // Largest integer ceiling L with Σ min(u, L) ≤ target (binary search the staircase).
+  // Largest integer ceiling L with Σ max(floor, min(u, L)) ≤ target (binary search
+  // the staircase — still monotone in L with the floors in place).
+  const keptAt = (level: number) =>
+    units.reduce((a, u, i) => a + Math.max(flo[i], Math.min(u, level)), 0);
   let lo = 0;
   let hi = Math.max(...units);
   let level = 0;
   while (lo <= hi) {
     const mid = (lo + hi) >> 1;
-    const sum = units.reduce((a, u) => a + Math.min(u, mid), 0);
-    if (sum <= target) {
+    if (keptAt(mid) <= target) {
       level = mid;
       lo = mid + 1;
     } else {
       hi = mid - 1;
     }
   }
-  const keep = units.map((u) => Math.min(u, level));
+  const keep = units.map((u, i) => Math.max(flo[i], Math.min(u, level)));
   // Hand the remainder to the days still above the ceiling, largest first, so the
   // kept total reaches `target` exactly while staying as level as the integers allow.
   let leftover = target - keep.reduce((a, b) => a + b, 0);

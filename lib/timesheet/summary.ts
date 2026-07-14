@@ -34,6 +34,7 @@ export interface Cell {
   descTruncated: boolean;
   seconds: number;
   trimmableSeconds: number; // of `seconds`, how much came from "(X)"-marked entries
+  noTrimSeconds: number; // of `seconds`, how much came from "(!)"-marked entries (never trimmed)
 }
 
 // A normal row is one (project, billing-tag) pair; warning rows are the sentinels.
@@ -202,10 +203,11 @@ export function buildSummaryGrid({
       addToMappedAgg(agg, tags[0], seconds, e.description, startMs);
       continue;
     } else {
-      // The "(X)" marker is just a trimmable version of the same billing code, so
-      // it shares one row with its plain twin (keyed by the stripped base); the
-      // "(X)" seconds are tracked per cell as the trim budget. The marker is
-      // internal, so only the base is displayed.
+      // The "(X)" / "(!)" markers are just trim variants of the same billing code,
+      // so they share one row with their plain twin (keyed by the stripped base);
+      // the "(X)" seconds are tracked per cell as the trim budget and the "(!)"
+      // seconds as the untouchable floor. The markers are internal, so only the
+      // base is displayed.
       const { base } = parseBillingCode(tags[0]);
       rowKey = `p${e.project_id}|${base}`;
       if (!rowMeta.has(rowKey)) {
@@ -221,12 +223,14 @@ export function buildSummaryGrid({
     const key = `${dayIdx}|${rowKey}`;
     let cell = cells.get(key);
     if (!cell) {
-      cell = { descs: [], desc: '', descTruncated: false, seconds: 0, trimmableSeconds: 0 };
+      cell = { descs: [], desc: '', descTruncated: false, seconds: 0, trimmableSeconds: 0, noTrimSeconds: 0 };
       cells.set(key, cell);
     }
     cell.seconds += seconds;
-    if (rowKey !== UNTAGGED && rowKey !== MULTIPLE && parseBillingCode(tags[0]).trimmable) {
-      cell.trimmableSeconds += seconds;
+    if (rowKey !== UNTAGGED && rowKey !== MULTIPLE) {
+      const { trimmable, neverTrim } = parseBillingCode(tags[0]);
+      if (trimmable) cell.trimmableSeconds += seconds;
+      if (neverTrim) cell.noTrimSeconds += seconds;
     }
     addDesc(cell, e.description ?? '');
   }
@@ -254,6 +258,7 @@ export function buildSummaryGrid({
         descTruncated: false,
         seconds: byDay.get(day)!.seconds,
         trimmableSeconds: 0,
+        noTrimSeconds: 0,
       });
     }
   }
@@ -302,7 +307,13 @@ export function buildSummaryGrid({
   const overtimeByDay = new Array<number>(7).fill(0);
   if (noOvertime && weeklyHours > 0) {
     for (const seg of weekSegments(weekStart, weeklyHours, roundingSeconds, holidays)) {
-      const billCells: { key: string; day: number; units: number; trimmableUnits: number }[] = [];
+      const billCells: {
+        key: string;
+        day: number;
+        units: number;
+        trimmableUnits: number;
+        noTrimUnits: number;
+      }[] = [];
       let mappedUnits = 0;
       for (const d of dayCols) {
         if (d < seg.startDay || d > seg.endDay) continue;
@@ -314,14 +325,23 @@ export function buildSummaryGrid({
             continue;
           }
           const cell = cells.get(`${d}|${r}`);
-          // The trimmable budget is the "(X)" share of this cell's rounded units.
+          // The trimmable budget is the "(X)" share of this cell's rounded units;
+          // the protected floor is its "(!)" share (never cut, capped so the two
+          // shares can't overlap).
           const frac = cell && cell.seconds > 0 ? cell.trimmableSeconds / cell.seconds : 0;
           const trimmableUnits = Math.min(units, Math.round(units * frac));
-          billCells.push({ key: `${d}|${r}`, day: d, units, trimmableUnits });
+          const fracKeep = cell && cell.seconds > 0 ? cell.noTrimSeconds / cell.seconds : 0;
+          const noTrimUnits = Math.min(units - trimmableUnits, Math.round(units * fracKeep));
+          billCells.push({ key: `${d}|${r}`, day: d, units, trimmableUnits, noTrimUnits });
         }
       }
       const removed = allocateOvertimeTrimPerDay(
-        billCells.map((c) => ({ units: c.units, trimmableUnits: c.trimmableUnits, day: c.day })),
+        billCells.map((c) => ({
+          units: c.units,
+          trimmableUnits: c.trimmableUnits,
+          noTrimUnits: c.noTrimUnits,
+          day: c.day,
+        })),
         Math.max(0, seg.capUnits - mappedUnits),
         holidays
       );

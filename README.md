@@ -219,9 +219,17 @@ How the trim is shared out:
   or code is singled out.
 - If trimming every `(X)` share still isn't enough to reach the cap, the firm
   remainder of the billable lines is trimmed the same way.
+- **`(!)`-marked time is never trimmed.** Append `(!)` to a billing tag (e.g.
+  `D123(!)`) to protect that time: it merges into the same displayed line as
+  `D123`, always bills whole, and still consumes the cap — so the cut falls on
+  the other lines (and in the Summary view a day keeps at least its protected
+  time, the leveling working around it). In the extreme case where the
+  protected time alone exceeds the cap, the billed total stays above the cap —
+  same as a linked-code line, which is also never trimmed.
 
-The **`(X)` marker is internal**: it's stripped from every displayed/exported code,
-so a client never sees it. The cap is measured on **billable lines only** — the
+The **`(X)` / `(!)` markers are internal**: they're stripped from every
+displayed/exported code, so a client never sees them. The cap is measured on
+**billable lines only** — the
 "No billing tag" / "Multiple billing tags" / "Too long" warnings are problems to
 fix in Toggl, not billable slack, so they never count toward it or get trimmed.
 

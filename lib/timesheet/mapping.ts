@@ -100,10 +100,12 @@ export function mappingGridCompatible(
 
 /** Accumulator for one (mapped project, day): raw per-code time plus display bits. */
 export interface MappedAgg {
-  /** Raw seconds per linked code (display base — "(X)" merged into its plain twin). */
+  /** Raw seconds per linked code (display base — "(X)"/"(!)" merged into the plain twin). */
   codeSeconds: Map<string, number>;
   /** Of `codeSeconds`, the "(X)"-marked share per code — the sub-trim's budget. */
   codeTrimmable: Map<string, number>;
+  /** Of `codeSeconds`, the "(!)"-marked share per code — never trimmed. */
+  codeNoTrim: Map<string, number>;
   /** De-duplicated entry descriptions, first-seen order. */
   descs: string[];
   /** Raw total seconds (pre-rounding), for cells that carry raw values. */
@@ -116,6 +118,7 @@ export function newMappedAgg(startMs: number): MappedAgg {
   return {
     codeSeconds: new Map(),
     codeTrimmable: new Map(),
+    codeNoTrim: new Map(),
     descs: [],
     seconds: 0,
     firstStartMs: startMs,
@@ -130,9 +133,10 @@ export function addToMappedAgg(
   desc: string | undefined,
   startMs: number
 ): void {
-  const { base, trimmable } = parseBillingCode(tag);
+  const { base, trimmable, neverTrim } = parseBillingCode(tag);
   agg.codeSeconds.set(base, (agg.codeSeconds.get(base) ?? 0) + seconds);
   if (trimmable) agg.codeTrimmable.set(base, (agg.codeTrimmable.get(base) ?? 0) + seconds);
+  if (neverTrim) agg.codeNoTrim.set(base, (agg.codeNoTrim.get(base) ?? 0) + seconds);
   agg.seconds += seconds;
   agg.firstStartMs = Math.min(agg.firstStartMs, startMs);
   const text = desc?.trim();
@@ -181,8 +185,14 @@ export function finalizeMappedWeek(
   const unit = roundingUnitSeconds(mapping.roundingHours);
 
   // The sub sheet's own per-day rounding pass, yielding one cell per (day, code)
-  // in whole mapping-grid units, each with its "(X)" trim budget.
-  const cells: { day: number; code: string; units: number; trimmableUnits: number }[] = [];
+  // in whole mapping-grid units, each with its "(X)" trim budget and "(!)" floor.
+  const cells: {
+    day: number;
+    code: string;
+    units: number;
+    trimmableUnits: number;
+    noTrimUnits: number;
+  }[] = [];
   for (const [day, agg] of aggByDay) {
     const codes = [...agg.codeSeconds.keys()].sort((a, b) => a.localeCompare(b));
     const rounded = roundQuartersPreservingTotal(
@@ -194,7 +204,10 @@ export function finalizeMappedWeek(
       if (units <= 0) return;
       const secs = agg.codeSeconds.get(code) ?? 0;
       const frac = secs > 0 ? (agg.codeTrimmable.get(code) ?? 0) / secs : 0;
-      cells.push({ day, code, units, trimmableUnits: Math.min(units, Math.round(units * frac)) });
+      const trimmableUnits = Math.min(units, Math.round(units * frac));
+      const fracKeep = secs > 0 ? (agg.codeNoTrim.get(code) ?? 0) / secs : 0;
+      const noTrimUnits = Math.min(units - trimmableUnits, Math.round(units * fracKeep));
+      cells.push({ day, code, units, trimmableUnits, noTrimUnits });
     });
   }
 
@@ -208,6 +221,7 @@ export function finalizeMappedWeek(
         idx.map((i) => ({
           units: cells[i].units,
           trimmableUnits: cells[i].trimmableUnits,
+          noTrimUnits: cells[i].noTrimUnits,
           day: cells[i].day,
         })),
         seg.capUnits,
