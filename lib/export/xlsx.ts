@@ -21,7 +21,7 @@ function summaryAOA(doc: Extract<ExportDoc, { view: 'summary' }>): Cell[][] {
     aoa.push([week.label]);
     aoa.push(['Billing tag', ...week.dayLabels, 'Total', 'Description']);
     for (const r of week.rows) {
-      aoa.push([r.label, ...r.cells.map(hoursCell), secsToHoursNum(r.total), r.descs.join('; ')]);
+      aoa.push([r.label, ...r.cells.map(hoursCell), secsToHoursNum(r.total), r.desc]);
     }
     aoa.push(['Total', ...week.dayTotals.map(hoursCell), secsToHoursNum(week.grandTotal), '']);
     aoa.push([]);

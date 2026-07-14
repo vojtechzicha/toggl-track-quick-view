@@ -98,7 +98,7 @@ function summaryContent(doc: SummaryDoc): Content[] {
         { text: r.label, style },
         ...r.cells.map((c) => ({ text: hoursOrDash(c), style, alignment: 'center' as const })),
         { text: hoursOrDash(r.total), style, alignment: 'center' as const },
-        { text: r.descs.join('; '), style },
+        { text: r.desc, style },
       ]);
     }
     body.push([

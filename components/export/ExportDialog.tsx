@@ -43,6 +43,8 @@ export interface ExportDialogProps {
   billingTagPrefix: string;
   /** Rounding granularity in seconds (900 = 15 min default, 720 = 12 min). */
   roundingSeconds: number;
+  /** Optional cap (characters) on merged descriptions; null = no limit. */
+  maxDescriptionLength: number | null;
   /** When true, cap each week's billable total at `weeklyHours` (overtime unbilled). */
   noOvertime: boolean;
   /** Weekly cap (hours) the overtime trim reduces the billed total to. */
@@ -72,6 +74,7 @@ export default function ExportDialog({
   maxBillableHours,
   billingTagPrefix,
   roundingSeconds,
+  maxDescriptionLength,
   noOvertime,
   weeklyHours,
   codeMappings,
@@ -149,6 +152,7 @@ export default function ExportDialog({
         maxBillableHours,
         billingTagPrefix,
         roundingSeconds,
+        maxDescriptionLength,
         noOvertime,
         weeklyHours,
         codeMappings,

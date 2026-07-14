@@ -26,6 +26,7 @@ export default function SummaryTimesheet({
   multi,
   billingTagPrefix,
   roundingSeconds,
+  maxDescriptionLength,
   noOvertime,
   weeklyHours,
   codeMappings,
@@ -39,11 +40,12 @@ export default function SummaryTimesheet({
         projects,
         billingTagPrefix,
         roundingSeconds,
+        maxDescriptionLength,
         noOvertime,
         weeklyHours,
         codeMappings,
       }),
-    [entries, weekStart, nowMs, projects, billingTagPrefix, roundingSeconds, noOvertime, weeklyHours, codeMappings]
+    [entries, weekStart, nowMs, projects, billingTagPrefix, roundingSeconds, maxDescriptionLength, noOvertime, weeklyHours, codeMappings]
   );
 
   if (!grid || grid.rows.length === 0) {
@@ -104,14 +106,27 @@ export default function SummaryTimesheet({
                       </td>
                     );
                   }
-                  const combined = (grid.cells.get(`${d}|${row}`)?.descs ?? []).join('; ');
+                  const cell = grid.cells.get(`${d}|${row}`);
+                  const combined = cell?.desc ?? '';
                   return (
                     <td key={d} className="ts-cell">
                       <div className="ts-cell-head">
                         <span className="ts-dur">{fmtHours(secs)}</span>
                         {combined && <CopyButton text={combined} />}
                       </div>
-                      {combined && <div className="ts-desc">{combined}</div>}
+                      {combined && (
+                        <div className="ts-desc">
+                          {cell?.descTruncated && (
+                            <span
+                              className="ts-desc-cut"
+                              title={`Shortened to the ${maxDescriptionLength}-character limit. Full description: ${cell.descs.join('; ')}`}
+                            >
+                              ✂{' '}
+                            </span>
+                          )}
+                          {combined}
+                        </div>
+                      )}
                     </td>
                   );
                 })}

@@ -294,6 +294,7 @@ export default function TimesheetPage() {
             maxBillableHours={effectiveMaxBillableHours(settings)}
             billingTagPrefix={settings.billingTagPrefix}
             roundingSeconds={roundingUnitSeconds(settings.roundingHours)}
+            maxDescriptionLength={settings.maxDescriptionLength}
             noOvertime={settings.noOvertime}
             weeklyHours={settings.weeklyHours}
             codeMappings={settings.codeMappings}
@@ -322,6 +323,7 @@ export default function TimesheetPage() {
           maxBillableHours={effectiveMaxBillableHours(settings)}
           billingTagPrefix={settings.billingTagPrefix}
           roundingSeconds={roundingUnitSeconds(settings.roundingHours)}
+          maxDescriptionLength={settings.maxDescriptionLength}
           noOvertime={settings.noOvertime}
           weeklyHours={settings.weeklyHours}
           codeMappings={settings.codeMappings}

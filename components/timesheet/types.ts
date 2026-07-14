@@ -30,6 +30,9 @@ export interface TimesheetViewProps {
   billingTagPrefix: string;
   // The rounding granularity in seconds (900 = 15 min default, 720 = 12 min).
   roundingSeconds: number;
+  // Optional cap (characters) on every merged description the timesheet shows,
+  // copies or exports — the client's system rejects longer messages. null = off.
+  maxDescriptionLength: number | null;
   // When true, the week's billable total is capped at `weeklyHours` (overtime
   // isn't billable): billable lines are trimmed down and the stripped time shown
   // on a separate "Overtime" line. Trimmable "(X)"-marked codes go first.

@@ -46,6 +46,11 @@ export interface SettingsValue {
   // Granularity the timesheet rounds entries to, in hours. 0.25 (15 min) by
   // default; some clients can't enter quarter-hours, so 0.2 (12 min) is offered.
   roundingHours: number;
+  // Optional cap (characters) on every merged timesheet description — some
+  // clients' systems reject longer entry messages. null = no limit. When set,
+  // combined descriptions keep whole parts that fit and drop the rest behind a
+  // "; …" marker (see lib/timesheet/desc).
+  maxDescriptionLength: number | null;
   // When true, the engagement disallows billing overtime: the timesheet caps each
   // week's billable total at weeklyHours, trimming lines down (codes marked with a
   // trailing "(X)" first) and showing the stripped time on an "Overtime" line.
@@ -89,6 +94,7 @@ export function toPresetValue(s: SettingsValue): PresetValue {
     minWorkingDayHours: s.minWorkingDayHours,
     billingTagPrefix: s.billingTagPrefix,
     roundingHours: s.roundingHours,
+    maxDescriptionLength: s.maxDescriptionLength,
     noOvertime: s.noOvertime,
     codeMappings: s.codeMappings,
     timesheetMode: s.timesheetMode,
@@ -128,6 +134,8 @@ export function presetMatches(value: PresetValue, s: SettingsValue): boolean {
     value.minWorkingDayHours === s.minWorkingDayHours &&
     value.billingTagPrefix === s.billingTagPrefix &&
     value.roundingHours === s.roundingHours &&
+    // `?? null` covers presets stored before the description limit existed.
+    (value.maxDescriptionLength ?? null) === (s.maxDescriptionLength ?? null) &&
     value.noOvertime === s.noOvertime &&
     maps(value.codeMappings) === maps(s.codeMappings) &&
     value.timesheetMode === s.timesheetMode &&
@@ -155,6 +163,15 @@ function clampQuarter(n: number, min: number, max: number): number {
 /** A compact numeric label without a trailing "h", e.g. 4 → "4", 2.5 → "2.5". */
 function numLabel(n: number): string {
   return String(Number(n.toFixed(2)));
+}
+
+// The description-length field: empty (or unparseable) = no limit; otherwise a
+// whole character count of at least 5 (the fitted text needs room for "; …").
+const MAX_DESC_LEN_MIN = 5;
+function parseMaxDescLen(s: string): number | null {
+  const n = parseInt(s, 10);
+  if (s.trim() === '' || !Number.isFinite(n)) return null;
+  return Math.max(MAX_DESC_LEN_MIN, n);
 }
 
 // Dropdown label for a rounding granularity in hours. Whole hours read naturally
@@ -273,6 +290,10 @@ export default function SettingsPanel({
   );
   const [billingPrefix, setBillingPrefix] = useState(initial.billingTagPrefix);
   const [roundingHours, setRoundingHours] = useState(initial.roundingHours);
+  // Kept as a raw string like the hours fields; empty = no limit (null).
+  const [maxDescLenStr, setMaxDescLenStr] = useState(
+    initial.maxDescriptionLength == null ? '' : String(initial.maxDescriptionLength)
+  );
   const [noOvertime, setNoOvertime] = useState(initial.noOvertime);
   const [codeMappings, setCodeMappings] = useState<CodeMapping[]>(initial.codeMappings ?? []);
   const [showAdvanced, setShowAdvanced] = useState(
@@ -280,6 +301,7 @@ export default function SettingsPanel({
       initial.minWorkingDayHours !== null ||
       initial.billingTagPrefix !== DEFAULT_BILLING_TAG_PREFIX ||
       initial.roundingHours !== DEFAULT_ROUNDING_HOURS ||
+      initial.maxDescriptionLength != null ||
       initial.noOvertime ||
       (initial.codeMappings?.length ?? 0) > 0 ||
       initial.exportName.trim() !== ''
@@ -380,6 +402,7 @@ export default function SettingsPanel({
       // An empty prefix would match every tag, so fall back to the default.
       billingTagPrefix: billingPrefix.trim() || DEFAULT_BILLING_TAG_PREFIX,
       roundingHours: finalRounding,
+      maxDescriptionLength: parseMaxDescLen(maxDescLenStr),
       noOvertime,
       codeMappings: cleanedMappings,
       refreshSec,
@@ -455,6 +478,8 @@ export default function SettingsPanel({
     setMinDayStr(v.minWorkingDayHours === null ? '' : numLabel(v.minWorkingDayHours));
     setBillingPrefix(v.billingTagPrefix);
     setRoundingHours(v.roundingHours);
+    // `== null` covers presets stored before the description limit existed.
+    setMaxDescLenStr(v.maxDescriptionLength == null ? '' : String(v.maxDescriptionLength));
     setNoOvertime(v.noOvertime);
     setCodeMappings(v.codeMappings ?? []); // presets stored before linked codes existed
     if (
@@ -462,6 +487,7 @@ export default function SettingsPanel({
       v.minWorkingDayHours !== null ||
       v.billingTagPrefix !== DEFAULT_BILLING_TAG_PREFIX ||
       v.roundingHours !== DEFAULT_ROUNDING_HOURS ||
+      v.maxDescriptionLength != null ||
       v.noOvertime ||
       (v.codeMappings?.length ?? 0) > 0 ||
       v.exportName.trim() !== ''
@@ -840,6 +866,29 @@ export default function SettingsPanel({
               <strong>12 minutes (0.2h)</strong> if your client can&apos;t bill quarter-hours, or{' '}
               <strong>1 hour</strong> if they bill in whole hours. The dashboard and targets are
               unaffected.
+            </p>
+          </div>
+
+          <div className="field">
+            <label htmlFor="max-desc-len">Maximal description length</label>
+            <input
+              id="max-desc-len"
+              type="number"
+              inputMode="numeric"
+              min={MAX_DESC_LEN_MIN}
+              step={1}
+              value={maxDescLenStr}
+              placeholder="No limit"
+              onChange={(e) => setMaxDescLenStr(e.target.value)}
+            />
+            <p className="hint">
+              Some clients&apos; systems reject timesheet messages over a character limit. Set it
+              here and every description this timesheet produces (on screen, copied, exported)
+              stays within it: combined descriptions keep the parts that fit and drop the rest
+              behind a <strong>&ldquo;; …&rdquo;</strong> marker (a linked code&apos;s per-code
+              breakdown always comes first, so it survives). A single entry whose own description
+              is already over the limit is cut and flagged with ✂ — shorten it{' '}
+              {standalone ? 'in the tracker' : 'in Toggl'}. Leave blank for no limit.
             </p>
           </div>
 

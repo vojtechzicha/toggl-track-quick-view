@@ -9,6 +9,7 @@ import { fmtHours, fmtTimeOfDay, type TimeEntry } from '@/lib/calc';
 import type { SelectedProject } from '@/components/SettingsPanel';
 import { buildSummaryGrid } from '@/lib/timesheet/summary';
 import { buildIndividualWeek } from '@/lib/timesheet/individual';
+import { fitDescs } from '@/lib/timesheet/desc';
 import type { CodeMapping } from '@/lib/timesheet/mapping';
 import { DAY_LABELS, DAY_MS, UNTAGGED, MULTIPLE } from '@/lib/timesheet/constants';
 import { weeksInRange, type DateRange } from './range';
@@ -26,6 +27,8 @@ export interface ExportOptions {
   billingTagPrefix: string;
   /** Rounding granularity in seconds (900 = 15 min default, 720 = 12 min). */
   roundingSeconds: number;
+  /** Optional cap (characters) on every merged description; null/omitted = no limit. */
+  maxDescriptionLength?: number | null;
   /** When true, cap each week's billable total at `weeklyHours` (overtime unbilled). */
   noOvertime: boolean;
   /** Weekly cap (hours) the overtime trim reduces the billed total to. */
@@ -53,8 +56,11 @@ export interface SummaryRow {
   warn: boolean;
   /** Rounded seconds per visible day column (0 = empty). */
   cells: number[];
-  /** Combined descriptions for the row across the week (deduped). */
-  descs: string[];
+  /**
+   * Combined description for the row across the week (deduped, "; "-joined,
+   * fitted within the optional length limit).
+   */
+  desc: string;
   total: number;
 }
 export interface SummaryWeekBlock {
@@ -106,7 +112,7 @@ function codeLabel(
 }
 
 function buildSummaryDoc(o: ExportOptions): SummaryDoc {
-  const { range, entries, nowMs, projects, multi, billingTagPrefix, roundingSeconds, noOvertime, weeklyHours, codeMappings } = o;
+  const { range, entries, nowMs, projects, multi, billingTagPrefix, roundingSeconds, maxDescriptionLength, noOvertime, weeklyHours, codeMappings } = o;
   const weeks: SummaryWeekBlock[] = [];
 
   for (const weekStart of weeksInRange(range.fromMs, range.toMs)) {
@@ -117,6 +123,7 @@ function buildSummaryDoc(o: ExportOptions): SummaryDoc {
       projects,
       billingTagPrefix,
       roundingSeconds,
+      maxDescriptionLength,
       noOvertime,
       weeklyHours,
       codeMappings,
@@ -139,7 +146,9 @@ function buildSummaryDoc(o: ExportOptions): SummaryDoc {
         const meta = grid.rowMeta.get(rowKey);
         const label = codeLabel(meta?.projectName, meta?.tag, multi);
         const cells = dayCols.map((d) => grid.rounded.get(`${d}|${rowKey}`) ?? 0);
-        // Aggregate this row's descriptions across the visible days (deduped).
+        // Aggregate this row's descriptions across the visible days (deduped),
+        // then fit the week-level join within the same length limit the per-day
+        // cells honour — this column is one field in the exported file too.
         const descs: string[] = [];
         for (const d of dayCols) {
           for (const desc of grid.cells.get(`${d}|${rowKey}`)?.descs ?? []) {
@@ -147,7 +156,7 @@ function buildSummaryDoc(o: ExportOptions): SummaryDoc {
           }
         }
         const total = cells.reduce((s, v) => s + v, 0);
-        return { label, warn: false, cells, descs, total };
+        return { label, warn: false, cells, desc: fitDescs(descs, maxDescriptionLength).text, total };
       });
     // Drop rows that are entirely outside the kept columns (no time anywhere).
     const keptRows = rows.filter((r) => r.total > 0);
@@ -188,7 +197,7 @@ function buildSummaryDoc(o: ExportOptions): SummaryDoc {
 }
 
 function buildIndividualDoc(o: ExportOptions): IndividualDoc {
-  const { range, entries, nowMs, projects, multi, maxBillableHours, billingTagPrefix, roundingSeconds, noOvertime, weeklyHours, codeMappings } = o;
+  const { range, entries, nowMs, projects, multi, maxBillableHours, billingTagPrefix, roundingSeconds, maxDescriptionLength, noOvertime, weeklyHours, codeMappings } = o;
   const nameById = new Map(projects.map((p) => [p.id, p.name]));
   const days: IndividualDayBlock[] = [];
 
@@ -201,6 +210,7 @@ function buildIndividualDoc(o: ExportOptions): IndividualDoc {
       maxBillableHours,
       billingTagPrefix,
       roundingSeconds,
+      maxDescriptionLength,
       noOvertime,
       weeklyHours,
       codeMappings,
@@ -226,7 +236,7 @@ function buildIndividualDoc(o: ExportOptions): IndividualDoc {
             multi
           ),
           warn: false,
-          desc: row.descs.join('; '),
+          desc: row.desc,
         }));
       if (rows.length === 0) continue;
       days.push({
