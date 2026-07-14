@@ -142,6 +142,7 @@ export function defaultWorkspaceSettings(): PresetValue {
     minWorkingDayHours: null,
     billingTagPrefix: DEFAULT_BILLING_TAG_PREFIX,
     roundingHours: DEFAULT_ROUNDING_HOURS,
+    maxDescriptionLength: null,
     noOvertime: false,
     codeMappings: [],
     timesheetMode: 'summary',

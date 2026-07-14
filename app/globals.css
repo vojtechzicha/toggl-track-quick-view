@@ -1116,6 +1116,13 @@ body:has(.ts-page) {
   white-space: pre-wrap;
   word-break: break-word;
 }
+/* Marker on a description shortened by the max-length setting; the tooltip
+   carries the full text. */
+.ts-desc-cut {
+  color: var(--amber);
+  font-weight: 700;
+  cursor: help;
+}
 .ts-rowtotal,
 .ts-coltotal {
   text-align: right;

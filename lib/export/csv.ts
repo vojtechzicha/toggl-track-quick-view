@@ -37,7 +37,7 @@ export function toCSV(doc: ExportDoc): string {
             r.label,
             ...r.cells.map(hoursCell),
             secsToHoursNum(r.total),
-            r.descs.join('; '),
+            r.desc,
           ])
         );
       }

@@ -20,6 +20,7 @@ import {
   type CodeMapping,
   type MappedAgg,
 } from './mapping';
+import { fitDescs } from './desc';
 import { DAY_MS, UNTAGGED, MULTIPLE, TOOLONG } from './constants';
 
 const COMBINE_GAP_SECONDS = 60 * 60; // combine same-code entries only within this gap
@@ -50,6 +51,12 @@ export interface Row {
   startMs?: number; // anchored display start (bill rows, after rounding)
   endMs?: number; // start + rounded duration
   descs: string[];
+  // The row's display/copy/export description: `descs` joined with "; " and — on
+  // billable rows — fitted within the optional length limit (see lib/timesheet/desc).
+  // Warning rows are never limited: their text is the pointer to the entries to fix.
+  desc: string;
+  // True when the limit dropped/cut something; `descs` still holds the full parts.
+  descTruncated: boolean;
   groupStartMs: number; // first raw start, used to anchor the display time
   // A linked-code day block: `rounded` is already fixed on the mapping's own grid
   // (equal to the sub-client sheet's day total), so it's never re-rounded, trimmed
@@ -83,6 +90,9 @@ export interface IndividualInput {
   billingTagPrefix: string;
   // The rounding granularity in seconds (e.g. 900 = 15 min, 720 = 12 min).
   roundingSeconds: number;
+  // Optional cap (characters) on each billable row's merged description; the
+  // client's system rejects longer messages. null/absent = no limit.
+  maxDescriptionLength?: number | null;
   // When true, the week's billable total is trimmed down to `weeklyHours` (the
   // contract disallows billing overtime); the trimmed time surfaces as an
   // "Overtime" line. When false, neither input has any effect.
@@ -175,7 +185,7 @@ function classifyDay(
   const addWarn = (kind: WarnKind, e: DayEntry) => {
     let row = warnBuckets[kind];
     if (!row) {
-      row = { key: kind, kind: 'warn', warn: kind, seconds: 0, rounded: 0, descs: [], groupStartMs: e.startMs };
+      row = { key: kind, kind: 'warn', warn: kind, seconds: 0, rounded: 0, descs: [], desc: '', descTruncated: false, groupStartMs: e.startMs };
       warnBuckets[kind] = row;
     }
     row.seconds += e.seconds;
@@ -253,6 +263,8 @@ function classifyDay(
         trimmableSeconds: trimmable ? e.seconds : 0,
         rounded: 0,
         descs: [],
+        desc: '',
+        descTruncated: false,
         groupStartMs: e.startMs,
       };
       mergeDesc(current.descs, e.desc);
@@ -297,7 +309,8 @@ function finalizeDay(
   dateMs: number,
   { bill, warnRows, overlaps }: ClassifiedDay,
   roundingMs: number,
-  overtimeStripped: number
+  overtimeStripped: number,
+  maxDescLen: number | null | undefined
 ): IndividualDay {
   const billKept = bill.filter((r) => r.rounded > 0);
 
@@ -310,6 +323,16 @@ function finalizeDay(
     r.endMs = end;
     cursor = end;
   }
+
+  // Close each row's display description: billable rows are fitted within the
+  // optional length limit (this is the text that goes to the client's system);
+  // warning rows keep the full join — it's the pointer to the entries to fix.
+  for (const r of billKept) {
+    const fitted = fitDescs(r.descs, maxDescLen);
+    r.desc = fitted.text;
+    r.descTruncated = fitted.truncated;
+  }
+  for (const r of warnRows) r.desc = r.descs.join('; ');
 
   const rows = [...billKept, ...warnRows];
   const total = billKept.reduce((s, r) => s + r.rounded, 0);
@@ -329,6 +352,7 @@ export function buildIndividualWeek({
   maxBillableHours,
   billingTagPrefix,
   roundingSeconds,
+  maxDescriptionLength,
   noOvertime,
   weeklyHours,
   codeMappings,
@@ -395,6 +419,8 @@ export function buildIndividualWeek({
         trimmableSeconds: 0,
         rounded: value.seconds,
         descs: value.descs,
+        desc: '',
+        descTruncated: false,
         groupStartMs: agg.firstStartMs,
         fixed: true,
       });
@@ -445,7 +471,14 @@ export function buildIndividualWeek({
 
   const days = classified
     .map((c, dayIdx) =>
-      finalizeDay(dayIdx, weekStart + dayIdx * DAY_MS, c, roundingMs, overtimeByDay[dayIdx])
+      finalizeDay(
+        dayIdx,
+        weekStart + dayIdx * DAY_MS,
+        c,
+        roundingMs,
+        overtimeByDay[dayIdx],
+        maxDescriptionLength
+      )
     )
     .filter((d) => d.rows.length > 0 || d.overlaps.length > 0 || d.overtime > 0);
 

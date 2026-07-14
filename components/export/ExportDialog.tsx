@@ -43,6 +43,8 @@ export interface ExportDialogProps {
   billingTagPrefix: string;
   /** Rounding granularity in seconds (900 = 15 min default, 720 = 12 min). */
   roundingSeconds: number;
+  /** Optional cap (characters) on merged descriptions; null = no limit. */
+  maxDescriptionLength: number | null;
   /** When true, cap each week's billable total at `weeklyHours` (overtime unbilled). */
   noOvertime: boolean;
   /** Weekly cap (hours) the overtime trim reduces the billed total to. */
@@ -72,6 +74,7 @@ export default function ExportDialog({
   maxBillableHours,
   billingTagPrefix,
   roundingSeconds,
+  maxDescriptionLength,
   noOvertime,
   weeklyHours,
   codeMappings,
@@ -92,6 +95,10 @@ export default function ExportDialog({
   const [toStr, setToStr] = useState(() => toDateInput(initial.toMs - 1)); // inclusive last day
   const [format, setFormat] = useState<ExportFormat>('xlsx');
   const [templateId, setTemplateId] = useState<string>(DEFAULT_TEMPLATE_ID);
+  // PDF only, and only when a description limit is set: a PDF is read by people,
+  // not pasted into the client's system, so it defaults to the full text; the
+  // technical formats (CSV/XLSX) always honour the limit.
+  const [pdfDescs, setPdfDescs] = useState<'full' | 'short'>('full');
   const [name, setName] = useState(personName);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -149,6 +156,8 @@ export default function ExportDialog({
         maxBillableHours,
         billingTagPrefix,
         roundingSeconds,
+        maxDescriptionLength:
+          format === 'pdf' && pdfDescs === 'full' ? null : maxDescriptionLength,
         noOvertime,
         weeklyHours,
         codeMappings,
@@ -243,6 +252,29 @@ export default function ExportDialog({
                 setDone(null);
               }}
             />
+          </div>
+        )}
+
+        {format === 'pdf' && maxDescriptionLength != null && (
+          <div className="field">
+            <label htmlFor="exp-descs">Descriptions</label>
+            <select
+              id="exp-descs"
+              value={pdfDescs}
+              onChange={(e) => {
+                setPdfDescs(e.target.value as 'full' | 'short');
+                setDone(null);
+              }}
+            >
+              <option value="full">Full text</option>
+              <option value="short">Shortened to {maxDescriptionLength} characters (as on screen)</option>
+            </select>
+            <p className="hint">
+              A PDF is read by people, not pasted into the client&apos;s system, so it shows the
+              full descriptions by default even though a {maxDescriptionLength}-character limit is
+              set. Pick <strong>Shortened</strong> to match the on-screen (and CSV/XLSX) text
+              instead.
+            </p>
           </div>
         )}
 

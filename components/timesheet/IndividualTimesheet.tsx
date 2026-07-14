@@ -25,6 +25,7 @@ export default function IndividualTimesheet({
   maxBillableHours,
   billingTagPrefix,
   roundingSeconds,
+  maxDescriptionLength,
   noOvertime,
   weeklyHours,
   codeMappings,
@@ -39,6 +40,7 @@ export default function IndividualTimesheet({
         maxBillableHours,
         billingTagPrefix,
         roundingSeconds,
+        maxDescriptionLength,
         noOvertime,
         weeklyHours,
         codeMappings,
@@ -51,6 +53,7 @@ export default function IndividualTimesheet({
       maxBillableHours,
       billingTagPrefix,
       roundingSeconds,
+      maxDescriptionLength,
       noOvertime,
       weeklyHours,
       codeMappings,
@@ -92,7 +95,7 @@ export default function IndividualTimesheet({
               </thead>
               <tbody>
                 {day.rows.map((row) => {
-                  const desc = row.descs.join('; ');
+                  const desc = row.desc;
                   if (row.kind === 'warn') {
                     return (
                       <tr key={row.key} className="ts-row-warn">
@@ -120,7 +123,17 @@ export default function IndividualTimesheet({
                         )}
                         {row.code}
                       </td>
-                      <td className="ind-desc">{desc}</td>
+                      <td className="ind-desc">
+                        {row.descTruncated && (
+                          <span
+                            className="ts-desc-cut"
+                            title={`Shortened to the ${maxDescriptionLength}-character limit. Full description: ${row.descs.join('; ')}`}
+                          >
+                            ✂{' '}
+                          </span>
+                        )}
+                        {desc}
+                      </td>
                       <td className="ind-copy">{desc && <CopyButton text={desc} />}</td>
                     </tr>
                   );

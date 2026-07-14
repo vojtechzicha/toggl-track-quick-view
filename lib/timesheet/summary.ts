@@ -19,10 +19,17 @@ import {
   type CodeMapping,
   type MappedAgg,
 } from './mapping';
+import { fitDescs } from './desc';
 import { DAY_MS, UNTAGGED, MULTIPLE } from './constants';
 
 export interface Cell {
   descs: string[]; // de-duplicated, original-cased, in first-seen order
+  // The cell's display/copy text: `descs` joined with "; " and — on billable
+  // cells — fitted within the optional length limit (see lib/timesheet/desc).
+  // Warning cells are never limited: their text points at the entries to fix.
+  desc: string;
+  // True when the limit dropped/cut something; `descs` still holds the full parts.
+  descTruncated: boolean;
   seconds: number;
   trimmableSeconds: number; // of `seconds`, how much came from "(X)"-marked entries
 }
@@ -65,6 +72,9 @@ export interface SummaryInput {
   billingTagPrefix: string;
   // The rounding granularity in seconds (e.g. 900 = 15 min, 720 = 12 min).
   roundingSeconds: number;
+  // Optional cap (characters) on each billable cell's merged description; the
+  // client's system rejects longer messages. null/absent = no limit.
+  maxDescriptionLength?: number | null;
   // When true, the week's billable total is trimmed down to `weeklyHours` (the
   // contract disallows billing overtime); the trimmed time is reported separately.
   // When false, neither input has any effect.
@@ -91,6 +101,7 @@ export function buildSummaryGrid({
   projects,
   billingTagPrefix,
   roundingSeconds,
+  maxDescriptionLength,
   noOvertime,
   weeklyHours,
   codeMappings,
@@ -193,7 +204,7 @@ export function buildSummaryGrid({
     const key = `${dayIdx}|${rowKey}`;
     let cell = cells.get(key);
     if (!cell) {
-      cell = { descs: [], seconds: 0, trimmableSeconds: 0 };
+      cell = { descs: [], desc: '', descTruncated: false, seconds: 0, trimmableSeconds: 0 };
       cells.set(key, cell);
     }
     cell.seconds += seconds;
@@ -222,6 +233,8 @@ export function buildSummaryGrid({
       mappedFixed.set(`${day}|${rowKey}`, value.seconds);
       cells.set(`${day}|${rowKey}`, {
         descs: value.descs,
+        desc: '',
+        descTruncated: false,
         seconds: byDay.get(day)!.seconds,
         trimmableSeconds: 0,
       });
@@ -314,6 +327,18 @@ export function buildSummaryGrid({
   );
   const grandTotal = dayTotals.reduce((s, v) => s + v, 0);
   const overtimeTotal = overtimeByDay.reduce((s, v) => s + v, 0);
+
+  // Close each cell's display description: billable cells are fitted within the
+  // optional length limit (this is the text copied into the client's system —
+  // for a mapped cell the per-code breakdown is the first part, so it survives);
+  // warning cells keep the full join — it's the pointer to the entries to fix.
+  for (const [key, cell] of cells) {
+    const rowKey = key.slice(key.indexOf('|') + 1);
+    const warn = rowKey === UNTAGGED || rowKey === MULTIPLE;
+    const fitted = fitDescs(cell.descs, warn ? null : maxDescriptionLength);
+    cell.desc = fitted.text;
+    cell.descTruncated = fitted.truncated;
+  }
 
   return {
     dayCols,

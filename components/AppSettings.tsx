@@ -51,6 +51,7 @@ export default function AppSettings({
         minWorkingDayHours: settings.minWorkingDayHours,
         billingTagPrefix: settings.billingTagPrefix,
         roundingHours: settings.roundingHours,
+        maxDescriptionLength: settings.maxDescriptionLength,
         noOvertime: settings.noOvertime,
         codeMappings: settings.codeMappings,
         refreshSec: settings.refreshSec,

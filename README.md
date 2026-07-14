@@ -378,6 +378,35 @@ the hourly budget — it resumes when you click **This week**.
   **view-only hints** — they don't count toward the totals and are left out of
   exports.
 
+### Max description length
+
+Some clients' timesheet systems reject entry messages over a character limit.
+Set **Maximal description length** (under **Advanced**) and every description
+the timesheet produces — on screen, via the copy buttons, and in the technical
+exports (CSV/XLSX) — is guaranteed to fit:
+
+- A **single entry** whose description fits passes through **untouched** — the
+  common case needs nothing.
+- A **combined** description (merged cell/row) keeps its parts **in first-seen
+  order while they fit** and drops the rest behind a trailing **`; …`** marker,
+  so the pasted text honestly signals the omission. Nothing is cut mid-sentence.
+- A **linked-code** line's per-code breakdown (e.g. `S101 3.25h, S102 1.5h`) is
+  its **first** part, so it always survives — the merged entry descriptions are
+  what get dropped.
+- Only when a **single entry's own description** already exceeds the limit
+  (there's nothing left to drop) is it hard-cut at the limit with `…`.
+
+A shortened description is flagged on screen with an amber **✂** whose tooltip
+shows the full text, so you can shorten the source entry in Toggl (or the
+tracker) if you'd rather choose what stays. Warning rows (no/multiple billing
+tag) are never shortened — their text is the pointer to the entries to fix.
+Leave the field blank for no limit (the default; nothing changes).
+
+**PDF exports show the full text by default** — a PDF is read by people, not
+pasted into the client's system. When a limit is set, the export dialog offers
+a **Descriptions** picker (PDF only): keep **Full text**, or pick **Shortened**
+to match the on-screen and CSV/XLSX text.
+
 ### Linked billing codes (subcontracting)
 
 Sometimes a project is billed **through** another client: you work for a prime

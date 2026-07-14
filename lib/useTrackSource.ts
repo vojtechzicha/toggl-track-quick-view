@@ -86,6 +86,7 @@ export const DEFAULTS: StoredSettings = {
   minWorkingDayHours: null,
   billingTagPrefix: DEFAULT_BILLING_TAG_PREFIX,
   roundingHours: DEFAULT_ROUNDING_HOURS,
+  maxDescriptionLength: null,
   noOvertime: false,
   codeMappings: [],
   refreshSec: DEFAULT_REFRESH_SEC,
@@ -112,6 +113,8 @@ export function applyPreset(
     // A preset stored before linked codes existed has no key to spread in, which
     // would otherwise leak the current mappings into the recalled workspace.
     codeMappings: preset.value.codeMappings ?? [],
+    // Same for presets stored before the description limit existed.
+    maxDescriptionLength: preset.value.maxDescriptionLength ?? null,
   };
 }
 
