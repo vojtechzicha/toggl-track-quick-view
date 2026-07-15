@@ -318,6 +318,33 @@ The prefix is configurable under **Settings → Advanced → Billing tag prefix*
 (change it to `A`, say, to match `A123` tags). Its default lives in
 [`lib/calc.ts`](lib/calc.ts) as `DEFAULT_BILLING_TAG_PREFIX`.
 
+### Support tickets
+
+Support engagements bill against many **one-time tickets** instead of a few
+long-lived codes, and creating a tag per ticket isn't practical. So an entry
+that has **no billing tag** but whose description **starts with a bracketed
+ticket id** bills to that id as if it were tagged:
+
+> `[T-1234] Fix login redirect` → billed to code **`T-1234`**, description
+> "Fix login redirect"
+
+- The bracket's content becomes the entry's **billing code** (any string —
+  it doesn't need the billing-tag prefix) and the bracket itself is **dropped
+  from the billed description** (the code already names the ticket).
+- **Always on, no toggle** — an explicit billing tag on the entry wins over the
+  bracket, and a description that doesn't open with `[…]` behaves exactly as
+  before, so ordinary entries are unaffected. Such entries no longer show the
+  ⚠ missing-tag marker or land on the "No billing tag" warning row.
+- Everything downstream treats the derived code like a real tag: timesheet
+  rows/lines group per ticket, same-ticket entries combine in the Individual
+  view, exports match, and the `(X)` / `(!)` overtime markers work inside the
+  bracket too (`[T-1234(X)] …`).
+- **Standalone mode works the same** — the derivation happens in the shared
+  calculation layer, not in the data source, so nothing extra is stored. The
+  tracker just shows the derived code as a dashed chip (`[T-1234]`) instead of
+  the missing-tag warning; click it to pin an explicit tag if you ever want to
+  override the bracket.
+
 ## Workspaces (stored settings)
 
 A **workspace** is a named snapshot of your settings you can recall in one click —

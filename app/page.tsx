@@ -24,6 +24,7 @@ import {
   mergeIntervals,
   subtractIntervals,
   hasBillingTag,
+  supportTicketCode,
   holidayDaysOfWeek,
   isTimeOffEntry,
   startOfDay,
@@ -273,11 +274,14 @@ export default function Page() {
           running: e.running,
           dur,
           // A linked-code project's entries carry the mapping's own tag prefix,
-          // so they're checked against that instead of this sheet's.
-          missingTag: !hasBillingTag(
-            e.tags,
-            mappingFor(settings.codeMappings, e.projectId)?.tagPrefix ?? settings.billingTagPrefix
-          ),
+          // so they're checked against that instead of this sheet's. An entry
+          // whose description opens with "[ticket]" bills to that ticket
+          // (support tickets), so it isn't missing a tag.
+          missingTag:
+            !hasBillingTag(
+              e.tags,
+              mappingFor(settings.codeMappings, e.projectId)?.tagPrefix ?? settings.billingTagPrefix
+            ) && supportTicketCode(e.desc) === null,
           tooLong: settings.timesheetMode === 'individual' && dur > maxBillSec,
           projId: e.projectId,
         });

@@ -186,6 +186,35 @@ export function hasBillingTag(tags?: string[], prefix?: string): boolean {
   return billingTagOf(tags, prefix) !== null;
 }
 
+// ---- Support tickets ----
+// Support work is billed per one-off ticket, so pre-creating a tag for every
+// ticket is not practical. Instead, an entry that carries NO billing tag but
+// whose description starts with a bracketed ticket id — "[T-123] Fix login" —
+// bills to that id as if it were tagged: the bracket's content becomes the
+// entry's billing code and the bracket itself is dropped from the billed
+// description (the code already names the ticket). Always on, in every mode
+// (Toggl and standalone); an explicit billing tag wins over the bracket, so
+// ordinary tagged entries are unaffected. The derived code goes through the
+// same downstream machinery as a real tag, so the "(X)"/"(!)" overtime
+// markers work inside the bracket too ("[T-123(X)] …").
+const SUPPORT_TICKET_RE = /^\s*\[([^\]]+)\]\s*/;
+
+/**
+ * The support-ticket id opening a description, split off from the rest, or
+ * null when the description doesn't start with a (non-empty) bracket.
+ */
+export function supportTicket(description?: string): { code: string; rest: string } | null {
+  const m = description?.match(SUPPORT_TICKET_RE);
+  const code = m?.[1].trim();
+  if (!m || !code) return null;
+  return { code, rest: (description as string).slice(m[0].length) };
+}
+
+/** Just the support-ticket id opening a description, or null. */
+export function supportTicketCode(description?: string): string | null {
+  return supportTicket(description)?.code ?? null;
+}
+
 // ---- Time off (state holidays etc.) ----
 // An entry carrying the time-off tag marks its whole day as a non-working day —
 // a "holiday" that behaves exactly like a weekend: 0h expected, the weekly goal
