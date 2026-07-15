@@ -1910,6 +1910,12 @@ body:has(.tracker-page) {
   border-color: var(--line);
   color: var(--muted);
 }
+/* A support-ticket code derived from the "[ticket] …" description — no stored
+   tag, so the chip reads as implicit (dashed) rather than missing. */
+.tr-tag.derived {
+  background: rgba(59, 130, 246, 0.06);
+  border-style: dashed;
+}
 .tr-tag:hover {
   border-color: var(--accent);
 }

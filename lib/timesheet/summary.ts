@@ -13,7 +13,7 @@ import type { SelectedProject } from '@/components/SettingsPanel';
 import { allocateOvertimeTrimPerDay, weekSegments } from './overtime';
 import {
   addToMappedAgg,
-  entryBillingTags,
+  entryBilling,
   finalizeMappedWeek,
   mappedRowKey,
   mappingFor,
@@ -165,9 +165,12 @@ export function buildSummaryGrid({
     // Which row this entry lands in: its (project, single billing tag), or a
     // warning row when it has none / more than one (both need fixing in Toggl).
     // A mapped project's entries are validated against the *mapping's* prefix, so
-    // its untagged/multi-tagged entries surface in the same warning rows.
+    // its untagged/multi-tagged entries surface in the same warning rows. An
+    // untagged entry whose description opens with "[ticket]" bills to that
+    // ticket instead of warning (support tickets — see entryBilling), with the
+    // bracket dropped from the billed description.
     const mapping = mappingFor(codeMappings, e.project_id);
-    const tags = entryBillingTags(e.tags, mapping, billingTagPrefix);
+    const { tags, description } = entryBilling(e.tags, e.description, mapping, billingTagPrefix);
     let rowKey: string;
     if (tags.length === 0) {
       rowKey = UNTAGGED;
@@ -200,7 +203,7 @@ export function buildSummaryGrid({
         agg = newMappedAgg(startMs);
         byDay.set(dayIdx, agg);
       }
-      addToMappedAgg(agg, tags[0], seconds, e.description, startMs);
+      addToMappedAgg(agg, tags[0], seconds, description, startMs);
       continue;
     } else {
       // The "(X)" / "(!)" markers are just trim variants of the same billing code,
@@ -232,7 +235,7 @@ export function buildSummaryGrid({
       if (trimmable) cell.trimmableSeconds += seconds;
       if (neverTrim) cell.noTrimSeconds += seconds;
     }
-    addDesc(cell, e.description ?? '');
+    addDesc(cell, description);
   }
 
   // Columns: Mon–Fri always; the leading Sat/Sun only when they have entries.

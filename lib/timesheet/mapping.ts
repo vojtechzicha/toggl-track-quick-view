@@ -29,6 +29,7 @@ import {
   parseBillingCode,
   roundQuartersPreservingTotal,
   roundingUnitSeconds,
+  supportTicket,
   type HolidaySet,
 } from '@/lib/calc';
 import { allocateOvertimeTrimPerDay, weekSegments } from './overtime';
@@ -243,11 +244,24 @@ export function finalizeMappedWeek(
   return out;
 }
 
-/** The billing tags of an entry under the prefix its project actually uses. */
-export function entryBillingTags(
+/**
+ * How an entry bills: its billing tags under the prefix its project actually
+ * uses, plus the support-ticket fallback — an entry with NO billing tag whose
+ * description starts with a bracketed ticket id ("[T-123] Fix login") bills to
+ * that id as if tagged, with the bracket dropped from the billed description
+ * (see supportTicket in lib/calc). Entries with a real tag — or with several,
+ * which stay a warning — keep their description untouched.
+ */
+export function entryBilling(
   tags: string[] | undefined,
+  description: string | undefined,
   mapping: CodeMapping | undefined,
   billingTagPrefix: string
-): string[] {
-  return billingTagsOf(tags, mapping ? mapping.tagPrefix : billingTagPrefix);
+): { tags: string[]; description: string } {
+  const found = billingTagsOf(tags, mapping ? mapping.tagPrefix : billingTagPrefix);
+  if (found.length === 0) {
+    const ticket = supportTicket(description);
+    if (ticket) return { tags: [ticket.code], description: ticket.rest };
+  }
+  return { tags: found, description: description ?? '' };
 }

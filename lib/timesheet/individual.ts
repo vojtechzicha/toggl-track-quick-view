@@ -15,7 +15,7 @@ import type { SelectedProject } from '@/components/SettingsPanel';
 import { allocateOvertimeTrim, weekSegments } from './overtime';
 import {
   addToMappedAgg,
-  entryBillingTags,
+  entryBilling,
   finalizeMappedWeek,
   mappingFor,
   newMappedAgg,
@@ -215,9 +215,12 @@ function classifyDay(
 
   for (const e of sorted) {
     // A mapped project's entries are validated against the *mapping's* prefix, so
-    // its untagged/multi-tagged entries surface in the same warning rows.
+    // its untagged/multi-tagged entries surface in the same warning rows. An
+    // untagged entry whose description opens with "[ticket]" bills to that
+    // ticket instead of warning (support tickets — see entryBilling), with the
+    // bracket dropped from the billed description.
     const mapping = mappingFor(codeMappings, e.projId);
-    const tags = entryBillingTags(e.tags, mapping, billingTagPrefix);
+    const { tags, description } = entryBilling(e.tags, e.desc, mapping, billingTagPrefix);
     if (tags.length === 0) {
       flush();
       addWarn(UNTAGGED, e);
@@ -238,7 +241,7 @@ function classifyDay(
         agg = newMappedAgg(e.startMs);
         mappedByProj.set(e.projId as number, agg);
       }
-      addToMappedAgg(agg, tags[0], e.seconds, e.desc, e.startMs);
+      addToMappedAgg(agg, tags[0], e.seconds, description, e.startMs);
       continue;
     }
     if (e.seconds > maxBillableSeconds) {
@@ -264,7 +267,7 @@ function classifyDay(
       current.seconds += e.seconds;
       if (trimmable) current.trimmableSeconds = (current.trimmableSeconds ?? 0) + e.seconds;
       if (neverTrim) current.noTrimSeconds = (current.noTrimSeconds ?? 0) + e.seconds;
-      mergeDesc(current.descs, e.desc);
+      mergeDesc(current.descs, description);
     } else {
       current = {
         key: `b${e.startMs}`,
@@ -280,7 +283,7 @@ function classifyDay(
         descTruncated: false,
         groupStartMs: e.startMs,
       };
-      mergeDesc(current.descs, e.desc);
+      mergeDesc(current.descs, description);
       bill.push(current);
     }
     lastStopMs = e.stopMs;

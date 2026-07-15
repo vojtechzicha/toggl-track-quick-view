@@ -12,7 +12,7 @@ import { useState } from 'react';
 import TagCombobox from './TagCombobox';
 import { durationSec, fromLocalInput, isRunning, toLocalInput, withBillingTag } from './util';
 import { initialsOf } from '@/components/ProjectChips';
-import { billingTagOf, fmtHM, fmtTimeOfDay, type TimeEntry } from '@/lib/calc';
+import { billingTagOf, fmtHM, fmtTimeOfDay, supportTicketCode, type TimeEntry } from '@/lib/calc';
 import type { EntryInput, StoreWorkspace } from '@/lib/source/standalone';
 
 export default function EntryRow({
@@ -40,6 +40,10 @@ export default function EntryRow({
   const startMs = Date.parse(entry.start);
   const stopMs = running ? nowMs : Date.parse(entry.stop as string);
   const tag = billingTagOf(entry.tags, prefix);
+  // Support tickets: an untagged entry whose description opens with "[ticket]"
+  // bills to that ticket — its chip shows the derived code (dashed) rather than
+  // the missing-tag warning. An explicit tag can still be set and then wins.
+  const ticket = tag === null ? supportTicketCode(entry.description) : null;
   const ws = workspaces.find((w) => w.id === entry.project_id);
 
   const [editDesc, setEditDesc] = useState<string | null>(null);
@@ -128,11 +132,17 @@ export default function EntryRow({
           ) : (
             <button
               type="button"
-              className={`tr-tag${tag ? '' : ' missing'}`}
-              title={tag ? 'Change billing tag' : 'No billing tag — click to add one'}
+              className={`tr-tag${tag ? '' : ticket ? ' derived' : ' missing'}`}
+              title={
+                tag
+                  ? 'Change billing tag'
+                  : ticket
+                  ? `Bills to ${ticket} (support ticket from the description) — click to set an explicit tag instead`
+                  : 'No billing tag — click to add one'
+              }
               onClick={() => setTagOpen(true)}
             >
-              {tag ?? `⚠ ${prefix}…`}
+              {tag ?? (ticket ? `[${ticket}]` : `⚠ ${prefix}…`)}
             </button>
           )}
         </span>
