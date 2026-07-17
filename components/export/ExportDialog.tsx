@@ -21,6 +21,19 @@ import {
 } from '@/lib/export';
 import { PDF_TEMPLATES, DEFAULT_TEMPLATE_ID } from '@/lib/export/pdf';
 
+// Identity fields some PDF templates print (role / company). Their values are
+// user-entered and remembered per device — the app itself ships no company names.
+const ROLE_KEY = 'tqv.export.role.v1';
+const COMPANY_KEY = 'tqv.export.company.v1';
+
+const readStored = (key: string): string => {
+  try {
+    return window.localStorage.getItem(key) ?? '';
+  } catch {
+    return '';
+  }
+};
+
 // The presets offered in the dropdown, in order. "custom" is added automatically
 // once the user edits a date by hand.
 const PRESETS: ExportPreset[] = [
@@ -103,6 +116,8 @@ export default function ExportDialog({
   // technical formats (CSV/XLSX) always honour the limit.
   const [pdfDescs, setPdfDescs] = useState<'full' | 'short'>('full');
   const [name, setName] = useState(personName);
+  const [role, setRole] = useState(() => readStored(ROLE_KEY));
+  const [company, setCompany] = useState(() => readStored(COMPANY_KEY));
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [done, setDone] = useState<string | null>(null);
@@ -167,7 +182,16 @@ export default function ExportDialog({
         codeMappings,
         title,
         personName: name.trim(),
+        role: role.trim(),
+        company: company.trim(),
       });
+      // Remember the identity fields for the next export on this device.
+      try {
+        window.localStorage.setItem(ROLE_KEY, role.trim());
+        window.localStorage.setItem(COMPANY_KEY, company.trim());
+      } catch {
+        // Storage unavailable (private mode) — the export itself still works.
+      }
       const ok = await runExport(doc, format, templateId);
       if (!ok) {
         setError('No entries in this range — nothing to export.');
@@ -188,6 +212,10 @@ export default function ExportDialog({
   };
 
   const viewLabel = view === 'summary' ? 'Summary' : 'Individual';
+  // Identity inputs (role / company) appear only when the chosen PDF template
+  // actually prints them.
+  const templateFields =
+    format === 'pdf' ? PDF_TEMPLATES.find((t) => t.id === templateId)?.fields ?? [] : [];
 
   return (
     <div className="overlay">
@@ -293,6 +321,42 @@ export default function ExportDialog({
               ))}
             </select>
             <p className="hint">{PDF_TEMPLATES.find((t) => t.id === templateId)?.description}</p>
+          </div>
+        )}
+
+        {templateFields.includes('role') && (
+          <div className="field">
+            <label htmlFor="exp-role">Role</label>
+            <input
+              id="exp-role"
+              type="text"
+              value={role}
+              placeholder="e.g. your role on the project"
+              onChange={(e) => {
+                setRole(e.target.value);
+                setDone(null);
+              }}
+            />
+          </div>
+        )}
+
+        {templateFields.includes('company') && (
+          <div className="field">
+            <label htmlFor="exp-company">Company</label>
+            <input
+              id="exp-company"
+              type="text"
+              value={company}
+              placeholder="Shown in the header and the day table"
+              onChange={(e) => {
+                setCompany(e.target.value);
+                setDone(null);
+              }}
+            />
+            <p className="hint">
+              Role and company are remembered on this device only — they are never stored in the
+              app.
+            </p>
           </div>
         )}
 

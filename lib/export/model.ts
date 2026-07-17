@@ -41,12 +41,18 @@ export interface ExportOptions {
   title: string;
   /** Person the timesheet is for (may be empty). */
   personName: string;
+  /** Person's role (used by templates with an identity header; may be empty). */
+  role?: string;
+  /** Person's company (used by templates with an identity header; may be empty). */
+  company?: string;
 }
 
 export interface ExportMeta {
   view: ExportView;
   title: string;
   personName: string;
+  role: string;
+  company: string;
   fromMs: number;
   toMs: number; // exclusive
   multi: boolean;
@@ -63,12 +69,16 @@ export interface SummaryRow {
    * fitted within the optional length limit).
    */
   desc: string;
+  /** Per-visible-day description (aligned with `cells`; "" where no time). */
+  dayDescs: string[];
   total: number;
 }
 export interface SummaryWeekBlock {
   weekStart: number;
   label: string; // "Jun 7 – Jun 13"
   dayLabels: string[]; // header for each visible day column
+  /** Local-midnight ms of each visible day column (aligned with `dayLabels`). */
+  dayDates: number[];
   rows: SummaryRow[];
   dayTotals: number[];
   grandTotal: number;
@@ -158,8 +168,13 @@ function buildSummaryDoc(o: ExportOptions): SummaryDoc {
             if (!descs.some((x) => x.toLowerCase() === desc.toLowerCase())) descs.push(desc);
           }
         }
+        // Per-day text too (cell descs are already deduped) — day-based templates
+        // need the descriptions of exactly one day, not the week-level join.
+        const dayDescs = dayCols.map((d) =>
+          fitDescs(grid.cells.get(`${d}|${rowKey}`)?.descs ?? [], maxDescriptionLength).text
+        );
         const total = cells.reduce((s, v) => s + v, 0);
-        return { label, warn: false, cells, desc: fitDescs(descs, maxDescriptionLength).text, total };
+        return { label, warn: false, cells, desc: fitDescs(descs, maxDescriptionLength).text, dayDescs, total };
       });
     // Drop rows that are entirely outside the kept columns (no time anywhere).
     const keptRows = rows.filter((r) => r.total > 0);
@@ -180,6 +195,7 @@ function buildSummaryDoc(o: ExportOptions): SummaryDoc {
       weekStart,
       label: `${fmtDay(labelFromMs)} – ${fmtDay(labelToMs)}`,
       dayLabels: dayCols.map((d) => DAY_LABELS[d]),
+      dayDates: dayCols.map((d) => weekStart + d * DAY_MS),
       rows: keptRows,
       dayTotals,
       grandTotal,
@@ -191,6 +207,8 @@ function buildSummaryDoc(o: ExportOptions): SummaryDoc {
     view: 'summary',
     title: o.title,
     personName: o.personName,
+    role: o.role ?? '',
+    company: o.company ?? '',
     fromMs: range.fromMs,
     toMs: range.toMs,
     multi,
@@ -257,6 +275,8 @@ function buildIndividualDoc(o: ExportOptions): IndividualDoc {
     view: 'individual',
     title: o.title,
     personName: o.personName,
+    role: o.role ?? '',
+    company: o.company ?? '',
     fromMs: range.fromMs,
     toMs: range.toMs,
     multi,
