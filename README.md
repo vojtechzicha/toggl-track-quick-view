@@ -466,6 +466,26 @@ pasted into the client's system. When a limit is set, the export dialog offers
 a **Descriptions** picker (PDF only): keep **Full text**, or pick **Shortened**
 to match the on-screen and CSV/XLSX text.
 
+### PDF templates
+
+The export dialog's **PDF template** picker chooses the layout of the PDF:
+
+- **Standard** — the default: your name, the period, and the per-week
+  (Summary) or per-day (Individual) tables exactly as shown on screen.
+- **Timesheet Acceptance Protocol** — a formal per-day acceptance sheet meant
+  to be countersigned by the client. A header block carries **Name, Role,
+  Company, Start/End date** and the period's total **man-days** (8h = 1 MD);
+  the table below has **one row for every calendar day** of the exported range
+  — including empty ones — with year / month / ISO week / date, the company,
+  the day's billing codes and descriptions, hours and man-days. A dashed
+  **signature area** at the bottom leaves room for a digital-signature stamp.
+
+  This template asks for two extra fields in the dialog, **Role** and
+  **Company**. Like the name, they're free text and are remembered **on the
+  device only** (localStorage) — no company-specific values ship with, or are
+  stored in, the app. It works from either view; the Individual view carries
+  the richest per-day text.
+
 ### Linked billing codes (subcontracting)
 
 Sometimes a project is billed **through** another client: you work for a prime
