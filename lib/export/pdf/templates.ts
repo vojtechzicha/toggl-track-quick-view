@@ -207,7 +207,27 @@ const ACCEPT = {
 
 const fmtNum = (n: number): string => n.toFixed(2);
 const secsToHoursNumLabel = (secs: number): string => fmtNum(secs / 3600);
-const secsToMDsLabel = (secs: number): string => fmtNum(secs / 3600 / HOURS_PER_MD);
+
+/**
+ * Per-day MD labels (2 dp) whose sum is exactly the period total's 2 dp value.
+ * Naive per-day rounding drifts — 7h = 0.875 MD and 9h = 1.125 MD both show one
+ * half-cent high, so a month of them can sum to 8.02 against an 8.00 header.
+ * Largest-remainder rounding: floor every day to whole hundredths, then hand the
+ * missing hundredths to the days that lost the most in flooring. Workless days
+ * have nothing to gain and stay at 0.00.
+ */
+function mdColumn(daySecs: number[]): { rows: string[]; total: string } {
+  const EPS = 1e-9; // don't let float noise turn an exact hundredth into a floor loss
+  const exact = daySecs.map((s) => (s / 3600 / HOURS_PER_MD) * 100);
+  const totalCents = Math.round(exact.reduce((a, b) => a + b, 0));
+  const cents = exact.map((v) => Math.floor(v + EPS));
+  let leftover = totalCents - cents.reduce((a, b) => a + b, 0);
+  const byLoss = exact
+    .map((v, i) => ({ loss: v - Math.floor(v + EPS), i }))
+    .sort((a, b) => b.loss - a.loss || a.i - b.i);
+  for (let k = 0; k < byLoss.length && leftover > 0; k++, leftover--) cents[byLoss[k].i] += 1;
+  return { rows: cents.map((c) => fmtNum(c / 100)), total: fmtNum(totalCents / 100) };
+}
 const fmtDayMonth = (ms: number): string => {
   const d = new Date(ms);
   return `${d.getDate()}/${d.getMonth() + 1}`;
@@ -280,7 +300,7 @@ function buildAcceptance(doc: ExportDoc): TDocumentDefinitions {
     }
   }
 
-  const totalSeconds = dayList.reduce((s, ms) => s + (byDay.get(ms)?.seconds ?? 0), 0);
+  const md = mdColumn(dayList.map((ms) => byDay.get(ms)?.seconds ?? 0));
   const lastDayMs = doc.toMs - DAY_MS; // inclusive last day
 
   const infoRow = (label: string, value: string): TableCell[] => [
@@ -296,7 +316,7 @@ function buildAcceptance(doc: ExportDoc): TDocumentDefinitions {
         infoRow('Company', doc.company),
         infoRow('Start date', fmtFullDate(doc.fromMs)),
         infoRow('End date', fmtFullDate(lastDayMs)),
-        infoRow('MDs', secsToMDsLabel(totalSeconds)),
+        infoRow('MDs', md.total),
       ],
     },
     layout: {
@@ -327,7 +347,7 @@ function buildAcceptance(doc: ExportDoc): TDocumentDefinitions {
     { text: 'MDs', style: 'acceptTh', alignment: 'center' },
   ];
   const body: TableCell[][] = [head];
-  for (const ms of dayList) {
+  dayList.forEach((ms, di) => {
     const d = new Date(ms);
     const agg = byDay.get(ms);
     const secs = agg?.seconds ?? 0;
@@ -339,9 +359,9 @@ function buildAcceptance(doc: ExportDoc): TDocumentDefinitions {
       { text: doc.company, style: 'acceptTd' },
       { text: agg?.tasks.join('; ') ?? '', style: 'acceptTd' },
       { text: secsToHoursNumLabel(secs), style: 'acceptTd', alignment: 'right' },
-      { text: secsToMDsLabel(secs), style: 'acceptTd', alignment: 'right' },
+      { text: md.rows[di], style: 'acceptTd', alignment: 'right' },
     ]);
-  }
+  });
 
   const dayTable: Content = {
     table: {
