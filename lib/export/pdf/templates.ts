@@ -48,16 +48,17 @@ function headerStack(doc: ExportDoc): Content {
   return { stack: bits, margin: [0, 0, 0, 14] };
 }
 
-function pageFooter(generatedAt: number) {
+function pageFooter(generatedAt: number, note?: string) {
   const gen = new Date(generatedAt).toLocaleDateString(undefined, {
     year: 'numeric',
     month: 'short',
     day: 'numeric',
   });
+  const left = note ? `Generated ${gen} · ${note}` : `Generated ${gen}`;
   return (currentPage: number, pageCount: number): Content => ({
     margin: [40, 0, 40, 0],
     columns: [
-      { text: `Generated ${gen}`, style: 'footer', alignment: 'left' },
+      { text: left, style: 'footer', alignment: 'left' },
       { text: `${currentPage} / ${pageCount}`, style: 'footer', alignment: 'right' },
     ],
   });
@@ -429,7 +430,7 @@ function buildAcceptance(doc: ExportDoc): TDocumentDefinitions {
       acceptSigLabel: { fontSize: 9, color: COLOR.muted },
     },
     defaultStyle: { fontSize: 9, color: COLOR.text },
-    footer: pageFooter(generatedAt),
+    footer: pageFooter(generatedAt, `MD = ${HOURS_PER_MD}hrs`),
   };
 }
 
