@@ -20,6 +20,7 @@ import {
   runExport,
 } from '@/lib/export';
 import { PDF_TEMPLATES, DEFAULT_TEMPLATE_ID } from '@/lib/export/pdf';
+import { ENGAGEMENT_PLACEHOLDERS, ENGAGEMENT_LABELS } from '@/lib/export/pdf/report';
 
 // Identity fields some PDF templates print (role / company / client / approver /
 // rate). Their values are user-entered and remembered per device — the app itself
@@ -30,6 +31,23 @@ const CLIENT_KEY = 'tqv.export.client.v1';
 const APPROVER_KEY = 'tqv.export.approver.v1';
 const RATE_KEY = 'tqv.export.rate.v1';
 const CURRENCY_KEY = 'tqv.export.currency.v1';
+// Only a hand-typed reference is remembered. A derived one (TS-2026-07) is a
+// property of the exported month, not of the engagement, so persisting it would
+// carry July's reference into August.
+const REFERENCE_KEY = 'tqv.export.reference.v1';
+// The engagement note has to be grammatical in the language it prints in, so
+// each template language keeps its own text rather than one being reused.
+const ENGAGEMENT_KEY = (locale: 'en' | 'cs') => `tqv.export.engagement.${locale}.v1`;
+
+/**
+ * Default document reference for a range — the year and month it starts in.
+ * Only a suggestion: the reference identifies the document to the client, so it
+ * is theirs to set, and it is remembered per device once edited.
+ */
+const defaultReference = (fromMs: number): string => {
+  const d = new Date(fromMs);
+  return `TS-${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+};
 
 /** "1125" / "1 125,50" → hourly rate number; empty or unparsable = no rate. */
 const parseRate = (s: string): number | null => {
@@ -42,6 +60,16 @@ const readStored = (key: string): string => {
     return window.localStorage.getItem(key) ?? '';
   } catch {
     return '';
+  }
+};
+
+/** Persist a field, or drop it when blank. No-ops when storage is unavailable. */
+const writeStored = (key: string, value: string): void => {
+  try {
+    if (value) window.localStorage.setItem(key, value);
+    else window.localStorage.removeItem(key);
+  } catch {
+    // Private mode — the export itself still works.
   }
 };
 
@@ -131,6 +159,19 @@ export default function ExportDialog({
   const [company, setCompany] = useState(() => readStored(COMPANY_KEY));
   const [client, setClient] = useState(() => readStored(CLIENT_KEY));
   const [approver, setApprover] = useState(() => readStored(APPROVER_KEY));
+  // The reference tracks the chosen range (TS-2026-07) until the user types one
+  // of their own — a PO or contract number, say — after which it is left alone
+  // and remembered. Clearing the box hands it back to the range.
+  const [reference, setReference] = useState(
+    () => readStored(REFERENCE_KEY) || defaultReference(initial.fromMs)
+  );
+  const [refEdited, setRefEdited] = useState(() => readStored(REFERENCE_KEY) !== '');
+  // Both languages' notes are held at once; the box shows the selected
+  // template's, so switching language never overwrites the other text.
+  const [engagements, setEngagements] = useState<Record<'en' | 'cs', string>>(() => ({
+    en: readStored(ENGAGEMENT_KEY('en')),
+    cs: readStored(ENGAGEMENT_KEY('cs')),
+  }));
   const [rateStr, setRateStr] = useState(() => readStored(RATE_KEY));
   const [currency, setCurrency] = useState(() => readStored(CURRENCY_KEY));
   const [busy, setBusy] = useState(false);
@@ -144,12 +185,15 @@ export default function ExportDialog({
     const r = resolvePreset(p, nowMs, selectedWeekStart);
     setFromStr(toDateInput(r.fromMs));
     setToStr(toDateInput(r.toMs - 1));
+    if (!refEdited) setReference(defaultReference(r.fromMs));
   };
 
   const editFrom = (v: string) => {
     setFromStr(v);
     setPreset('custom');
     setDone(null);
+    const r = rangeFromInputs(v, toStr);
+    if (!refEdited && r) setReference(defaultReference(r.fromMs));
   };
   const editTo = (v: string) => {
     setToStr(v);
@@ -201,20 +245,23 @@ export default function ExportDialog({
         company: company.trim(),
         client: client.trim(),
         approver: approver.trim(),
+        reference: reference.trim() || defaultReference(range.fromMs),
+        engagement: engagements[tplLocale].trim(),
         rate: parseRate(rateStr),
         currency: currency.trim().toUpperCase(),
       });
-      // Remember the identity fields for the next export on this device.
-      try {
-        window.localStorage.setItem(ROLE_KEY, role.trim());
-        window.localStorage.setItem(COMPANY_KEY, company.trim());
-        window.localStorage.setItem(CLIENT_KEY, client.trim());
-        window.localStorage.setItem(APPROVER_KEY, approver.trim());
-        window.localStorage.setItem(RATE_KEY, rateStr.trim());
-        window.localStorage.setItem(CURRENCY_KEY, currency.trim().toUpperCase());
-      } catch {
-        // Storage unavailable (private mode) — the export itself still works.
-      }
+      // Remember the identity fields for the next export on this device. The
+      // engagement notes are saved as they are typed (see the textarea), since
+      // losing a paragraph to a failed export would be the expensive mistake.
+      writeStored(ROLE_KEY, role.trim());
+      writeStored(COMPANY_KEY, company.trim());
+      writeStored(CLIENT_KEY, client.trim());
+      writeStored(APPROVER_KEY, approver.trim());
+      writeStored(RATE_KEY, rateStr.trim());
+      writeStored(CURRENCY_KEY, currency.trim().toUpperCase());
+      // A derived reference is dropped rather than stored, so next month's
+      // export starts from that month again.
+      writeStored(REFERENCE_KEY, refEdited ? reference.trim() : '');
       const ok = await runExport(doc, format, templateId);
       if (!ok) {
         setError('No entries in this range — nothing to export.');
@@ -235,6 +282,10 @@ export default function ExportDialog({
   };
 
   const viewLabel = view === 'summary' ? 'Summary' : 'Individual';
+  // Language the selected PDF template prints in — drives which engagement note
+  // is shown and stored.
+  const tplLocale =
+    (format === 'pdf' ? PDF_TEMPLATES.find((t) => t.id === templateId)?.locale : undefined) ?? 'en';
   // Identity inputs (role / company) appear only when the chosen PDF template
   // actually prints them.
   const templateFields =
@@ -360,6 +411,10 @@ export default function ExportDialog({
                 setDone(null);
               }}
             />
+            <p className="hint">
+              These details are remembered on this device only — they are never stored in the
+              app.
+            </p>
           </div>
         )}
 
@@ -376,10 +431,6 @@ export default function ExportDialog({
                 setDone(null);
               }}
             />
-            <p className="hint">
-              Role and company are remembered on this device only — they are never stored in the
-              app.
-            </p>
           </div>
         )}
 
@@ -399,6 +450,31 @@ export default function ExportDialog({
           </div>
         )}
 
+        {templateFields.includes('reference') && (
+          <div className="field">
+            <label htmlFor="exp-reference">Reference</label>
+            <input
+              id="exp-reference"
+              type="text"
+              value={reference}
+              placeholder={defaultReference(rangeFromInputs(fromStr, toStr)?.fromMs ?? nowMs)}
+              onChange={(e) => {
+                const v = e.target.value;
+                setReference(v);
+                // Emptying the box is how you go back to the month default.
+                setRefEdited(v.trim() !== '');
+                setDone(null);
+              }}
+            />
+            <p className="hint">
+              Printed on the cover, in every page footer and in the approval declaration.
+              Follows the exported month until you type your own — a PO, contract or invoice
+              number — which is then remembered for next time. Clear the box to hand it back
+              to the month.
+            </p>
+          </div>
+        )}
+
         {templateFields.includes('approver') && (
           <div className="field">
             <label htmlFor="exp-approver">Approver</label>
@@ -412,6 +488,36 @@ export default function ExportDialog({
                 setDone(null);
               }}
             />
+          </div>
+        )}
+
+        {templateFields.includes('engagement') && (
+          <div className="field">
+            <label htmlFor="exp-engagement">
+              Engagement note ({ENGAGEMENT_LABELS[tplLocale]})
+            </label>
+            <textarea
+              id="exp-engagement"
+              rows={4}
+              value={engagements[tplLocale]}
+              placeholder={ENGAGEMENT_PLACEHOLDERS[tplLocale]}
+              onChange={(e) => {
+                const v = e.target.value;
+                setEngagements((prev) => ({ ...prev, [tplLocale]: v }));
+                // Saved as typed: this is the one field long enough that losing
+                // it to a failed export or a closed dialog would sting.
+                writeStored(ENGAGEMENT_KEY(tplLocale), v.trim());
+                setDone(null);
+              }}
+            />
+            <p className="hint">
+              Opens <strong>Basis of preparation</strong> on the last page, printed word for
+              word — so write it in {ENGAGEMENT_LABELS[tplLocale]}, with the contract, order
+              and end customer named however this engagement identifies them. Each language
+              keeps its own text; switching template shows the other one. The standing
+              wording after it (billing codes, rounding, the man-day basis, confidentiality)
+              is added for you.
+            </p>
           </div>
         )}
 

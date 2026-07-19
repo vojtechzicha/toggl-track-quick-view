@@ -49,6 +49,15 @@ export interface ExportOptions {
   client?: string;
   /** Approver named under the sign-off block (report template; may be empty). */
   approver?: string;
+  /** Document reference printed on every page; empty = the template's default. */
+  reference?: string;
+  /**
+   * Free-text sentence naming the contract, order and end customer this period
+   * was worked under. Written by the user in the template's own language and
+   * printed verbatim at the top of the basis-of-preparation block; the standing
+   * wording around it belongs to the template. Empty = omitted.
+   */
+  engagement?: string;
   /** Hourly rate for fee lines; null/omitted = a time-only document. */
   rate?: number | null;
   /** ISO 4217 code the rate is in (e.g. "CZK"); meaningful only with a rate. */
@@ -63,6 +72,10 @@ export interface ExportMeta {
   company: string;
   client: string;
   approver: string;
+  /** Document reference printed on every page; empty = the template's default. */
+  reference: string;
+  /** Engagement sentence for the basis-of-preparation block; empty = omitted. */
+  engagement: string;
   /** Hourly rate for fee lines; null = a time-only document. */
   rate: number | null;
   currency: string;
@@ -108,7 +121,15 @@ export interface SummaryDoc extends ExportMeta {
 
 // ---- Individual shape ----
 export interface IndividualRow {
-  time: string | null; // "09:00–10:30" or null for warnings
+  time: string | null; // "09:00–10:30" in the *device* locale, or null for warnings
+  /**
+   * Raw start/end of the entry. Templates that print in a fixed locale (the
+   * report's EN/CZ pair) format these themselves — `time` follows whatever
+   * locale the browser is set to, which is wrong for a Czech document produced
+   * on an en-US machine.
+   */
+  startMs: number | null;
+  endMs: number | null;
   hours: number; // rounded seconds
   code: string; // billing code (with project prefix when multi) or warning label
   /** Unprefixed billing code, for templates that lay code and project out separately. */
@@ -241,6 +262,8 @@ function buildSummaryDoc(o: ExportOptions): SummaryDoc {
     company: o.company ?? '',
     client: o.client ?? '',
     approver: o.approver ?? '',
+    reference: o.reference ?? '',
+    engagement: o.engagement ?? '',
     rate: o.rate ?? null,
     currency: o.currency ?? '',
     fromMs: range.fromMs,
@@ -285,6 +308,8 @@ function buildIndividualDoc(o: ExportOptions): IndividualDoc {
         .filter((row) => row.kind === 'bill')
         .map((row) => ({
           time: `${fmtTimeOfDay(row.startMs as number)}–${fmtTimeOfDay(row.endMs as number)}`,
+          startMs: row.startMs ?? null,
+          endMs: row.endMs ?? null,
           hours: row.rounded,
           code: codeLabel(
             row.projId != null ? nameById.get(row.projId) : undefined,
@@ -315,6 +340,8 @@ function buildIndividualDoc(o: ExportOptions): IndividualDoc {
     company: o.company ?? '',
     client: o.client ?? '',
     approver: o.approver ?? '',
+    reference: o.reference ?? '',
+    engagement: o.engagement ?? '',
     rate: o.rate ?? null,
     currency: o.currency ?? '',
     fromMs: range.fromMs,
