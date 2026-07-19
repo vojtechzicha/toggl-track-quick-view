@@ -13,6 +13,7 @@ import {
 } from '../model';
 import { weeksInRange } from '../range';
 import { DAY_MS } from '@/lib/timesheet/constants';
+import { reportTemplates } from './report';
 
 export interface PdfTemplate {
   id: string;
@@ -21,9 +22,14 @@ export interface PdfTemplate {
   /**
    * Extra identity fields this template prints (beyond the person's name). The
    * export dialog shows an input for each — their values are user-entered, never
-   * shipped with the app.
+   * shipped with the app. 'rate' renders as an hourly rate + currency pair.
    */
-  fields?: Array<'role' | 'company'>;
+  fields?: Array<'role' | 'company' | 'client' | 'approver' | 'rate'>;
+  /**
+   * Extra embedded fonts the template's styles reference. 'report' pulls in the
+   * Fraunces / IBM Plex Mono cuts (lazy-loaded next to pdfmake itself).
+   */
+  fontset?: 'report';
   build: (doc: ExportDoc) => TDocumentDefinitions;
 }
 
@@ -450,6 +456,7 @@ export const PDF_TEMPLATES: PdfTemplate[] = [
     fields: ['role', 'company'],
     build: buildAcceptance,
   },
+  ...reportTemplates,
 ];
 
 export const DEFAULT_TEMPLATE_ID = PDF_TEMPLATES[0].id;

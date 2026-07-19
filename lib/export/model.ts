@@ -45,6 +45,14 @@ export interface ExportOptions {
   role?: string;
   /** Person's company (used by templates with an identity header; may be empty). */
   company?: string;
+  /** Client the report is addressed to (report template; may be empty). */
+  client?: string;
+  /** Approver named under the sign-off block (report template; may be empty). */
+  approver?: string;
+  /** Hourly rate for fee lines; null/omitted = a time-only document. */
+  rate?: number | null;
+  /** ISO 4217 code the rate is in (e.g. "CZK"); meaningful only with a rate. */
+  currency?: string;
 }
 
 export interface ExportMeta {
@@ -53,6 +61,11 @@ export interface ExportMeta {
   personName: string;
   role: string;
   company: string;
+  client: string;
+  approver: string;
+  /** Hourly rate for fee lines; null = a time-only document. */
+  rate: number | null;
+  currency: string;
   fromMs: number;
   toMs: number; // exclusive
   multi: boolean;
@@ -61,6 +74,10 @@ export interface ExportMeta {
 // ---- Summary shape ----
 export interface SummaryRow {
   label: string; // "Project: D123" / "D123" / warning text
+  /** Unprefixed billing code, for templates that lay code and project out separately. */
+  billingCode: string;
+  /** Project the row's code belongs to ("" when unknown). */
+  project: string;
   warn: boolean;
   /** Rounded seconds per visible day column (0 = empty). */
   cells: number[];
@@ -94,6 +111,10 @@ export interface IndividualRow {
   time: string | null; // "09:00–10:30" or null for warnings
   hours: number; // rounded seconds
   code: string; // billing code (with project prefix when multi) or warning label
+  /** Unprefixed billing code, for templates that lay code and project out separately. */
+  billingCode: string;
+  /** Project the row belongs to ("" when unknown). */
+  project: string;
   warn: boolean;
   desc: string;
 }
@@ -174,7 +195,16 @@ function buildSummaryDoc(o: ExportOptions): SummaryDoc {
           fitDescs(grid.cells.get(`${d}|${rowKey}`)?.descs ?? [], maxDescriptionLength).text
         );
         const total = cells.reduce((s, v) => s + v, 0);
-        return { label, warn: false, cells, desc: fitDescs(descs, maxDescriptionLength).text, dayDescs, total };
+        return {
+          label,
+          billingCode: meta?.tag ?? '',
+          project: meta?.projectName ?? '',
+          warn: false,
+          cells,
+          desc: fitDescs(descs, maxDescriptionLength).text,
+          dayDescs,
+          total,
+        };
       });
     // Drop rows that are entirely outside the kept columns (no time anywhere).
     const keptRows = rows.filter((r) => r.total > 0);
@@ -209,6 +239,10 @@ function buildSummaryDoc(o: ExportOptions): SummaryDoc {
     personName: o.personName,
     role: o.role ?? '',
     company: o.company ?? '',
+    client: o.client ?? '',
+    approver: o.approver ?? '',
+    rate: o.rate ?? null,
+    currency: o.currency ?? '',
     fromMs: range.fromMs,
     toMs: range.toMs,
     multi,
@@ -257,6 +291,8 @@ function buildIndividualDoc(o: ExportOptions): IndividualDoc {
             row.code,
             multi
           ),
+          billingCode: row.code ?? '',
+          project: (row.projId != null ? nameById.get(row.projId) : undefined) ?? '',
           warn: false,
           desc: row.desc,
         }));
@@ -277,6 +313,10 @@ function buildIndividualDoc(o: ExportOptions): IndividualDoc {
     personName: o.personName,
     role: o.role ?? '',
     company: o.company ?? '',
+    client: o.client ?? '',
+    approver: o.approver ?? '',
+    rate: o.rate ?? null,
+    currency: o.currency ?? '',
     fromMs: range.fromMs,
     toMs: range.toMs,
     multi,

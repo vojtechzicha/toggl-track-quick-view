@@ -21,10 +21,21 @@ import {
 } from '@/lib/export';
 import { PDF_TEMPLATES, DEFAULT_TEMPLATE_ID } from '@/lib/export/pdf';
 
-// Identity fields some PDF templates print (role / company). Their values are
-// user-entered and remembered per device — the app itself ships no company names.
+// Identity fields some PDF templates print (role / company / client / approver /
+// rate). Their values are user-entered and remembered per device — the app itself
+// ships no company names or rates.
 const ROLE_KEY = 'tqv.export.role.v1';
 const COMPANY_KEY = 'tqv.export.company.v1';
+const CLIENT_KEY = 'tqv.export.client.v1';
+const APPROVER_KEY = 'tqv.export.approver.v1';
+const RATE_KEY = 'tqv.export.rate.v1';
+const CURRENCY_KEY = 'tqv.export.currency.v1';
+
+/** "1125" / "1 125,50" → hourly rate number; empty or unparsable = no rate. */
+const parseRate = (s: string): number | null => {
+  const n = parseFloat(s.replace(/\s/g, '').replace(',', '.'));
+  return Number.isFinite(n) && n > 0 ? n : null;
+};
 
 const readStored = (key: string): string => {
   try {
@@ -118,6 +129,10 @@ export default function ExportDialog({
   const [name, setName] = useState(personName);
   const [role, setRole] = useState(() => readStored(ROLE_KEY));
   const [company, setCompany] = useState(() => readStored(COMPANY_KEY));
+  const [client, setClient] = useState(() => readStored(CLIENT_KEY));
+  const [approver, setApprover] = useState(() => readStored(APPROVER_KEY));
+  const [rateStr, setRateStr] = useState(() => readStored(RATE_KEY));
+  const [currency, setCurrency] = useState(() => readStored(CURRENCY_KEY));
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [done, setDone] = useState<string | null>(null);
@@ -184,11 +199,19 @@ export default function ExportDialog({
         personName: name.trim(),
         role: role.trim(),
         company: company.trim(),
+        client: client.trim(),
+        approver: approver.trim(),
+        rate: parseRate(rateStr),
+        currency: currency.trim().toUpperCase(),
       });
       // Remember the identity fields for the next export on this device.
       try {
         window.localStorage.setItem(ROLE_KEY, role.trim());
         window.localStorage.setItem(COMPANY_KEY, company.trim());
+        window.localStorage.setItem(CLIENT_KEY, client.trim());
+        window.localStorage.setItem(APPROVER_KEY, approver.trim());
+        window.localStorage.setItem(RATE_KEY, rateStr.trim());
+        window.localStorage.setItem(CURRENCY_KEY, currency.trim().toUpperCase());
       } catch {
         // Storage unavailable (private mode) — the export itself still works.
       }
@@ -357,6 +380,71 @@ export default function ExportDialog({
               Role and company are remembered on this device only — they are never stored in the
               app.
             </p>
+          </div>
+        )}
+
+        {templateFields.includes('client') && (
+          <div className="field">
+            <label htmlFor="exp-client">Client</label>
+            <input
+              id="exp-client"
+              type="text"
+              value={client}
+              placeholder="Named on the cover; defaults to your company"
+              onChange={(e) => {
+                setClient(e.target.value);
+                setDone(null);
+              }}
+            />
+          </div>
+        )}
+
+        {templateFields.includes('approver') && (
+          <div className="field">
+            <label htmlFor="exp-approver">Approver</label>
+            <input
+              id="exp-approver"
+              type="text"
+              value={approver}
+              placeholder="e.g. Project Manager — left blank to fill by hand"
+              onChange={(e) => {
+                setApprover(e.target.value);
+                setDone(null);
+              }}
+            />
+          </div>
+        )}
+
+        {templateFields.includes('rate') && (
+          <div className="exp-dates">
+            <div className="field">
+              <label htmlFor="exp-rate">Hourly rate (optional)</label>
+              <input
+                id="exp-rate"
+                type="text"
+                inputMode="decimal"
+                value={rateStr}
+                placeholder="Empty = no fees in the report"
+                onChange={(e) => {
+                  setRateStr(e.target.value);
+                  setDone(null);
+                }}
+              />
+            </div>
+            <div className="field">
+              <label htmlFor="exp-currency">Currency</label>
+              <input
+                id="exp-currency"
+                type="text"
+                maxLength={3}
+                value={currency}
+                placeholder="CZK"
+                onChange={(e) => {
+                  setCurrency(e.target.value);
+                  setDone(null);
+                }}
+              />
+            </div>
           </div>
         )}
 
