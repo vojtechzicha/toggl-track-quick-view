@@ -338,6 +338,17 @@ export default function SettingsPanel({
     );
   };
 
+  // Previously selected projects that no longer appear in the fetched list —
+  // archived (or deleted) at the source. They keep a row in the checklist so the
+  // user can keep or drop them, but a drop is one-way: only the live list can
+  // (re)select a project, so an unchecked archived row is disabled rather than
+  // removed. Guarded on a loaded list so a not-yet-fetched one doesn't mark the
+  // whole selection archived.
+  const archivedSelected =
+    projects.length > 0
+      ? initial.selectedProjects.filter((sp) => !projects.some((p) => p.id === sp.id))
+      : [];
+
   // The weekly value currently being edited (clamped), used to live-preview the
   // proportional defaults shown as placeholders in the advanced fields.
   const parsedWeekly = parseFloat(weeklyStr);
@@ -649,6 +660,22 @@ export default function SettingsPanel({
                         <span className="proj-swatch" style={{ background: p.color }} />
                       )}
                       <span className="proj-check-name">{p.name}</span>
+                    </label>
+                  ))}
+                  {archivedSelected.map((p) => (
+                    <label key={p.id} className="proj-check proj-check-archived">
+                      <input
+                        type="checkbox"
+                        checked={selectedIds.includes(p.id)}
+                        disabled={!selectedIds.includes(p.id)}
+                        onChange={() =>
+                          setSelectedIds((prev) => prev.filter((x) => x !== p.id))
+                        }
+                      />
+                      {p.color && (
+                        <span className="proj-swatch" style={{ background: p.color }} />
+                      )}
+                      <span className="proj-check-name">{p.name} (archived)</span>
                     </label>
                   ))}
                 </div>

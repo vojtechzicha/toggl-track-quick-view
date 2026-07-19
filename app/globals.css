@@ -1384,6 +1384,19 @@ body:has(.ts-page) {
 .proj-check-name {
   color: var(--text);
 }
+/* A selected project that's been archived at the source: kept in the list so it
+   can be unchecked, but muted — and once unchecked its box disables (re-adding
+   goes through the live project list only). */
+.proj-check-archived .proj-check-name {
+  color: var(--muted, rgba(255, 255, 255, 0.55));
+  font-style: italic;
+}
+.proj-check-archived .proj-swatch {
+  opacity: 0.55;
+}
+.proj-check-archived:has(input:disabled) {
+  cursor: default;
+}
 
 /* ---------- Timesheet: history bar + week picker ---------- */
 /* The history bar sits under the topbar when a past week is shown: back to the
