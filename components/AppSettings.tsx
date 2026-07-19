@@ -60,6 +60,7 @@ export default function AppSettings({
         exportName: settings.exportName,
       }}
       projects={projects}
+      projectsLoaded={t.ready}
       serverManaged={!!t.serverManaged}
       mode={mode ?? 'toggl'}
       cacheInterval={t.cacheEnabled ? t.effectiveRefreshSec : null}

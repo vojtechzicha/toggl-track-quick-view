@@ -213,6 +213,7 @@ function fmtInterval(sec: number): string {
 export default function SettingsPanel({
   initial,
   projects,
+  projectsLoaded,
   serverManaged,
   mode = 'toggl',
   cacheInterval,
@@ -234,6 +235,10 @@ export default function SettingsPanel({
 }: {
   initial: SettingsValue;
   projects: TrackProject[];
+  // Whether the project list has been successfully fetched. Distinguishes "still
+  // loading" from "loaded and genuinely empty" — an empty workspace is a real
+  // state (e.g. every project archived) that must still render archived rows.
+  projectsLoaded: boolean;
   serverManaged: boolean;
   // Which track source the deployment runs. In standalone mode the "projects"
   // are stored workspaces, the token/refresh UI disappears, and the Workspaces
@@ -320,7 +325,22 @@ export default function SettingsPanel({
 
   const standalone = mode === 'standalone';
   const tokenConnected = projects.length > 0;
-  const showProjects = serverManaged || tokenConnected;
+
+  // Previously selected projects that no longer appear in the fetched list —
+  // archived (or deleted) at the source. They keep a row in the checklist so the
+  // user can keep or drop them, but a drop is one-way: only the live list can
+  // (re)select a project, so an unchecked archived row is disabled rather than
+  // removed. Gated on a completed fetch (not list length: a successful fetch may
+  // genuinely return no active projects) so a still-loading list doesn't mark
+  // the whole selection archived.
+  const archivedSelected = projectsLoaded
+    ? initial.selectedProjects.filter((sp) => !projects.some((p) => p.id === sp.id))
+    : [];
+
+  // Archived leftovers keep the picker visible even when the active list is
+  // empty (e.g. every selected project has since been archived) — otherwise
+  // they could never be unchecked.
+  const showProjects = serverManaged || tokenConnected || archivedSelected.length > 0;
   // What a selectable item is called in this mode. In standalone the app's own
   // stored workspaces fill the "project" slot (same numeric-id contract).
   const itemNoun = standalone ? 'workspace' : 'project';
@@ -337,17 +357,6 @@ export default function SettingsPanel({
       prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]
     );
   };
-
-  // Previously selected projects that no longer appear in the fetched list —
-  // archived (or deleted) at the source. They keep a row in the checklist so the
-  // user can keep or drop them, but a drop is one-way: only the live list can
-  // (re)select a project, so an unchecked archived row is disabled rather than
-  // removed. Guarded on a loaded list so a not-yet-fetched one doesn't mark the
-  // whole selection archived.
-  const archivedSelected =
-    projects.length > 0
-      ? initial.selectedProjects.filter((sp) => !projects.some((p) => p.id === sp.id))
-      : [];
 
   // The weekly value currently being edited (clamped), used to live-preview the
   // proportional defaults shown as placeholders in the advanced fields.
