@@ -800,6 +800,7 @@ body {
 .field input[type='password'],
 .field input[type='number'],
 .field input[type='date'],
+.field textarea,
 .field select {
   background: var(--bg);
   border: 1px solid var(--line);
@@ -809,7 +810,14 @@ body {
   font-size: 15px;
   width: 100%;
 }
+.field textarea {
+  font-family: inherit;
+  line-height: 1.45;
+  resize: vertical;
+  min-height: 96px;
+}
 .field input:focus,
+.field textarea:focus,
 .field select:focus {
   outline: none;
   border-color: var(--accent);

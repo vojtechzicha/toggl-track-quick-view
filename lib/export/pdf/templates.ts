@@ -13,6 +13,8 @@ import {
 } from '../model';
 import { weeksInRange } from '../range';
 import { DAY_MS } from '@/lib/timesheet/constants';
+import { reportTemplates } from './report';
+import { allocateMd, HOURS_PER_MD } from './money';
 
 export interface PdfTemplate {
   id: string;
@@ -21,9 +23,22 @@ export interface PdfTemplate {
   /**
    * Extra identity fields this template prints (beyond the person's name). The
    * export dialog shows an input for each — their values are user-entered, never
-   * shipped with the app.
+   * shipped with the app. 'rate' renders as an hourly rate + currency pair.
    */
-  fields?: Array<'role' | 'company'>;
+  fields?: Array<
+    'role' | 'company' | 'client' | 'approver' | 'reference' | 'engagement' | 'rate'
+  >;
+  /**
+   * Language the template prints in. The export dialog uses it for the fields
+   * the user must phrase themselves (the engagement note), so each language
+   * keeps its own text rather than one being pasted into the other.
+   */
+  locale?: 'en' | 'cs';
+  /**
+   * Extra embedded fonts the template's styles reference. 'report' pulls in the
+   * Fraunces / IBM Plex Mono cuts (lazy-loaded next to pdfmake itself).
+   */
+  fontset?: 'report';
   build: (doc: ExportDoc) => TDocumentDefinitions;
 }
 
@@ -196,8 +211,8 @@ function buildStandard(doc: ExportDoc): TDocumentDefinitions {
 
 // The acceptance sheet is day-based regardless of view: one row per calendar day
 // of the exported range (empty days included), a person/company header on top and
-// a digital-signature area at the bottom. Man-days assume the common 8h day.
-const HOURS_PER_MD = 8;
+// a digital-signature area at the bottom. Man-days assume the common 8h day
+// (HOURS_PER_MD, shared with the report templates).
 
 const ACCEPT = {
   line: '#77933c', // olive border, as on typical spreadsheet-born protocols
@@ -210,24 +225,12 @@ const fmtNum = (n: number): string => n.toFixed(2);
 const secsToHoursNumLabel = (secs: number): string => fmtNum(secs / 3600);
 
 /**
- * Per-day MD labels (2 dp) whose sum is exactly the period total's 2 dp value.
- * Naive per-day rounding drifts — 7h = 0.875 MD and 9h = 1.125 MD both show one
- * half-cent high, so a month of them can sum to 8.02 against an 8.00 header.
- * Largest-remainder rounding: floor every day to whole hundredths, then hand the
- * missing hundredths to the days that lost the most in flooring. Workless days
- * have nothing to gain and stay at 0.00.
+ * Per-day MD labels (2 dp) whose sum is exactly the period total's 2 dp value —
+ * see `allocateMd`, which does the largest-remainder work.
  */
 function mdColumn(daySecs: number[]): { rows: string[]; total: string } {
-  const EPS = 1e-9; // don't let float noise turn an exact hundredth into a floor loss
-  const exact = daySecs.map((s) => (s / 3600 / HOURS_PER_MD) * 100);
-  const totalCents = Math.round(exact.reduce((a, b) => a + b, 0));
-  const cents = exact.map((v) => Math.floor(v + EPS));
-  let leftover = totalCents - cents.reduce((a, b) => a + b, 0);
-  const byLoss = exact
-    .map((v, i) => ({ loss: v - Math.floor(v + EPS), i }))
-    .sort((a, b) => b.loss - a.loss || a.i - b.i);
-  for (let k = 0; k < byLoss.length && leftover > 0; k++, leftover--) cents[byLoss[k].i] += 1;
-  return { rows: cents.map((c) => fmtNum(c / 100)), total: fmtNum(totalCents / 100) };
+  const { rows, total } = allocateMd(daySecs);
+  return { rows: rows.map(fmtNum), total: fmtNum(total) };
 }
 const fmtDayMonth = (ms: number): string => {
   const d = new Date(ms);
@@ -450,6 +453,7 @@ export const PDF_TEMPLATES: PdfTemplate[] = [
     fields: ['role', 'company'],
     build: buildAcceptance,
   },
+  ...reportTemplates,
 ];
 
 export const DEFAULT_TEMPLATE_ID = PDF_TEMPLATES[0].id;
