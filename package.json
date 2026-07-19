@@ -10,7 +10,8 @@
     "lint": "next lint",
     "check:money": "node scripts/check-money.ts",
     "check:report": "node scripts/check-report.ts",
-    "check": "npm run check:money && npm run check:report"
+    "check": "npm run check:money && npm run check:report && npm run check:fonts",
+    "check:fonts": "node scripts/check-fonts.ts"
   },
   "dependencies": {
     "mongodb": "^7.4.0",
