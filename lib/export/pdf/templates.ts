@@ -15,6 +15,7 @@ import { weeksInRange } from '../range';
 import { DAY_MS } from '@/lib/timesheet/constants';
 import { reportTemplates } from './report';
 import { allocateMd, HOURS_PER_MD } from './money';
+import { compactDayText, fixDescTypos, type CompactRow } from './acceptanceCompact';
 
 export interface PdfTemplate {
   id: string;
@@ -213,6 +214,13 @@ function buildStandard(doc: ExportDoc): TDocumentDefinitions {
 // of the exported range (empty days included), a person/company header on top and
 // a digital-signature area at the bottom. Man-days assume the common 8h day
 // (HOURS_PER_MD, shared with the report templates).
+//
+// Two variants share the sheet. "full" lists every exported row of the day
+// verbatim; "compact" aggregates the day per billing tag (see
+// ./acceptanceCompact). The variants differ ONLY in the Project / Task cell
+// text — the day's Hours and MD figures come from the same seconds either way.
+
+type AcceptanceVariant = 'full' | 'compact';
 
 const ACCEPT = {
   line: '#77933c', // olive border, as on typical spreadsheet-born protocols
@@ -249,31 +257,37 @@ function isoWeek(ms: number): number {
 
 interface DayAgg {
   seconds: number;
-  tasks: string[]; // deduped "code - description" lines
+  tasks: string[]; // deduped "code - description" lines (or the one compact line)
+  rows: CompactRow[]; // the day's exported rows, the compact aggregation's input
 }
 
 function pushTask(agg: DayAgg, code: string, desc: string): void {
-  const text = code && desc ? `${code} - ${desc}` : code || desc;
+  const fixed = fixDescTypos(desc);
+  const text = code && fixed ? `${code} - ${fixed}` : code || fixed;
   if (!text) return;
   if (!agg.tasks.some((t) => t.toLowerCase() === text.toLowerCase())) agg.tasks.push(text);
 }
 
 /** Per-day totals and task texts, keyed by the day's ms (same keys the builders emit). */
-function acceptanceDays(doc: ExportDoc): Map<number, DayAgg> {
+function acceptanceDays(doc: ExportDoc, variant: AcceptanceVariant): Map<number, DayAgg> {
   const byDay = new Map<number, DayAgg>();
   const day = (ms: number): DayAgg => {
     let agg = byDay.get(ms);
     if (!agg) {
-      agg = { seconds: 0, tasks: [] };
+      agg = { seconds: 0, tasks: [], rows: [] };
       byDay.set(ms, agg);
     }
     return agg;
+  };
+  const push = (agg: DayAgg, code: string, billingCode: string, desc: string, seconds: number) => {
+    if (variant === 'compact') agg.rows.push({ code, billingCode, desc, seconds });
+    else pushTask(agg, code, desc);
   };
   if (doc.view === 'individual') {
     for (const d of doc.days) {
       const agg = day(d.dateMs);
       agg.seconds += d.total;
-      for (const r of d.rows) pushTask(agg, r.code, r.desc);
+      for (const r of d.rows) push(agg, r.code, r.billingCode, r.desc, r.hours);
     }
   } else {
     for (const week of doc.weeks) {
@@ -282,17 +296,24 @@ function acceptanceDays(doc: ExportDoc): Map<number, DayAgg> {
         const agg = day(dateMs);
         agg.seconds += week.dayTotals[ci];
         for (const row of week.rows) {
-          if (row.cells[ci] > 0) pushTask(agg, row.label, row.dayDescs[ci]);
+          if (row.cells[ci] > 0) {
+            push(agg, row.label, row.billingCode, row.dayDescs[ci], row.cells[ci]);
+          }
         }
       });
+    }
+  }
+  if (variant === 'compact') {
+    for (const agg of byDay.values()) {
+      if (agg.rows.length > 0) agg.tasks = [compactDayText(agg.rows)];
     }
   }
   return byDay;
 }
 
-function buildAcceptance(doc: ExportDoc): TDocumentDefinitions {
+function buildAcceptance(doc: ExportDoc, variant: AcceptanceVariant): TDocumentDefinitions {
   const generatedAt = Date.now();
-  const byDay = acceptanceDays(doc);
+  const byDay = acceptanceDays(doc, variant);
 
   // Every calendar day of the range appears, worked or not — enumerated with the
   // same week+offset arithmetic the builders use, so the keys line up.
@@ -445,13 +466,26 @@ export const PDF_TEMPLATES: PdfTemplate[] = [
     build: buildStandard,
   },
   {
+    // The id stays 'acceptance-protocol' so a previously picked template keeps
+    // resolving; only the displayed name gained the "(Full)" suffix.
     id: 'acceptance-protocol',
-    name: 'Timesheet Acceptance Protocol',
+    name: 'Timesheet Acceptance Protocol (Full)',
     description:
       'Formal per-day sheet: name/role/company header, a row for every calendar day ' +
-      '(hours and man-days, 8h = 1 MD), and a signature area for digital approval.',
+      '(hours and man-days, 8h = 1 MD), and a signature area for digital approval. ' +
+      'Each day lists every entry description in full.',
     fields: ['role', 'company'],
-    build: buildAcceptance,
+    build: (doc) => buildAcceptance(doc, 'full'),
+  },
+  {
+    id: 'acceptance-protocol-compact',
+    name: 'Timesheet Acceptance Protocol (Compact)',
+    description:
+      'The same per-day sheet, but each day is aggregated per billing tag — ' +
+      '"TAG – summary (X.X h)" ordered by hours, with support tickets and meetings ' +
+      'collapsed. Daily hours and man-days are identical to the Full variant.',
+    fields: ['role', 'company'],
+    build: (doc) => buildAcceptance(doc, 'compact'),
   },
   ...reportTemplates,
 ];

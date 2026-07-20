@@ -472,8 +472,8 @@ The export dialog's **PDF template** picker chooses the layout of the PDF:
 
 - **Standard** — the default: your name, the period, and the per-week
   (Summary) or per-day (Individual) tables exactly as shown on screen.
-- **Timesheet Acceptance Protocol** — a formal per-day acceptance sheet meant
-  to be countersigned by the client. A header block carries **Name, Role,
+- **Timesheet Acceptance Protocol (Full)** — a formal per-day acceptance sheet
+  meant to be countersigned by the client. A header block carries **Name, Role,
   Company, Start/End date** and the period's total **man-days** (8h = 1 MD);
   the table below has **one row for every calendar day** of the exported range
   — including empty ones — with year / month / ISO week / date, the company,
@@ -485,6 +485,17 @@ The export dialog's **PDF template** picker chooses the layout of the PDF:
   device only** (localStorage) — no company-specific values ship with, or are
   stored in, the app. It works from either view; the Individual view carries
   the richest per-day text.
+- **Timesheet Acceptance Protocol (Compact)** — the same sheet, but each day's
+  **Project / Task** cell is aggregated **per billing tag**: `TAG – summary
+  (X.X h)`, ordered by descending hours. The summary keeps the dominant
+  description (or the top two), merges near-duplicates (a description that is
+  another one plus a tail folds into the shorter), strips `Meeting | `
+  prefixes, collapses a
+  meetings tag (one named *schůzky*) to the bare word **schůzky**, and folds
+  ticket-shaped codes (`ITSD-…`) into one **Support** group listing the ticket
+  ids (with *a další* when a description mentions more). The aggregation is
+  presentational only — the day's **Hours and MD figures are identical** to
+  the Full variant.
 
 ### Linked billing codes (subcontracting)
 
