@@ -279,15 +279,15 @@ function acceptanceDays(doc: ExportDoc, variant: AcceptanceVariant): Map<number,
     }
     return agg;
   };
-  const push = (agg: DayAgg, code: string, desc: string, seconds: number) => {
-    if (variant === 'compact') agg.rows.push({ code, desc, seconds });
+  const push = (agg: DayAgg, code: string, billingCode: string, desc: string, seconds: number) => {
+    if (variant === 'compact') agg.rows.push({ code, billingCode, desc, seconds });
     else pushTask(agg, code, desc);
   };
   if (doc.view === 'individual') {
     for (const d of doc.days) {
       const agg = day(d.dateMs);
       agg.seconds += d.total;
-      for (const r of d.rows) push(agg, r.code, r.desc, r.hours);
+      for (const r of d.rows) push(agg, r.code, r.billingCode, r.desc, r.hours);
     }
   } else {
     for (const week of doc.weeks) {
@@ -296,7 +296,9 @@ function acceptanceDays(doc: ExportDoc, variant: AcceptanceVariant): Map<number,
         const agg = day(dateMs);
         agg.seconds += week.dayTotals[ci];
         for (const row of week.rows) {
-          if (row.cells[ci] > 0) push(agg, row.label, row.dayDescs[ci], row.cells[ci]);
+          if (row.cells[ci] > 0) {
+            push(agg, row.label, row.billingCode, row.dayDescs[ci], row.cells[ci]);
+          }
         }
       });
     }

@@ -258,6 +258,27 @@ const compactRows = dayRows(compactDef);
     { code: '.J-Support', desc: '[ITSD-1] oprava; [ITSD-2] konfigurace', seconds: H(1.4) },
   ]);
   eq(tagged, 'Support – ITSD-1, ITSD-2 (1.4 h)', 'a ".J-Support" tag groups by tickets from the text');
+  // A multi-project export prefixes the printed code with the project — the
+  // unprefixed billingCode must still classify the row as a ticket.
+  const multi = compactDayText([
+    {
+      code: 'J&T Banka: ITSD-214020',
+      billingCode: 'ITSD-214020',
+      desc: 'vygenerování a předání klíče',
+      seconds: H(1.2),
+    },
+    {
+      code: 'J&T Banka: J-CLD-900 (Assety fáze 2)',
+      billingCode: 'J-CLD-900 (Assety fáze 2)',
+      desc: 'Assets - koncept',
+      seconds: H(2.0),
+    },
+  ]);
+  eq(
+    multi,
+    'J&T Banka: J-CLD-900 – Assets - koncept (2.0 h); Support – ITSD-214020 (1.2 h)',
+    'a "Project: " prefix neither breaks the Support collapse nor leaves the printed label'
+  );
 }
 
 // ---- meetings collapse ----
