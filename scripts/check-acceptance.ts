@@ -84,6 +84,17 @@ const DAYS = [
     { code: 'J-CLD-249 (Cloud - schůzky)', desc: '1:1 Michaela/Vojta', h: 0.8 },
     { code: 'J-MDS-1', desc: 'PMDP-81 studium dodaných podkladů', h: 1.0 },
   ]),
+  // 9/7 — near-duplicate descriptions: the longer is the shorter plus a tail
+  // (with the shared last word typo-truncated), so they merge into one.
+  day(D(2026, 7, 9), [
+    { code: 'J-CLD-900 (Assety fáze 2)', desc: 'Assets - WSO2 napojení a finální architektura', h: 3.6 },
+    { code: 'J-CLD-919 (AI reporting)', desc: 'AI projekt - příprava podkladů', h: 0.6 },
+    {
+      code: 'J-CLD-900 (Assety fáze 2)',
+      desc: 'Assets - WSO2 napojení a finální architektur, předávka na jiného architekta',
+      h: 5.0,
+    },
+  ]),
   // 14/7 — the typo day ("poklady" → "podklady" in both variants).
   day(D(2026, 7, 14), [
     { code: 'J-CLD-900 (Assety fáze 2)', desc: 'úprava zápisu a poklady pro OBE, meeting s OBE', h: 6.2 },
@@ -320,6 +331,33 @@ const compactRows = dayRows(compactDef);
   ok(summary.endsWith('…'), 'an overlong summary is marked with an ellipsis');
   ok(summary.length <= 60, `an overlong summary is clamped (got ${summary.length} chars)`);
   no(summary.includes('padesáti'), 'the tail of an overlong summary is dropped');
+}
+
+// ---- near-duplicate (tail-variant) descriptions merge ----
+
+{
+  eq(
+    rowFor(compactRows, '9/7')[TASK],
+    'J-CLD-900 – Assets - WSO2 napojení a finální architektura (8.6 h); ' +
+      'J-CLD-919 – AI projekt - příprava podkladů (0.6 h)',
+    'a description that is another plus a tail merges into the shorter, pooling hours'
+  );
+  // A true word-prefix merges too.
+  const prefix = compactDayText([
+    { code: 'J-TEST-1', desc: 'finalizace konceptu', seconds: H(1.0) },
+    { code: 'J-TEST-1', desc: 'finalizace konceptu a review dokumentu', seconds: H(1.4) },
+  ]);
+  eq(prefix, 'J-TEST-1 – finalizace konceptu (2.4 h)', 'a word-prefix description absorbs the longer');
+  // But a differing word inside the shared span is a different activity.
+  const distinct = compactDayText([
+    { code: 'J-TEST-1', desc: 'Assets - workshop příprava', seconds: H(2.0) },
+    { code: 'J-TEST-1', desc: 'Assets - workshop zápis', seconds: H(1.8) },
+  ]);
+  eq(
+    distinct,
+    'J-TEST-1 – Assets - workshop příprava + Assets - workshop zápis (3.8 h)',
+    'descriptions differing in a full word never merge'
+  );
 }
 
 // ---- untagged rows ----

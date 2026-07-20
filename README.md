@@ -488,7 +488,9 @@ The export dialog's **PDF template** picker chooses the layout of the PDF:
 - **Timesheet Acceptance Protocol (Compact)** — the same sheet, but each day's
   **Project / Task** cell is aggregated **per billing tag**: `TAG – summary
   (X.X h)`, ordered by descending hours. The summary keeps the dominant
-  description (or the top two), strips `Meeting | ` prefixes, collapses a
+  description (or the top two), merges near-duplicates (a description that is
+  another one plus a tail folds into the shorter), strips `Meeting | `
+  prefixes, collapses a
   meetings tag (one named *schůzky*) to the bare word **schůzky**, and folds
   ticket-shaped codes (`ITSD-…`) into one **Support** group listing the ticket
   ids (with *a další* when a description mentions more). The aggregation is
