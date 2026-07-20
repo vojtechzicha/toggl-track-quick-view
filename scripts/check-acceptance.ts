@@ -301,7 +301,13 @@ const compactRows = dayRows(compactDef);
     { code: 'J-TEST-1', desc: 'hlavní práce na konceptu', seconds: H(3.0) },
     { code: 'J-TEST-1', desc: 'vedlejší úkol', seconds: H(1.0) },
   ]);
-  eq(dominant, 'J-TEST-1 – hlavní práce na konceptu (4.0 h)', 'a ≥70% description stands alone');
+  eq(dominant, 'J-TEST-1 – hlavní práce na konceptu (4.0 h)', 'a ≥65% description stands alone');
+  // Just over the bar (~69%) dominates too — the 7/7 J-CLD-899 shape.
+  const near = compactDayText([
+    { code: 'J-TEST-1', desc: 'hlavní práce na konceptu', seconds: H(2.2) },
+    { code: 'J-TEST-1', desc: 'vedlejší úkol', seconds: H(1.0) },
+  ]);
+  eq(near, 'J-TEST-1 – hlavní práce na konceptu (3.2 h)', 'a ~69% description stands alone');
   // 56% does not: the top two carry the group.
   const split = compactDayText([
     { code: 'J-TEST-1', desc: 'hlavní práce na konceptu', seconds: H(2.0) },
@@ -310,7 +316,7 @@ const compactRows = dayRows(compactDef);
   eq(
     split,
     'J-TEST-1 – hlavní práce na konceptu + vedlejší úkol (3.6 h)',
-    'below 70% the top two descriptions join with " + "'
+    'below 65% the top two descriptions join with " + "'
   );
   // Identical descriptions across rows appear once (and pool their hours).
   const dedup = compactDayText([
