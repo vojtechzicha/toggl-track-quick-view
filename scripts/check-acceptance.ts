@@ -5,8 +5,9 @@
 // Like check-report.ts, these assert on the pdfmake *document definition* the
 // template emits. The load-bearing claims: the Compact variant only rewrites
 // the Project / Task cell (Hours and MD columns stay byte-identical to Full),
-// and the compact aggregation follows its spec — per-tag groups by descending
-// hours, dominance, support-ticket and meetings collapsing, text hygiene.
+// and the compact aggregation follows its spec — one line per day: every
+// billing code by descending hours, then a single overall description
+// (dominance, ticket and meetings handling, text hygiene) with no times.
 
 import assert from 'node:assert/strict';
 import { registerHooks } from 'node:module';
@@ -230,36 +231,39 @@ const compactRows = dayRows(compactDef);
 {
   eq(
     rowFor(compactRows, '15/7')[TASK],
-    'J-CLD-900 – Assets - PSD2 koncept a zajištění syncu s bezpečností (2.8 h); ' +
-      'J-CLD-450 – finalizace Cloud konceptu (2.4 h); ' +
-      'Support – ITSD-214020, ITSD-211968 (1.8 h); ' +
-      'J-CLD-919 – finalizace AI reporting konceptu (0.8 h)',
-    '15/7 renders exactly per the compact spec'
+    'J-CLD-900, J-CLD-450, ITSD-214020, J-CLD-919, ITSD-211968 – ' +
+      'Assets - PSD2 koncept a zajištění syncu s bezpečností + finalizace Cloud konceptu',
+    '15/7 renders exactly per the compact spec: all codes by hours, one description'
   );
   const full = rowFor(fullRows, '15/7')[TASK];
   ok(
     full.includes('J-CLD-450 (Cloud - sběrný ticket) - finalizace Cloud konceptu'),
     'the Full variant still lists rows verbatim'
   );
-  eq(rowFor(compactRows, '15/7')[HOURS], '7.80', 'the grouping never changes the day total');
+  eq(rowFor(compactRows, '15/7')[HOURS], '7.80', 'the aggregation never changes the day total');
+  // No per-entry or per-group times survive anywhere in the compact cells.
+  for (const r of compactRows) {
+    no(/\(\d+(\.\d+)? h\)/.test(r[TASK]), `no "(X.X h)" times in a compact cell (${r[3]})`);
+  }
 }
 
 // ---- support tickets ----
 
 {
-  const t = rowFor(compactRows, '16/7')[TASK];
-  ok(
-    t.includes('Support – ITSD-212604 a další (2.6 h)'),
-    '"+ řešení 7 obdobných ticketů" appends "a další"'
+  eq(
+    rowFor(compactRows, '16/7')[TASK],
+    'J-CLD-450, ITSD-212604 a další, J-CLD-919 – finalizace Cloud konceptu',
+    '"+ řešení 7 obdobných ticketů" appends "a další" to the ticket code'
   );
-  ok(t.startsWith('J-CLD-450'), 'groups are ordered by descending hours');
-  // A directly-tagged support row (no ticket-code fallback) still collapses.
+  // A directly-tagged support row (no ticket-code fallback) still lists the
+  // ticket ids as codes; a ticket-only day says "řešení tiketů".
   const tagged = compactDayText([
     { code: '.J-Support', desc: '[ITSD-1] oprava; [ITSD-2] konfigurace', seconds: H(1.4) },
   ]);
-  eq(tagged, 'Support – ITSD-1, ITSD-2 (1.4 h)', 'a ".J-Support" tag groups by tickets from the text');
+  eq(tagged, 'ITSD-1, ITSD-2 – řešení tiketů', 'a ".J-Support" tag lists tickets from the text');
   // A multi-project export prefixes the printed code with the project — the
-  // unprefixed billingCode must still classify the row as a ticket.
+  // unprefixed billingCode must still classify the row as a ticket (its
+  // boilerplate description must not feed the day description).
   const multi = compactDayText([
     {
       code: 'J&T Banka: ITSD-214020',
@@ -276,16 +280,20 @@ const compactRows = dayRows(compactDef);
   ]);
   eq(
     multi,
-    'J&T Banka: J-CLD-900 – Assets - koncept (2.0 h); Support – ITSD-214020 (1.2 h)',
-    'a "Project: " prefix neither breaks the Support collapse nor leaves the printed label'
+    'J&T Banka: J-CLD-900, J&T Banka: ITSD-214020 – Assets - koncept',
+    'a "Project: " prefix neither breaks the ticket classification nor leaves the printed code'
   );
 }
 
-// ---- meetings collapse ----
+// ---- meetings ----
 
 {
   const t = rowFor(compactRows, '7/7')[TASK];
-  ok(t.includes('J-CLD-249 – schůzky (1.2 h)'), 'the meetings tag collapses to "schůzky"');
+  eq(
+    t,
+    'J-CLD-899, J-CLD-249, J-MDS-1 – příprava scénářů pro AVD penetrační test',
+    'a meetings tag stays in the code list; the day description is the main project work'
+  );
   for (const name of ['stand-up', '1:1', 'retro']) {
     no(t.includes(name), `no individual meeting name ("${name}") leaks into Compact`);
   }
@@ -293,10 +301,27 @@ const compactRows = dayRows(compactDef);
     rowFor(fullRows, '7/7')[TASK].includes('Cloud: stand-up'),
     'the Full variant keeps the meeting names'
   );
+  // A meetings-only day still says something.
+  eq(
+    compactDayText([{ code: 'J-CLD-249 (Cloud - schůzky)', desc: 'stand-up', seconds: H(1.0) }]),
+    'J-CLD-249 – schůzky',
+    'a meetings-only day reads "schůzky"'
+  );
+  // …as does a day of only meetings and tickets.
+  eq(
+    compactDayText([
+      { code: 'J-CLD-249 (Cloud - schůzky)', desc: 'stand-up', seconds: H(1.0) },
+      { code: 'ITSD-1', desc: 'oprava', seconds: H(0.5) },
+    ]),
+    'J-CLD-249, ITSD-1 – schůzky a řešení tiketů',
+    'a meetings-and-tickets day reads "schůzky a řešení tiketů"'
+  );
   // Non-meeting tags merely lose the "Meeting | " prefix.
-  const crm = rowFor(compactRows, '14/7')[TASK];
-  ok(crm.includes('J-CRM – Trans. projekty - sladění (cloud)'), 'the "Meeting | " prefix is stripped');
-  no(crm.includes('Meeting |'), 'no prefix survives in Compact');
+  const crm = compactDayText([
+    { code: 'J-CRM', desc: 'Meeting | Trans. projekty - sladění (cloud)', seconds: H(1.0) },
+  ]);
+  eq(crm, 'J-CRM – Trans. projekty - sladění (cloud)', 'the "Meeting | " prefix is stripped');
+  no(rowFor(compactRows, '14/7')[TASK].includes('Meeting |'), 'no prefix survives in Compact');
 }
 
 // ---- text hygiene, in both variants ----
@@ -322,22 +347,32 @@ const compactRows = dayRows(compactDef);
     { code: 'J-TEST-1', desc: 'hlavní práce na konceptu', seconds: H(3.0) },
     { code: 'J-TEST-1', desc: 'vedlejší úkol', seconds: H(1.0) },
   ]);
-  eq(dominant, 'J-TEST-1 – hlavní práce na konceptu (4.0 h)', 'a ≥65% description stands alone');
-  // Just over the bar (~69%) dominates too — the 7/7 J-CLD-899 shape.
+  eq(dominant, 'J-TEST-1 – hlavní práce na konceptu', 'a ≥65% description stands alone');
+  // Just over the bar (~69%) dominates too.
   const near = compactDayText([
     { code: 'J-TEST-1', desc: 'hlavní práce na konceptu', seconds: H(2.2) },
     { code: 'J-TEST-1', desc: 'vedlejší úkol', seconds: H(1.0) },
   ]);
-  eq(near, 'J-TEST-1 – hlavní práce na konceptu (3.2 h)', 'a ~69% description stands alone');
-  // 56% does not: the top two carry the group.
+  eq(near, 'J-TEST-1 – hlavní práce na konceptu', 'a ~69% description stands alone');
+  // 56% does not: the top two carry the day.
   const split = compactDayText([
     { code: 'J-TEST-1', desc: 'hlavní práce na konceptu', seconds: H(2.0) },
     { code: 'J-TEST-1', desc: 'vedlejší úkol', seconds: H(1.6) },
   ]);
   eq(
     split,
-    'J-TEST-1 – hlavní práce na konceptu + vedlejší úkol (3.6 h)',
+    'J-TEST-1 – hlavní práce na konceptu + vedlejší úkol',
     'below 65% the top two descriptions join with " + "'
+  );
+  // Dominance is judged across tags: the day description is day-level.
+  const acrossTags = compactDayText([
+    { code: 'J-TEST-1', desc: 'hlavní práce na konceptu', seconds: H(3.0) },
+    { code: 'J-TEST-2', desc: 'vedlejší úkol', seconds: H(1.0) },
+  ]);
+  eq(
+    acrossTags,
+    'J-TEST-1, J-TEST-2 – hlavní práce na konceptu',
+    'a ≥65% description dominates across tags; every code still lists'
   );
   // Identical descriptions across rows appear once (and pool their hours).
   const dedup = compactDayText([
@@ -345,7 +380,7 @@ const compactRows = dayRows(compactDef);
     { code: 'J-TEST-1', desc: 'Stejná práce', seconds: H(1.0) },
     { code: 'J-TEST-1', desc: 'jiná drobnost', seconds: H(0.4) },
   ]);
-  eq(dedup, 'J-TEST-1 – stejná práce (2.4 h)', 'duplicate descriptions dedupe into one');
+  eq(dedup, 'J-TEST-1 – stejná práce', 'duplicate descriptions dedupe into one');
   // An overlong dominant description is cut at a word boundary and marked.
   const long = compactDayText([
     {
@@ -354,7 +389,7 @@ const compactRows = dayRows(compactDef);
       seconds: H(1.0),
     },
   ]);
-  const summary = long.slice('J-TEST-1 – '.length, -' (1.0 h)'.length);
+  const summary = long.slice('J-TEST-1 – '.length);
   ok(summary.endsWith('…'), 'an overlong summary is marked with an ellipsis');
   ok(summary.length <= 60, `an overlong summary is clamped (got ${summary.length} chars)`);
   no(summary.includes('padesáti'), 'the tail of an overlong summary is dropped');
@@ -365,8 +400,7 @@ const compactRows = dayRows(compactDef);
 {
   eq(
     rowFor(compactRows, '9/7')[TASK],
-    'J-CLD-900 – Assets - WSO2 napojení a finální architektura (8.6 h); ' +
-      'J-CLD-919 – AI projekt - příprava podkladů (0.6 h)',
+    'J-CLD-900, J-CLD-919 – Assets - WSO2 napojení a finální architektura',
     'a description that is another plus a tail merges into the shorter, pooling hours'
   );
   // A true word-prefix merges too.
@@ -374,7 +408,7 @@ const compactRows = dayRows(compactDef);
     { code: 'J-TEST-1', desc: 'finalizace konceptu', seconds: H(1.0) },
     { code: 'J-TEST-1', desc: 'finalizace konceptu a review dokumentu', seconds: H(1.4) },
   ]);
-  eq(prefix, 'J-TEST-1 – finalizace konceptu (2.4 h)', 'a word-prefix description absorbs the longer');
+  eq(prefix, 'J-TEST-1 – finalizace konceptu', 'a word-prefix description absorbs the longer');
   // But a differing word inside the shared span is a different activity.
   const distinct = compactDayText([
     { code: 'J-TEST-1', desc: 'Assets - workshop příprava', seconds: H(2.0) },
@@ -382,7 +416,7 @@ const compactRows = dayRows(compactDef);
   ]);
   eq(
     distinct,
-    'J-TEST-1 – Assets - workshop příprava + Assets - workshop zápis (3.8 h)',
+    'J-TEST-1 – Assets - workshop příprava + Assets - workshop zápis',
     'descriptions differing in a full word never merge'
   );
 }
@@ -394,8 +428,14 @@ const compactRows = dayRows(compactDef);
     { code: '', desc: 'nezařazená práce', seconds: H(0.6) },
     { code: 'J-TEST-1', desc: 'práce', seconds: H(1.0) },
   ]);
-  eq(t, 'J-TEST-1 – práce (1.0 h); Ostatní – nezařazená práce (0.6 h)',
-    'rows without a tag group under "Ostatní"');
+  eq(t, 'J-TEST-1 – práce + nezařazená práce',
+    'untagged rows list no code but still describe the day');
+  // A fully untagged day is a bare description.
+  eq(
+    compactDayText([{ code: '', desc: 'nezařazená práce', seconds: H(0.6) }]),
+    'nezařazená práce',
+    'a day of only untagged rows renders its description alone'
+  );
 }
 
 // ---- the summary view feeds the same aggregation ----
@@ -438,10 +478,10 @@ const compactRows = dayRows(compactDef);
   const rows6 = dayRows(getTemplate('acceptance-protocol-compact').build(summaryDoc));
   eq(
     rowFor(rows6, '6/7')[TASK],
-    'J-CLD-900 – Assets - koncept (6.4 h); J-CLD-249 – schůzky (0.6 h)',
-    'a summary-view export groups by row label per day'
+    'J-CLD-900, J-CLD-249 – Assets - koncept',
+    'a summary-view export aggregates by row label per day'
   );
-  eq(rowFor(rows6, '7/7')[TASK], 'J-CLD-249 – schůzky (1.2 h)', 'per-day cells stay per-day');
+  eq(rowFor(rows6, '7/7')[TASK], 'J-CLD-249 – schůzky', 'per-day cells stay per-day');
 }
 
 // ---- nothing may leak ----

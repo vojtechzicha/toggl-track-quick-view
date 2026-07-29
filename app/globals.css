@@ -869,7 +869,9 @@ body {
   border-radius: 12px;
   padding: 12px 14px;
 }
-.toggle .t-text strong {
+/* Direct child only: the title. A <strong> inside the description span must
+   stay inline (highlighted words, the (X)/(!) markers, example codes). */
+.toggle .t-text > strong {
   display: block;
   font-size: 14px;
 }

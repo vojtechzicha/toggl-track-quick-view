@@ -70,7 +70,8 @@ export interface StoredSettings extends SettingsValue {
   // "name" on exports; not directly user-edited (see exportName).
   accountName: string;
   // Saved "workspaces": named snapshots of the configurable settings the user can
-  // recall from the dashboard to quick-switch between setups (see SettingsPreset).
+  // recall from Settings → Workspaces to quick-switch between setups (see
+  // SettingsPreset).
   // Toggl mode only — in standalone mode workspaces live in the store instead.
   presets: SettingsPreset[];
 }
@@ -86,6 +87,7 @@ export const DEFAULTS: StoredSettings = {
   maxBillableHours: null,
   minWorkingDayHours: null,
   billingTagPrefix: DEFAULT_BILLING_TAG_PREFIX,
+  stripCodeParens: false,
   timeOffTag: DEFAULT_TIME_OFF_TAG,
   roundingHours: DEFAULT_ROUNDING_HOURS,
   maxDescriptionLength: null,
@@ -119,6 +121,8 @@ export function applyPreset(
     maxDescriptionLength: preset.value.maxDescriptionLength ?? null,
     // And for presets stored before the time-off tag existed.
     timeOffTag: preset.value.timeOffTag ?? DEFAULT_TIME_OFF_TAG,
+    // And for presets stored before the parentheses strip existed.
+    stripCodeParens: preset.value.stripCodeParens ?? false,
   };
 }
 

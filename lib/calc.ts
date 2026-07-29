@@ -160,25 +160,52 @@ export const OVERTIME_TAG_SUFFIX = '(X)';
 export const NO_TRIM_TAG_SUFFIX = '(!)';
 
 /**
+ * Remove every parenthetical group from a billing code, tidying the whitespace
+ * left behind: `D123 (Phase 2)` → `D123`. A code that is nothing but
+ * parentheticals keeps its original text — stripping must never make a code
+ * vanish. Callers interpret the overtime markers above FIRST (parseBillingCode
+ * does this internally), so `(X)` / `(!)` are never eaten by the strip.
+ */
+export function stripCodeParens(code: string): string {
+  const stripped = code
+    .replace(/\s*\([^()]*\)/g, ' ')
+    .replace(/\s{2,}/g, ' ')
+    .trim();
+  return stripped || code;
+}
+
+/**
  * Split a billing code into its displayed base and which internal overtime
  * marker it carries. The suffix (and any whitespace before it) is removed from
  * the base, so `D123(X)` and `D123 (X)` both display as `D123` with
  * trimmable=true, and `D123(!)` displays as `D123` with neverTrim=true.
+ *
+ * With `stripParens` (the workspace's "strip parentheses" setting) the base
+ * also loses every remaining parenthetical group — `D123 (Phase 2)(!)` →
+ * `D123` with neverTrim=true. Order matters: the marker is interpreted first,
+ * then the other parentheses are stripped, and only then is the base used —
+ * so the setting can never swallow a marker.
  */
-export function parseBillingCode(code: string): {
+export function parseBillingCode(
+  code: string,
+  stripParens = false
+): {
   base: string;
   trimmable: boolean;
   neverTrim: boolean;
 } {
+  let base = code;
+  let trimmable = false;
+  let neverTrim = false;
   if (code.endsWith(OVERTIME_TAG_SUFFIX)) {
-    const base = code.slice(0, -OVERTIME_TAG_SUFFIX.length).trimEnd();
-    return { base, trimmable: true, neverTrim: false };
+    base = code.slice(0, -OVERTIME_TAG_SUFFIX.length).trimEnd();
+    trimmable = true;
+  } else if (code.endsWith(NO_TRIM_TAG_SUFFIX)) {
+    base = code.slice(0, -NO_TRIM_TAG_SUFFIX.length).trimEnd();
+    neverTrim = true;
   }
-  if (code.endsWith(NO_TRIM_TAG_SUFFIX)) {
-    const base = code.slice(0, -NO_TRIM_TAG_SUFFIX.length).trimEnd();
-    return { base, trimmable: false, neverTrim: true };
-  }
-  return { base: code, trimmable: false, neverTrim: false };
+  if (stripParens) base = stripCodeParens(base);
+  return { base, trimmable, neverTrim };
 }
 
 /** True when an entry carries at least one billing tag. */

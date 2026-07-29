@@ -37,6 +37,11 @@ export interface ExportOptions {
   timeOffTag?: string;
   /** Linked billing codes (see lib/timesheet/mapping); empty/omitted = none. */
   codeMappings?: CodeMapping[];
+  /**
+   * When true, billing codes export without their parenthetical groups (the
+   * "(X)"/"(!)" markers are interpreted first, then the strip runs).
+   */
+  stripCodeParens?: boolean;
   /** Title shown on the document (project / group name). */
   title: string;
   /** Person the timesheet is for (may be empty). */
@@ -166,7 +171,7 @@ function codeLabel(
 }
 
 function buildSummaryDoc(o: ExportOptions): SummaryDoc {
-  const { range, entries, nowMs, projects, multi, billingTagPrefix, roundingSeconds, maxDescriptionLength, noOvertime, weeklyHours, timeOffTag, codeMappings } = o;
+  const { range, entries, nowMs, projects, multi, billingTagPrefix, roundingSeconds, maxDescriptionLength, noOvertime, weeklyHours, timeOffTag, codeMappings, stripCodeParens } = o;
   const weeks: SummaryWeekBlock[] = [];
 
   for (const weekStart of weeksInRange(range.fromMs, range.toMs)) {
@@ -182,6 +187,7 @@ function buildSummaryDoc(o: ExportOptions): SummaryDoc {
       weeklyHours,
       timeOffTag,
       codeMappings,
+      stripCodeParens,
     });
     if (!grid || grid.rows.length === 0) continue;
 
@@ -275,7 +281,7 @@ function buildSummaryDoc(o: ExportOptions): SummaryDoc {
 }
 
 function buildIndividualDoc(o: ExportOptions): IndividualDoc {
-  const { range, entries, nowMs, projects, multi, maxBillableHours, billingTagPrefix, roundingSeconds, maxDescriptionLength, noOvertime, weeklyHours, timeOffTag, codeMappings } = o;
+  const { range, entries, nowMs, projects, multi, maxBillableHours, billingTagPrefix, roundingSeconds, maxDescriptionLength, noOvertime, weeklyHours, timeOffTag, codeMappings, stripCodeParens } = o;
   const nameById = new Map(projects.map((p) => [p.id, p.name]));
   const days: IndividualDayBlock[] = [];
 
@@ -293,6 +299,7 @@ function buildIndividualDoc(o: ExportOptions): IndividualDoc {
       weeklyHours,
       timeOffTag,
       codeMappings,
+      stripCodeParens,
     });
     if (!week) continue;
     for (const day of week.days) {

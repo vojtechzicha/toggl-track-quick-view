@@ -46,4 +46,7 @@ export interface TimesheetViewProps {
   // Linked billing codes: projects billed here as one fixed code per day, rounded
   // on their own grid (see lib/timesheet/mapping).
   codeMappings: CodeMapping[];
+  // When true, billing codes show without their parenthetical groups (the
+  // "(X)"/"(!)" markers are interpreted first, then the strip runs).
+  stripCodeParens: boolean;
 }
