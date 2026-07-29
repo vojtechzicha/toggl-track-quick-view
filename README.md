@@ -486,16 +486,17 @@ The export dialog's **PDF template** picker chooses the layout of the PDF:
   stored in, the app. It works from either view; the Individual view carries
   the richest per-day text.
 - **Timesheet Acceptance Protocol (Compact)** — the same sheet, but each day's
-  **Project / Task** cell is aggregated **per billing tag**: `TAG – summary
-  (X.X h)`, ordered by descending hours. The summary keeps the dominant
-  description (or the top two), merges near-duplicates (a description that is
-  another one plus a tail folds into the shorter), strips `Meeting | `
-  prefixes, collapses a
-  meetings tag (one named *schůzky*) to the bare word **schůzky**, and folds
-  ticket-shaped codes (`ITSD-…`) into one **Support** group listing the ticket
-  ids (with *a další* when a description mentions more). The aggregation is
-  presentational only — the day's **Hours and MD figures are identical** to
-  the Full variant.
+  **Project / Task** cell is one line: **every billing code** of the day
+  (ordered by descending hours, ticket-shaped codes like `ITSD-…` included,
+  with *a další* when a description mentions more tickets), then **one overall
+  description** — no per-entry or per-group times, the day's total is already
+  in the Hours/MD columns. The description is the day's dominant project
+  activity (or the top two joined with `+` when nothing reaches ~65%): it
+  merges near-duplicates (a description that is another one plus a tail folds
+  into the shorter), strips `Meeting | ` prefixes, and ignores meeting names
+  and ticket boilerplate. A day of only meetings and/or tickets still says so
+  (**schůzky**, **řešení tiketů**). The aggregation is presentational only —
+  the day's **Hours and MD figures are identical** to the Full variant.
 
 ### Linked billing codes (subcontracting)
 

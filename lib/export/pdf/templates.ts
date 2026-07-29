@@ -216,9 +216,10 @@ function buildStandard(doc: ExportDoc): TDocumentDefinitions {
 // (HOURS_PER_MD, shared with the report templates).
 //
 // Two variants share the sheet. "full" lists every exported row of the day
-// verbatim; "compact" aggregates the day per billing tag (see
-// ./acceptanceCompact). The variants differ ONLY in the Project / Task cell
-// text — the day's Hours and MD figures come from the same seconds either way.
+// verbatim; "compact" renders the day as one line — every billing code, then a
+// single overall description (see ./acceptanceCompact). The variants differ
+// ONLY in the Project / Task cell text — the day's Hours and MD figures come
+// from the same seconds either way.
 
 type AcceptanceVariant = 'full' | 'compact';
 
@@ -481,9 +482,9 @@ export const PDF_TEMPLATES: PdfTemplate[] = [
     id: 'acceptance-protocol-compact',
     name: 'Timesheet Acceptance Protocol (Compact)',
     description:
-      'The same per-day sheet, but each day is aggregated per billing tag — ' +
-      '"TAG – summary (X.X h)" ordered by hours, with support tickets and meetings ' +
-      'collapsed. Daily hours and man-days are identical to the Full variant.',
+      'The same per-day sheet, but each day is one line: every billing code ' +
+      '(ordered by hours) and a single overall description of the day — no ' +
+      'per-entry times. Daily hours and man-days are identical to the Full variant.',
     fields: ['role', 'company'],
     build: (doc) => buildAcceptance(doc, 'compact'),
   },
