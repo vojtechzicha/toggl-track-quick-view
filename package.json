@@ -11,7 +11,8 @@
     "check:money": "node scripts/check-money.ts",
     "check:report": "node scripts/check-report.ts",
     "check:acceptance": "node scripts/check-acceptance.ts",
-    "check": "npm run check:money && npm run check:report && npm run check:acceptance && npm run check:fonts",
+    "check:codes": "node scripts/check-codes.ts",
+    "check": "npm run check:money && npm run check:report && npm run check:acceptance && npm run check:codes && npm run check:fonts",
     "check:fonts": "node scripts/check-fonts.ts"
   },
   "dependencies": {

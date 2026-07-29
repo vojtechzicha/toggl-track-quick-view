@@ -111,6 +111,10 @@ export interface IndividualInput {
   // Linked billing codes: projects whose entries carry another client's tags and
   // bill here as one fixed day block per project (see lib/timesheet/mapping).
   codeMappings?: CodeMapping[];
+  // When true, billing codes drop their parenthetical groups ("D123 (Phase 2)"
+  // lines as "D123") — after the "(X)"/"(!)" markers are interpreted, so those
+  // keep working. Codes differing only in the parenthetical combine as one code.
+  stripCodeParens?: boolean;
 }
 
 export function warnLabel(kind: WarnKind, maxBillableHours: number): string {
@@ -164,7 +168,8 @@ function classifyDay(
   maxBillableSeconds: number,
   billingTagPrefix: string,
   roundingSeconds: number,
-  codeMappings?: CodeMapping[]
+  codeMappings?: CodeMapping[],
+  stripCodeParens?: boolean
 ): ClassifiedDay {
   const sorted = [...dayEntries].sort((a, b) => a.startMs - b.startMs);
 
@@ -254,8 +259,9 @@ function classifyDay(
     // so they merge into their plain twin: one displayed line, with the "(X)"
     // seconds tracked separately as the trim budget and the "(!)" seconds as the
     // untouchable floor. Same code under two different projects still stays
-    // separate (a project is a group of billing tags).
-    const { base, trimmable, neverTrim } = parseBillingCode(tags[0]);
+    // separate (a project is a group of billing tags). The parenthetical strip
+    // (when the workspace opts in) runs after the marker interpretation.
+    const { base, trimmable, neverTrim } = parseBillingCode(tags[0], stripCodeParens);
     const canCombine =
       current !== null &&
       current.code === base &&
@@ -374,6 +380,7 @@ export function buildIndividualWeek({
   weeklyHours,
   timeOffTag,
   codeMappings,
+  stripCodeParens,
 }: IndividualInput): IndividualWeek | null {
   if (!weekStart) return null;
   const ids = new Set(projects.map((p) => p.id));
@@ -410,7 +417,14 @@ export function buildIndividualWeek({
   }
 
   const classified = byDay.map((dayEntries) =>
-    classifyDay(dayEntries, maxBillableSeconds, billingTagPrefix, roundingSeconds, codeMappings)
+    classifyDay(
+      dayEntries,
+      maxBillableSeconds,
+      billingTagPrefix,
+      roundingSeconds,
+      codeMappings,
+      stripCodeParens
+    )
   );
 
   // Close the linked-code aggregates at week level: one fixed billable block per

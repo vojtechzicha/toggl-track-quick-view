@@ -44,6 +44,11 @@ export interface SettingsValue {
   minWorkingDayHours: number | null;
   // The prefix that marks a tag as a billing tag (default "D", e.g. "D123").
   billingTagPrefix: string;
+  // When true, billing codes are used without their parenthetical groups — a
+  // tag like "D123 (Phase 2)" bills and displays as "D123". The overtime
+  // markers "(X)"/"(!)" are interpreted first, then the strip runs, then the
+  // code is used, so the markers keep working. Off by default.
+  stripCodeParens: boolean;
   // The tag that marks an entry as time off (default ".Time Off"). Its day
   // becomes a non-working day like a weekend — 0h target, the weekly goal and
   // the no-overtime cap drop by a day's worth — and the entry itself is never
@@ -99,6 +104,7 @@ export function toPresetValue(s: SettingsValue): PresetValue {
     maxBillableHours: s.maxBillableHours,
     minWorkingDayHours: s.minWorkingDayHours,
     billingTagPrefix: s.billingTagPrefix,
+    stripCodeParens: s.stripCodeParens,
     timeOffTag: s.timeOffTag,
     roundingHours: s.roundingHours,
     maxDescriptionLength: s.maxDescriptionLength,
@@ -140,6 +146,8 @@ export function presetMatches(value: PresetValue, s: SettingsValue): boolean {
     value.maxBillableHours === s.maxBillableHours &&
     value.minWorkingDayHours === s.minWorkingDayHours &&
     value.billingTagPrefix === s.billingTagPrefix &&
+    // `?? false` covers presets stored before the parentheses strip existed.
+    (value.stripCodeParens ?? false) === (s.stripCodeParens ?? false) &&
     // `?? default` covers presets stored before the time-off tag existed.
     (value.timeOffTag ?? DEFAULT_TIME_OFF_TAG) === (s.timeOffTag ?? DEFAULT_TIME_OFF_TAG) &&
     value.roundingHours === s.roundingHours &&
@@ -303,6 +311,8 @@ export default function SettingsPanel({
     initial.minWorkingDayHours === null ? '' : numLabel(initial.minWorkingDayHours)
   );
   const [billingPrefix, setBillingPrefix] = useState(initial.billingTagPrefix);
+  // `!!` covers settings stored before the parentheses strip existed.
+  const [stripCodeParens, setStripCodeParens] = useState(!!initial.stripCodeParens);
   const [timeOffTag, setTimeOffTag] = useState(initial.timeOffTag ?? DEFAULT_TIME_OFF_TAG);
   const [roundingHours, setRoundingHours] = useState(initial.roundingHours);
   // Kept as a raw string like the hours fields; empty = no limit (null).
@@ -315,6 +325,7 @@ export default function SettingsPanel({
     initial.maxBillableHours !== null ||
       initial.minWorkingDayHours !== null ||
       initial.billingTagPrefix !== DEFAULT_BILLING_TAG_PREFIX ||
+      !!initial.stripCodeParens ||
       (initial.timeOffTag ?? DEFAULT_TIME_OFF_TAG) !== DEFAULT_TIME_OFF_TAG ||
       initial.roundingHours !== DEFAULT_ROUNDING_HOURS ||
       initial.maxDescriptionLength != null ||
@@ -432,6 +443,7 @@ export default function SettingsPanel({
       minWorkingDayHours: parseOverride(minDayStr, 0),
       // An empty prefix would match every tag, so fall back to the default.
       billingTagPrefix: billingPrefix.trim() || DEFAULT_BILLING_TAG_PREFIX,
+      stripCodeParens,
       // An empty tag can't mark anything, so fall back to the default.
       timeOffTag: timeOffTag.trim() || DEFAULT_TIME_OFF_TAG,
       roundingHours: finalRounding,
@@ -510,6 +522,7 @@ export default function SettingsPanel({
     setMaxBillStr(v.maxBillableHours === null ? '' : numLabel(v.maxBillableHours));
     setMinDayStr(v.minWorkingDayHours === null ? '' : numLabel(v.minWorkingDayHours));
     setBillingPrefix(v.billingTagPrefix);
+    setStripCodeParens(!!v.stripCodeParens); // presets stored before the strip existed
     // `??` covers presets stored before the time-off tag existed.
     setTimeOffTag(v.timeOffTag ?? DEFAULT_TIME_OFF_TAG);
     setRoundingHours(v.roundingHours);
@@ -521,6 +534,7 @@ export default function SettingsPanel({
       v.maxBillableHours !== null ||
       v.minWorkingDayHours !== null ||
       v.billingTagPrefix !== DEFAULT_BILLING_TAG_PREFIX ||
+      !!v.stripCodeParens ||
       (v.timeOffTag ?? DEFAULT_TIME_OFF_TAG) !== DEFAULT_TIME_OFF_TAG ||
       v.roundingHours !== DEFAULT_ROUNDING_HOURS ||
       v.maxDescriptionLength != null ||
@@ -897,6 +911,29 @@ export default function SettingsPanel({
               {standalone ? 'in the tracker' : 'in Toggl'}. Defaults to{' '}
               <strong>{DEFAULT_BILLING_TAG_PREFIX}</strong>.
             </p>
+          </div>
+
+          <div className="toggle">
+            <div className="t-text">
+              <strong>Strip parentheses from billing codes</strong>
+              <span>
+                Use each billing code without its parenthetical name — a tag like{' '}
+                <strong>{(billingPrefix.trim() || DEFAULT_BILLING_TAG_PREFIX)}123 (Phase 2)</strong>{' '}
+                lands on the timesheet and exports as{' '}
+                <strong>{(billingPrefix.trim() || DEFAULT_BILLING_TAG_PREFIX)}123</strong>. The
+                overtime markers <strong>(X)</strong> / <strong>(!)</strong> are interpreted first
+                and keep working; codes that differ only in the parenthetical then merge into one
+                line.
+              </span>
+            </div>
+            <label className="switch">
+              <input
+                type="checkbox"
+                checked={stripCodeParens}
+                onChange={(e) => setStripCodeParens(e.target.checked)}
+              />
+              <span className="slider" />
+            </label>
           </div>
 
           <div className="field">

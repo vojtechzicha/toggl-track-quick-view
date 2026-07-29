@@ -105,6 +105,8 @@ export interface ExportDialogProps {
   timeOffTag: string;
   /** Linked billing codes (see lib/timesheet/mapping); empty = none. */
   codeMappings: CodeMapping[];
+  /** When true, billing codes export without their parenthetical groups. */
+  stripCodeParens: boolean;
   /** Document title (project / group name). */
   title: string;
   /** Person the timesheet is for (resolved name, may be empty). */
@@ -133,6 +135,7 @@ export default function ExportDialog({
   weeklyHours,
   timeOffTag,
   codeMappings,
+  stripCodeParens,
   title,
   personName,
   prefetched,
@@ -239,6 +242,7 @@ export default function ExportDialog({
         weeklyHours,
         timeOffTag,
         codeMappings,
+        stripCodeParens,
         title,
         personName: name.trim(),
         role: role.trim(),

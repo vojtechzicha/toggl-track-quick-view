@@ -92,6 +92,10 @@ export interface SummaryInput {
   // Linked billing codes: projects whose entries carry another client's tags and
   // bill here as one fixed row per day (see lib/timesheet/mapping).
   codeMappings?: CodeMapping[];
+  // When true, billing codes drop their parenthetical groups ("D123 (Phase 2)"
+  // rows as "D123") — after the "(X)"/"(!)" markers are interpreted, so those
+  // keep working. Codes differing only in the parenthetical share one row.
+  stripCodeParens?: boolean;
 }
 
 /**
@@ -115,6 +119,7 @@ export function buildSummaryGrid({
   weeklyHours,
   timeOffTag,
   codeMappings,
+  stripCodeParens,
 }: SummaryInput): SummaryGrid | null {
   if (!weekStart) return null;
   const ids = new Set(projects.map((p) => p.id));
@@ -210,8 +215,9 @@ export function buildSummaryGrid({
       // so they share one row with their plain twin (keyed by the stripped base);
       // the "(X)" seconds are tracked per cell as the trim budget and the "(!)"
       // seconds as the untouchable floor. The markers are internal, so only the
-      // base is displayed.
-      const { base } = parseBillingCode(tags[0]);
+      // base is displayed — with its parentheticals also dropped when the
+      // workspace opts in (markers first, then the strip).
+      const { base } = parseBillingCode(tags[0], stripCodeParens);
       rowKey = `p${e.project_id}|${base}`;
       if (!rowMeta.has(rowKey)) {
         rowMeta.set(rowKey, {

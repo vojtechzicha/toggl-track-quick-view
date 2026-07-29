@@ -86,6 +86,7 @@ export const DEFAULTS: StoredSettings = {
   maxBillableHours: null,
   minWorkingDayHours: null,
   billingTagPrefix: DEFAULT_BILLING_TAG_PREFIX,
+  stripCodeParens: false,
   timeOffTag: DEFAULT_TIME_OFF_TAG,
   roundingHours: DEFAULT_ROUNDING_HOURS,
   maxDescriptionLength: null,
@@ -119,6 +120,8 @@ export function applyPreset(
     maxDescriptionLength: preset.value.maxDescriptionLength ?? null,
     // And for presets stored before the time-off tag existed.
     timeOffTag: preset.value.timeOffTag ?? DEFAULT_TIME_OFF_TAG,
+    // And for presets stored before the parentheses strip existed.
+    stripCodeParens: preset.value.stripCodeParens ?? false,
   };
 }
 

@@ -299,6 +299,7 @@ export default function TimesheetPage() {
             weeklyHours={settings.weeklyHours}
             timeOffTag={settings.timeOffTag}
             codeMappings={settings.codeMappings}
+            stripCodeParens={settings.stripCodeParens}
           />
         )}
 
@@ -329,6 +330,7 @@ export default function TimesheetPage() {
           weeklyHours={settings.weeklyHours}
           timeOffTag={settings.timeOffTag}
           codeMappings={settings.codeMappings}
+          stripCodeParens={settings.stripCodeParens}
           title={projectTitle}
           personName={settings.exportName.trim() || settings.accountName}
           prefetched={exportPrefetched}

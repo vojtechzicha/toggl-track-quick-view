@@ -30,6 +30,7 @@ export default function IndividualTimesheet({
   weeklyHours,
   timeOffTag,
   codeMappings,
+  stripCodeParens,
 }: TimesheetViewProps) {
   const week = useMemo(
     () =>
@@ -46,6 +47,7 @@ export default function IndividualTimesheet({
         weeklyHours,
         timeOffTag,
         codeMappings,
+        stripCodeParens,
       }),
     [
       entries,
@@ -60,6 +62,7 @@ export default function IndividualTimesheet({
       weeklyHours,
       timeOffTag,
       codeMappings,
+      stripCodeParens,
     ]
   );
 

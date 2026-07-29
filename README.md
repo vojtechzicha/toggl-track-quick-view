@@ -318,6 +318,21 @@ The prefix is configurable under **Settings → Advanced → Billing tag prefix*
 (change it to `A`, say, to match `A123` tags). Its default lives in
 [`lib/calc.ts`](lib/calc.ts) as `DEFAULT_BILLING_TAG_PREFIX`.
 
+### Strip parentheses from billing codes
+
+A tag often carries a human-readable name in parentheses — `D123 (Phase 2)` —
+which some clients don't want on the timesheet they receive. Turn on
+**Settings → Advanced → Strip parentheses from billing codes** (off by
+default) and every billing code is used **without** its parenthetical groups:
+`D123 (Phase 2)` bills, displays and exports as `D123`. The order of
+operations is fixed: the internal `(X)` / `(!)` overtime markers are
+**interpreted first**, then the remaining parentheses are stripped, and only
+then is the code used — so `D123 (Phase 2)(!)` still protects its time and
+lands as `D123`. Since the stripped code is what's *used* (not just shown),
+codes that differ only in the parenthetical — `D123 (a)` and `D123 (b)` —
+merge into one `D123` line, exactly like the marker twins do. It's a workspace
+setting, so each stored workspace remembers its own choice.
+
 ### Support tickets
 
 Support engagements bill against many **one-time tickets** instead of a few
