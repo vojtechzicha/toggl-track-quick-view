@@ -80,8 +80,9 @@ export interface SettingsValue {
  * The settings a stored workspace captures: everything the user configures here
  * except the Toggl token (the account credential, shared across workspaces) and
  * the refresh interval (a device/network knob, not part of "a workspace"). A
- * workspace is a named snapshot you can recall from the dashboard to quick-switch
- * between configurations (e.g. different clients with their own targets/billing).
+ * workspace is a named snapshot you can recall from the panel's Workspaces list
+ * to quick-switch between configurations (e.g. different clients with their own
+ * targets/billing).
  */
 export type PresetValue = Omit<SettingsValue, 'token' | 'refreshSec'>;
 
@@ -265,7 +266,7 @@ export default function SettingsPanel({
   presets: SettingsPreset[];
   onPresetsChange: (presets: SettingsPreset[]) => void;
   // Recall a workspace live (persist its settings immediately), so clicking one
-  // in the list switches there at once — the same one-click recall as the topbar.
+  // in the list switches there at once.
   onApply: (preset: SettingsPreset) => void;
   onConnect: (token: string) => void;
   onSave: (value: SettingsValue) => void;
@@ -510,7 +511,7 @@ export default function SettingsPanel({
   const [renameText, setRenameText] = useState('');
 
   // Load a stored workspace back into the form. Doesn't save on its own — the
-  // user reviews and clicks Save (the dashboard switcher applies directly).
+  // list's recallPreset pairs it with onApply to also switch live at once.
   const applyPresetToForm = (v: PresetValue) => {
     setSelectedIds(v.selectedProjects.map((p) => p.id));
     setGroupName(v.groupName);
@@ -1238,9 +1239,9 @@ export default function SettingsPanel({
             ) : (
               <p className="hint">
                 Store the settings shown above as a named workspace, then switch between saved
-                configurations — click a workspace below (or the 🗂 button in the topbar) to recall
-                it instantly. Editing settings never changes a stored workspace; use ↻ to
-                re-capture the current settings into one.
+                configurations — click a workspace below to recall it instantly. Editing settings
+                never changes a stored workspace; use ↻ to re-capture the current settings into
+                one.
               </p>
             )}
 

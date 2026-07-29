@@ -562,7 +562,8 @@ Say you bill client **P** (prime) and the work is really for sub-client **S**:
 3. **The sub-client workspace** (for the sheet you hand to the sub-client): a
    second stored workspace with **only** the sub-client project selected, its tag
    prefix, its rounding, and its own targets — **no** linked-codes entry there.
-   Switch between the two with the 🗂 button.
+   Switch between the two by clicking the stored workspace under
+   **Settings → Workspaces**.
 
 Day to day you just track on the right project with one billing tag per entry;
 both workspaces flag untagged/multi-tagged entries until fixed.

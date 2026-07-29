@@ -70,7 +70,8 @@ export interface StoredSettings extends SettingsValue {
   // "name" on exports; not directly user-edited (see exportName).
   accountName: string;
   // Saved "workspaces": named snapshots of the configurable settings the user can
-  // recall from the dashboard to quick-switch between setups (see SettingsPreset).
+  // recall from Settings → Workspaces to quick-switch between setups (see
+  // SettingsPreset).
   // Toggl mode only — in standalone mode workspaces live in the store instead.
   presets: SettingsPreset[];
 }
