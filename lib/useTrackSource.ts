@@ -292,6 +292,13 @@ export interface UseTrackSource {
   fetchError: string | null;
   connect: (token: string, force?: boolean) => Promise<void>;
   entries: TimeEntry[];
+  /**
+   * When `entries` last refreshed successfully (ms epoch; 0 = not yet). Stays
+   * put while fetches fail or the tab sleeps, so the pages can show how old the
+   * data on screen actually is. In shared-server-cache mode a cache hit counts
+   * as an update — the served copy can still be up to the cache interval older.
+   */
+  lastUpdatedMs: number;
   nowMs: number;
   reqThisHour: number;
   cacheEnabled: boolean;
@@ -377,6 +384,7 @@ export function useTrackSource(): UseTrackSource {
   const [showSettings, setShowSettings] = useState(false);
 
   const [entries, setEntries] = useState<TimeEntry[]>([]);
+  const [lastUpdatedMs, setLastUpdatedMs] = useState(0);
   const [nowMs, setNowMs] = useState(0);
   const [reqThisHour, setReqThisHour] = useState(0);
   const [livePollPaused, setLivePollPaused] = useState(false);
@@ -598,6 +606,7 @@ export function useTrackSource(): UseTrackSource {
         );
         if (cancelled) return;
         setEntries(ent ?? []);
+        setLastUpdatedMs(Date.now());
         setFetchError(null);
         backoffStepRef.current = 0;
         backoffUntilRef.current = 0;
@@ -943,6 +952,7 @@ export function useTrackSource(): UseTrackSource {
     fetchError,
     connect,
     entries,
+    lastUpdatedMs,
     nowMs,
     reqThisHour,
     cacheEnabled,

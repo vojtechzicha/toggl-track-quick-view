@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState, type ComponentType }
 import Link from 'next/link';
 import { type TimesheetMode } from '@/components/SettingsPanel';
 import AppSettings from '@/components/AppSettings';
+import LastUpdated from '@/components/LastUpdated';
 import MutationToast from '@/components/MutationToast';
 import ProjectChips from '@/components/ProjectChips';
 import PasswordGate from '@/components/PasswordGate';
@@ -64,8 +65,10 @@ export default function TimesheetPage() {
     pwBusy,
     submitPassword,
     entries,
+    lastUpdatedMs,
     nowMs,
     cacheEnabled,
+    effectiveRefreshSec,
     showSettings,
     setShowSettings,
     setLivePollPaused,
@@ -311,6 +314,11 @@ export default function TimesheetPage() {
               : cacheEnabled
               ? 'shared server cache'
               : 'this week'}
+            <LastUpdated
+              lastUpdatedMs={mode === 'history' ? histLoadedAt : lastUpdatedMs}
+              nowMs={nowMs}
+              refreshSec={mode === 'history' ? null : effectiveRefreshSec}
+            />
           </span>
         </footer>
       </div>

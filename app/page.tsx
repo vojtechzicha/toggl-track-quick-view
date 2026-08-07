@@ -4,6 +4,7 @@ import { useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
 import ProgressRing from '@/components/ProgressRing';
 import AppSettings from '@/components/AppSettings';
+import LastUpdated from '@/components/LastUpdated';
 import MutationToast from '@/components/MutationToast';
 import ProjectChips from '@/components/ProjectChips';
 import PasswordGate from '@/components/PasswordGate';
@@ -54,6 +55,7 @@ export default function Page() {
     ready,
     fetchError,
     entries,
+    lastUpdatedMs,
     nowMs,
     reqThisHour,
     cacheEnabled,
@@ -834,6 +836,7 @@ export default function Page() {
               Refreshes every {fmtInterval(effectiveRefreshSec)} · live counter each second
             </span>
           )}
+          <LastUpdated lastUpdatedMs={lastUpdatedMs} nowMs={nowMs} refreshSec={effectiveRefreshSec} />
           {!cacheEnabled && !standalone && (
             <span className={`budget ${budgetClass}`}>
               {' · '}≈{reqThisHour}/{HOURLY_LIMIT} API requests this hour

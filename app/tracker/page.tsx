@@ -13,6 +13,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import Link from 'next/link';
 import AppSettings from '@/components/AppSettings';
+import LastUpdated from '@/components/LastUpdated';
 import MutationToast from '@/components/MutationToast';
 import PasswordGate from '@/components/PasswordGate';
 import AddBar from '@/components/tracker/AddBar';
@@ -56,8 +57,10 @@ export default function TrackerPage() {
     submitPassword,
     ready,
     entries,
+    lastUpdatedMs,
     nowMs,
     fetchError,
+    effectiveRefreshSec,
     showSettings,
     setShowSettings,
   } = t;
@@ -378,6 +381,7 @@ export default function TrackerPage() {
           ) : (
             <span>Synced every 30s · instantly after every change</span>
           )}
+          <LastUpdated lastUpdatedMs={lastUpdatedMs} nowMs={nowMs} refreshSec={effectiveRefreshSec} />
         </footer>
       </div>
 

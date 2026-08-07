@@ -739,6 +739,10 @@ body {
 .footer .budget.warn {
   color: var(--amber);
 }
+.footer .updated.stale {
+  color: var(--amber);
+  font-weight: 600;
+}
 .footer .budget.over {
   color: var(--red);
   font-weight: 600;
