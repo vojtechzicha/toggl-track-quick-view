@@ -49,7 +49,9 @@ type Mode = 'current' | 'picker' | 'history';
 
 interface CachedWeek {
   entries: TimeEntry[];
-  at: number; // when these entries were fetched (for the "updated" label)
+  // When the SOURCE produced these entries (for the "updated" labels) — a
+  // shared-server-cache hit reports the original Toggl fetch time.
+  at: number;
 }
 
 export default function TimesheetPage() {
@@ -120,8 +122,8 @@ export default function TimesheetPage() {
       try {
         const startISO = new Date(weekStart).toISOString();
         const endISO = new Date(weekStart + WEEK_MS).toISOString();
-        const ent = await loadRange(startISO, endISO, { force });
-        const at = Date.now();
+        const { entries: ent, dataAtMs } = await loadRange(startISO, endISO, { force });
+        const at = dataAtMs ?? Date.now();
         cacheRef.current.set(weekStart, { entries: ent, at });
         setHistEntries(ent);
         setHistLoadedAt(at);

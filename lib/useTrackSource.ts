@@ -37,7 +37,7 @@ import {
   type EntryInput,
   type StoreWorkspace,
 } from '@/lib/source/standalone';
-import type { SourceMode, TrackProject } from '@/lib/source/types';
+import type { FetchedEntries, SourceMode, TrackProject } from '@/lib/source/types';
 import type {
   SettingsValue,
   SelectedProject,
@@ -293,10 +293,11 @@ export interface UseTrackSource {
   connect: (token: string, force?: boolean) => Promise<void>;
   entries: TimeEntry[];
   /**
-   * When `entries` last refreshed successfully (ms epoch; 0 = not yet). Stays
-   * put while fetches fail or the tab sleeps, so the pages can show how old the
-   * data on screen actually is. In shared-server-cache mode a cache hit counts
-   * as an update — the served copy can still be up to the cache interval older.
+   * When the entries on screen were produced by the SOURCE (ms epoch; 0 = no
+   * successful fetch yet). This is the source-reported data time, not the
+   * receipt time: a shared-server-cache hit carries the original upstream
+   * Toggl fetch time, so the pages show true data age. Stays put while
+   * fetches fail or the tab sleeps.
    */
   lastUpdatedMs: number;
   nowMs: number;
@@ -312,8 +313,9 @@ export interface UseTrackSource {
   // General on-demand fetch of any date range as raw entries — the primitive
   // behind the historical timesheet (and, later, the weekly/monthly exports).
   // Forced fetches bypass the shared server cache; budget is metered the same
-  // way the live poll is (skipped when a plain cache hit is expected).
-  loadRange: (startISO: string, endISO: string, opts?: { force?: boolean }) => Promise<TimeEntry[]>;
+  // way the live poll is (skipped when a plain cache hit is expected). Resolves
+  // the entries together with the source-reported data time (see FetchedEntries).
+  loadRange: (startISO: string, endISO: string, opts?: { force?: boolean }) => Promise<FetchedEntries>;
 
   // ---- Standalone mode only (no-ops / empty elsewhere) ----
   /** Stored workspaces with their settings snapshots (the Settings section). */
@@ -599,14 +601,14 @@ export function useTrackSource(): UseTrackSource {
       if (metered && !cacheEnabled) setReqThisHour(recordReqs(1));
       try {
         const win = pollWindow(new Date());
-        const ent = await backend.fetchEntries(
+        const { entries: ent, dataAtMs } = await backend.fetchEntries(
           settings.token,
           new Date(win.startMs).toISOString(),
           new Date(win.endMs).toISOString()
         );
         if (cancelled) return;
         setEntries(ent ?? []);
-        setLastUpdatedMs(Date.now());
+        setLastUpdatedMs(dataAtMs ?? Date.now());
         setFetchError(null);
         backoffStepRef.current = 0;
         backoffUntilRef.current = 0;
@@ -673,11 +675,13 @@ export function useTrackSource(): UseTrackSource {
   // refresh always hits the source, so it is. AuthRequired bubbles up so the
   // caller can re-gate; other errors surface as thrown ApiErrors.
   const loadRange = useCallback(
-    async (startISO: string, endISO: string, opts?: { force?: boolean }): Promise<TimeEntry[]> => {
+    async (startISO: string, endISO: string, opts?: { force?: boolean }): Promise<FetchedEntries> => {
       const force = opts?.force === true;
       if (metered && (!cacheEnabled || force)) setReqThisHour(recordReqs(1));
-      const ent = await backend.fetchEntries(settings.token, startISO, endISO, { force });
-      return ent ?? [];
+      const { entries: ent, dataAtMs } = await backend.fetchEntries(settings.token, startISO, endISO, {
+        force,
+      });
+      return { entries: ent ?? [], dataAtMs };
     },
     [backend, metered, cacheEnabled, settings.token]
   );

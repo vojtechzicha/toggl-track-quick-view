@@ -34,11 +34,15 @@ export interface CachedResponse {
   status: number;
   body: string;
   contentType: string;
-}
-
-interface StoreEntry extends CachedResponse {
+  /**
+   * When this body was fetched from Toggl (ms epoch). A cache hit keeps the
+   * original upstream fetch time, so callers can tell viewers how old the
+   * served data really is.
+   */
   at: number;
 }
+
+type StoreEntry = CachedResponse;
 
 const store = new Map<string, StoreEntry>();
 const inflight = new Map<string, Promise<StoreEntry>>();

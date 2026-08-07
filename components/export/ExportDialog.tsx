@@ -4,6 +4,7 @@ import { useMemo, useState } from 'react';
 import type { SelectedProject } from '@/components/SettingsPanel';
 import type { TimesheetMode } from '@/components/SettingsPanel';
 import type { TimeEntry } from '@/lib/calc';
+import type { FetchedEntries } from '@/lib/source/types';
 import { isAuthRequired, isRateLimit } from '@/lib/source/errors';
 import {
   type ExportPreset,
@@ -117,7 +118,7 @@ export interface ExportDialogProps {
    * dialog reuses them instead of spending another Toggl request.
    */
   prefetched: { fromMs: number; toMs: number; entries: TimeEntry[] } | null;
-  loadRange: (startISO: string, endISO: string, opts?: { force?: boolean }) => Promise<TimeEntry[]>;
+  loadRange: (startISO: string, endISO: string, opts?: { force?: boolean }) => Promise<FetchedEntries>;
   onClose: () => void;
 }
 
@@ -225,7 +226,8 @@ export default function ExportDialog({
         range.toMs <= prefetched.toMs;
       const entries = covered
         ? (prefetched as NonNullable<typeof prefetched>).entries
-        : await loadRange(new Date(range.fromMs).toISOString(), new Date(range.toMs).toISOString());
+        : (await loadRange(new Date(range.fromMs).toISOString(), new Date(range.toMs).toISOString()))
+            .entries;
       const doc = buildExportDoc({
         view,
         range,

@@ -148,5 +148,10 @@ export const standaloneBackend: TrackBackend = {
     };
   },
 
-  fetchEntries: (_token, startISO, endISO) => fetchStoreEntries(startISO, endISO),
+  // The store is read live on every call — no cache layer sits in between —
+  // so the moment of the fetch IS the moment the data was produced.
+  async fetchEntries(_token, startISO, endISO) {
+    const entries = await fetchStoreEntries(startISO, endISO);
+    return { entries: entries ?? [], dataAtMs: Date.now() };
+  },
 };

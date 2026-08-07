@@ -70,9 +70,15 @@ export async function GET(
   if (interval !== null && !headerToken && process.env.TOGGL_API_TOKEN) {
     try {
       const cached = await cachedToggl(joined, search, auth, interval, force);
+      // When this came from the shared cache (or a stale error fallback), `at`
+      // is the ORIGINAL upstream fetch time — the client shows it as data age.
       return new Response(cached.body, {
         status: cached.status,
-        headers: { 'content-type': cached.contentType, 'cache-control': 'no-store' },
+        headers: {
+          'content-type': cached.contentType,
+          'cache-control': 'no-store',
+          'x-toggl-fetched-at': String(cached.at),
+        },
       });
     } catch {
       return json({ error: 'Failed to reach the Toggl API.' }, 502);
@@ -96,6 +102,7 @@ export async function GET(
       headers: {
         'content-type': res.headers.get('content-type') || 'application/json',
         'cache-control': 'no-store',
+        'x-toggl-fetched-at': String(Date.now()),
       },
     });
   } catch {

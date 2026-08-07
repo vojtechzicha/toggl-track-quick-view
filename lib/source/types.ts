@@ -34,6 +34,21 @@ export interface ConnectInfo {
   projects: TrackProject[];
 }
 
+/** A fetched entry set together with how fresh it actually is. */
+export interface FetchedEntries {
+  entries: TimeEntry[];
+  /**
+   * When the SOURCE produced this data (ms epoch), not when this client
+   * received it. The difference matters on the Toggl path with the shared
+   * server cache: a cache hit reports the original upstream fetch time, so
+   * the UI can show true data age. The standalone store reads live on every
+   * call (no cache layer), so there its fetch time is the data time. Null
+   * when the transport didn't say (e.g. an older server without the header);
+   * callers fall back to the receipt time.
+   */
+  dataAtMs: number | null;
+}
+
 export interface TrackBackend {
   readonly mode: SourceMode;
   /**
@@ -52,5 +67,5 @@ export interface TrackBackend {
     startISO: string,
     endISO: string,
     opts?: { force?: boolean }
-  ): Promise<TimeEntry[]>;
+  ): Promise<FetchedEntries>;
 }

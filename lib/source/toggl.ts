@@ -15,12 +15,12 @@ interface Me {
   default_workspace_id: number;
 }
 
-async function tApi<T>(
+async function tApiMeta<T>(
   path: string,
   token: string,
   search?: string,
   opts?: { force?: boolean }
-): Promise<T> {
+): Promise<{ data: T; fetchedAtMs: number | null }> {
   const url = `/api/toggl/${path}${search ? `?${search}` : ''}`;
   const auth = loadAuth();
   const headers: Record<string, string> = {};
@@ -39,8 +39,21 @@ async function tApi<T>(
     throw new ApiError(res.status);
   }
   const text = await res.text();
-  return (text ? JSON.parse(text) : null) as T;
+  // When the proxy served its shared cache, this is the ORIGINAL upstream
+  // fetch time — i.e. how old the data really is, not when we received it.
+  const at = Number(res.headers.get('x-toggl-fetched-at'));
+  return {
+    data: (text ? JSON.parse(text) : null) as T,
+    fetchedAtMs: Number.isFinite(at) && at > 0 ? at : null,
+  };
 }
+
+const tApi = async <T>(
+  path: string,
+  token: string,
+  search?: string,
+  opts?: { force?: boolean }
+): Promise<T> => (await tApiMeta<T>(path, token, search, opts)).data;
 
 export const getMe = (token: string) => tApi<Me>('me', token);
 
@@ -78,5 +91,13 @@ export const togglBackend: TrackBackend = {
     };
   },
 
-  fetchEntries: (token, startISO, endISO, opts) => getEntries(token, startISO, endISO, opts),
+  async fetchEntries(token, startISO, endISO, opts) {
+    const { data, fetchedAtMs } = await tApiMeta<TimeEntry[]>(
+      'me/time_entries',
+      token,
+      `start_date=${encodeURIComponent(startISO)}&end_date=${encodeURIComponent(endISO)}`,
+      opts
+    );
+    return { entries: data ?? [], dataAtMs: fetchedAtMs };
+  },
 };
