@@ -8,6 +8,7 @@ import LastUpdated from '@/components/LastUpdated';
 import MutationToast from '@/components/MutationToast';
 import ProjectChips from '@/components/ProjectChips';
 import PasswordGate from '@/components/PasswordGate';
+import WorkspaceSwitcher from '@/components/WorkspaceSwitcher';
 import { useTrackSource, fmtInterval } from '@/lib/useTrackSource';
 import { HOURLY_LIMIT } from '@/lib/source/toggl';
 import { mappingFor } from '@/lib/timesheet/mapping';
@@ -525,6 +526,7 @@ export default function Page() {
                 <span className="navbtn-text">Tracker</span>
               </Link>
             )}
+            <WorkspaceSwitcher t={t} />
             <Link className="navbtn" href="/timesheet" aria-label="Timesheet">
               <span className="navbtn-icon">🧾</span>
               <span className="navbtn-text">Timesheet</span>

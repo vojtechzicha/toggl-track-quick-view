@@ -1033,6 +1033,175 @@ body {
     display: none;
   }
 }
+/* Icon-only buttons on the narrowest phones: tighten the row so a topbar with
+   the workspace switcher AND the tracker link still leaves the title room. */
+@media (max-width: 400px) {
+  .topbar-actions {
+    gap: 6px;
+  }
+}
+
+/* ---------- Topbar: workspace quick switcher ---------- */
+/* The menu is anchored under the button on wide screens; below 560px the topbar
+   buttons are icon-only, so it becomes a bottom sheet instead (see the media
+   query at the end of this block) — comfortably reachable and thumb-sized. */
+.ws-switch {
+  position: relative;
+  flex: 0 0 auto;
+}
+.ws-switch-btn {
+  cursor: pointer;
+  max-width: min(230px, 32vw);
+}
+.ws-switch-btn.open {
+  background: var(--card2);
+  border-color: var(--accent);
+}
+.ws-switch-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.ws-switch-swatch {
+  width: 12px;
+  height: 12px;
+  border-radius: 4px;
+}
+.ws-switch-caret {
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1;
+}
+
+/* Invisible on wide screens — it exists to catch the click that closes the
+   popover; on narrow ones it dims the page behind the sheet. */
+.ws-switch-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 60;
+}
+.ws-switch-menu {
+  position: absolute;
+  z-index: 61;
+  top: calc(100% + 8px);
+  right: 0;
+  min-width: 240px;
+  max-width: min(320px, calc(100vw - 28px));
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 10px;
+  background: var(--bg);
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  box-shadow: 0 18px 40px rgba(5, 8, 14, 0.55);
+}
+.ws-switch-head {
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  padding: 2px 8px;
+}
+.ws-switch-note {
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.35;
+  padding: 0 8px 2px;
+}
+.ws-switch-list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  max-height: min(320px, 46dvh);
+  overflow-y: auto;
+}
+.ws-switch-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 11px;
+  color: var(--text);
+  font-size: 14px;
+  font-weight: 600;
+  text-align: left;
+  padding: 9px 10px;
+  cursor: pointer;
+}
+.ws-switch-item:hover,
+.ws-switch-item:focus-visible {
+  background: var(--card2);
+  border-color: var(--line);
+  outline: none;
+}
+.ws-switch-item.active {
+  background: rgba(59, 130, 246, 0.14);
+  border-color: var(--accent);
+}
+.ws-switch-item-name {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.ws-switch-check {
+  color: var(--accent-soft);
+  flex: 0 0 auto;
+}
+.ws-switch-manage {
+  background: transparent;
+  border: none;
+  border-top: 1px solid var(--line);
+  color: var(--muted);
+  font-size: 13px;
+  font-weight: 600;
+  text-align: left;
+  padding: 10px 10px 4px;
+  margin-top: 2px;
+  cursor: pointer;
+}
+.ws-switch-manage:hover,
+.ws-switch-manage:focus-visible {
+  color: var(--text);
+  outline: none;
+}
+
+@media (max-width: 560px) {
+  .ws-switch-backdrop {
+    background: rgba(5, 8, 14, 0.72);
+    backdrop-filter: blur(6px);
+  }
+  .ws-switch-menu {
+    position: fixed;
+    top: auto;
+    left: 12px;
+    right: 12px;
+    bottom: calc(12px + env(safe-area-inset-bottom, 0px));
+    max-width: none;
+    padding: 14px;
+    border-radius: 20px;
+  }
+  .ws-switch-head {
+    font-size: 12px;
+  }
+  .ws-switch-list {
+    max-height: 52dvh;
+  }
+  .ws-switch-item {
+    min-height: 48px;
+    font-size: 15px;
+    padding: 10px 12px;
+  }
+  .ws-switch-manage {
+    min-height: 44px;
+    font-size: 14px;
+    padding: 12px 10px 6px;
+  }
+}
 
 /* ---------- Missing-billing-tag warning ---------- */
 /* On the dashboard timeline it's a quiet, *non-amber* nudge: visible but not

@@ -417,6 +417,14 @@ project selection, weekly target, billing-tag prefix and rounding).
 - Click a stored workspace in that list to **recall it instantly** — it switches
   live and the active one is marked. **↻** re-captures the current settings into
   it, **✎** renames, **🗑** deletes.
+- Once at least one is stored, the **dashboard topbar** grows a workspace button
+  next to **Timesheet** showing the one you're on. Open it and pick another to
+  switch without going through Settings — the same recall, one click away. On a
+  phone (where the topbar buttons are icons) it opens as a bottom sheet with
+  full-width rows; **Manage workspaces…** at its foot jumps to the Settings
+  section for creating, renaming and deleting. If your live settings no longer
+  match any stored workspace the button reads **Workspace** and the menu says so
+  — picking one replaces them.
 - Workspaces are **immutable snapshots**: editing your live settings never
   changes a stored one — recall a workspace to bring its settings back.
 
