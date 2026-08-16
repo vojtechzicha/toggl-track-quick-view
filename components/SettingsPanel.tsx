@@ -13,6 +13,7 @@ import {
   fmtHoursLabel,
 } from '@/lib/calc';
 import { mappingGridCompatible, type CodeMapping } from '@/lib/timesheet/mapping';
+import { EMPTY_EXPORT_FIELDS, type ExportFieldValues } from '@/lib/exportFields';
 
 export type TimesheetMode = 'summary' | 'individual';
 
@@ -74,6 +75,11 @@ export interface SettingsValue {
   timesheetMode: TimesheetMode;
   // Name printed on exports (PDF header). Blank falls back to the Toggl account name.
   exportName: string;
+  // The export dialog's identity fields (company, client, rate, engagement note
+  // …). Edited in the dialog rather than in this panel, but part of the value —
+  // and therefore of every workspace snapshot — because they describe the
+  // engagement being billed, not the device (see lib/exportFields).
+  exportFields: ExportFieldValues;
 }
 
 /**
@@ -113,6 +119,7 @@ export function toPresetValue(s: SettingsValue): PresetValue {
     codeMappings: s.codeMappings,
     timesheetMode: s.timesheetMode,
     exportName: s.exportName,
+    exportFields: s.exportFields ?? EMPTY_EXPORT_FIELDS,
   };
 }
 
@@ -120,6 +127,10 @@ export function toPresetValue(s: SettingsValue): PresetValue {
  * Whether a settings value currently matches a stored workspace. Projects are
  * compared by id set only (names/colors are denormalised and can drift as Toggl
  * changes), so recalling a workspace keeps reading as "active" after a refresh.
+ * The export identity fields are deliberately NOT compared: the export dialog
+ * writes them straight back into the active workspace, so they can never be the
+ * thing that makes a recalled workspace stop reading as active — and this
+ * function is what identifies that workspace in the first place.
  */
 export function presetMatches(value: PresetValue, s: SettingsValue): boolean {
   const ids = (ps: SelectedProject[]) =>
@@ -236,6 +247,7 @@ export default function SettingsPanel({
   onClose,
   canClose,
   activeWorkspaceId,
+  activePresetId,
   onWorkspaceCreate,
   onWorkspaceRecapture,
   onWorkspaceRename,
@@ -284,6 +296,11 @@ export default function SettingsPanel({
   // (the "active" row in the Workspaces list below). A workspace can't be
   // linked onto its own timesheet, so it's excluded from the mapping picker.
   activeWorkspaceId?: number | null;
+  // Which stored workspace the saved settings mirror, by id — the wiring
+  // resolves it from the one that was recalled, which content comparison alone
+  // cannot do when two workspaces differ only in their export details. Marks
+  // the row below; omitted (undefined) falls back to comparing content.
+  activePresetId?: string | null;
   // Standalone-mode workspace CRUD. Create resolves the stored workspace (as a
   // preset) so the form can switch to it, or null when the call failed. Delete
   // resolves whether the workspace was actually deleted (the wiring may cancel
@@ -484,10 +501,32 @@ export default function SettingsPanel({
       refreshSec,
       timesheetMode,
       exportName: exportName.trim(),
+      // Not edited here — the export dialog owns these. Passed through from the
+      // live prop (not a mount-time snapshot) so saving, or storing a new
+      // workspace, carries whatever the dialog last wrote.
+      exportFields: initial.exportFields ?? EMPTY_EXPORT_FIELDS,
     };
   };
 
   const handleSave = () => onSave(buildValue());
+
+  // Which export-dialog details currently carry a value. Shown (read-only) next
+  // to "Name on exports" so the panel says what the active workspace would
+  // print, without duplicating the dialog's inputs.
+  const setExportFieldLabels = (
+    [
+      ['company', 'company'],
+      ['client', 'client'],
+      ['role', 'role'],
+      ['approver', 'approver'],
+      ['reference', 'reference'],
+      ['rate', 'rate'],
+      ['engagementEn', 'engagement note (English)'],
+      ['engagementCs', 'engagement note (Czech)'],
+    ] as [keyof ExportFieldValues, string][]
+  )
+    .filter(([key]) => (initial.exportFields?.[key] ?? '').trim() !== '')
+    .map(([, label]) => label);
 
   // ---- Linked billing codes ----
   // Rows are edited freely (a half-filled row is fine mid-edit); buildValue keeps
@@ -1226,6 +1265,28 @@ export default function SettingsPanel({
               export).{standalone ? '' : ' Leave blank to use your Toggl account name.'}
             </p>
           </div>
+
+          <div className="field">
+            <label>Export details</label>
+            <p className="hint">
+              Company, client, approver, reference, hourly rate and the engagement note are filled
+              in the <strong>export dialog</strong> and remembered{' '}
+              {presets.length > 0 ? (
+                <>
+                  <strong>per workspace</strong> — a workspace you store now starts from the values
+                  in use, and from its first change onwards each workspace keeps its own.
+                </>
+              ) : (
+                <>
+                  with these settings — store a workspace and each one keeps its own set from then
+                  on.
+                </>
+              )}{' '}
+              {setExportFieldLabels.length > 0
+                ? `Set here: ${setExportFieldLabels.join(', ')}.`
+                : 'None set yet.'}
+            </p>
+          </div>
         </details>
 
         {standalone ? (
@@ -1294,7 +1355,10 @@ export default function SettingsPanel({
             {presets.length > 0 && (
               <ul className="ws-list">
                 {presets.map((p) => {
-                  const active = presetMatches(p.value, initial);
+                  const active =
+                    activePresetId !== undefined
+                      ? p.id === activePresetId
+                      : presetMatches(p.value, initial);
                   return (
                     <li key={p.id} className={`ws-row${active ? ' active' : ''}`}>
                       {renamingId === p.id ? (

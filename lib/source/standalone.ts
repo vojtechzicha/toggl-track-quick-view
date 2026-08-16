@@ -33,7 +33,7 @@ export interface EntryInput {
 
 async function sApi<T>(
   path: string,
-  opts: { method?: string; body?: unknown; search?: string } = {}
+  opts: { method?: string; body?: unknown; search?: string; keepalive?: boolean } = {}
 ): Promise<T> {
   const url = `/api/store/${path}${opts.search ? `?${opts.search}` : ''}`;
   const auth = loadAuth();
@@ -45,6 +45,9 @@ async function sApi<T>(
     headers,
     body: opts.body !== undefined ? JSON.stringify(opts.body) : undefined,
     cache: 'no-store',
+    // A write fired as the page goes away: the browser sees it through even
+    // though this document is gone. (sendBeacon can't carry the session header.)
+    keepalive: opts.keepalive,
   });
   // Session missing/expired: re-prompt for the password (same flag the Toggl
   // proxy uses, so the shared error classifiers work unchanged).
@@ -77,8 +80,14 @@ export const createWorkspaceApi = (name: string, settings?: PresetValue, color?:
 
 export const updateWorkspaceApi = (
   id: number,
-  patch: { name?: string; color?: string; settings?: PresetValue }
-) => sApi<StoreWorkspace>(`workspaces/${id}`, { method: 'PATCH', body: patch });
+  patch: { name?: string; color?: string; settings?: PresetValue },
+  opts?: { keepalive?: boolean }
+) =>
+  sApi<StoreWorkspace>(`workspaces/${id}`, {
+    method: 'PATCH',
+    body: patch,
+    keepalive: opts?.keepalive,
+  });
 
 export const deleteWorkspaceApi = (id: number, force = false) =>
   sApi<{ ok: true; strippedFrom?: string[] }>(`workspaces/${id}`, {

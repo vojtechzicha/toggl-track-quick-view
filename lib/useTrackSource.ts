@@ -18,7 +18,7 @@
 // brings mutations (the tracker writes entries; Settings manages workspaces),
 // which this hook wraps with optimistic updates against its entries state.
 
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { getConfig } from '@/lib/source/config';
 import { hasValidAuth, login } from '@/lib/source/auth';
 import { ApiError, errorDetail, isRateLimit, isAuthRequired } from '@/lib/source/errors';
@@ -38,6 +38,7 @@ import {
   type StoreWorkspace,
 } from '@/lib/source/standalone';
 import type { FetchedEntries, SourceMode, TrackProject } from '@/lib/source/types';
+import { presetMatches } from '@/components/SettingsPanel';
 import type {
   SettingsValue,
   SelectedProject,
@@ -65,7 +66,14 @@ import {
   SyncConflictError,
 } from '@/lib/sync/client';
 import { SYNC_PAYLOAD_VERSION, type SyncDoc, type SyncPayload } from '@/lib/sync/model';
-import { EXPORT_FIELDS_EVENT, EMPTY_EXPORT_FIELDS } from '@/lib/exportFields';
+import {
+  EMPTY_EXPORT_FIELDS,
+  clearLegacyExportFields,
+  exportFieldsEqual,
+  normalizeExportFields,
+  readLegacyExportFields,
+  type ExportFieldValues,
+} from '@/lib/exportFields';
 
 const LS_KEY = 'tqv.settings.v1';
 const CACHE_KEY = 'tqv.cache.v1';
@@ -87,6 +95,14 @@ export interface StoredSettings extends SettingsValue {
   // SettingsPreset).
   // Toggl mode only — in standalone mode workspaces live in the store instead.
   presets: SettingsPreset[];
+  // Id of the workspace last recalled (a preset id in Toggl mode, the stored
+  // workspace's numeric id as a string in standalone). A pointer, not a
+  // setting: it disambiguates which workspace these settings mirror when two
+  // of them are identical apart from their export details — which
+  // presetMatches deliberately cannot see. Always re-checked against the
+  // content before it is used, so settings edited away from that workspace
+  // never keep writing into it.
+  activePresetId: string | null;
 }
 
 export const DEFAULTS: StoredSettings = {
@@ -109,7 +125,9 @@ export const DEFAULTS: StoredSettings = {
   refreshSec: DEFAULT_REFRESH_SEC,
   timesheetMode: 'summary',
   exportName: '',
+  exportFields: EMPTY_EXPORT_FIELDS,
   presets: [],
+  activePresetId: null,
 };
 
 /**
@@ -136,6 +154,18 @@ export function applyPreset(
     timeOffTag: preset.value.timeOffTag ?? DEFAULT_TIME_OFF_TAG,
     // And for presets stored before the parentheses strip existed.
     stripCodeParens: preset.value.stripCodeParens ?? false,
+    // Export identity fields are per workspace: recalling one recalls its own
+    // company/client/rate, so another client's details can never ride along.
+    // A workspace stored BEFORE they were scoped carries none at all — it
+    // inherits the ones in use instead of blanking them. (A workspace whose
+    // snapshot does carry them keeps them even when they're all empty: that is
+    // a workspace deliberately without export details, not an unscoped one.)
+    exportFields: preset.value.exportFields
+      ? normalizeExportFields(preset.value.exportFields)
+      : normalizeExportFields(settings.exportFields),
+    // Remember WHICH workspace this is, so later writes (export details) reach
+    // it and not a twin with the same tracking settings.
+    activePresetId: preset.id,
   };
 }
 
@@ -147,10 +177,7 @@ export function applyPreset(
  */
 function pristineHash(s: StoredSettings): string {
   return payloadHash(
-    buildSyncPayload(
-      { ...DEFAULTS, workspaceId: s.workspaceId, accountName: s.accountName },
-      EMPTY_EXPORT_FIELDS
-    )
+    buildSyncPayload({ ...DEFAULTS, workspaceId: s.workspaceId, accountName: s.accountName })
   );
 }
 
@@ -158,8 +185,10 @@ function loadSettings(): StoredSettings {
   if (typeof window === 'undefined') return DEFAULTS;
   try {
     const raw = window.localStorage.getItem(LS_KEY);
-    if (!raw) return DEFAULTS;
-    const parsed = JSON.parse(raw) as Record<string, unknown>;
+    // No settings yet still goes through the migrations below: the export
+    // identity fields lived in keys of their own, which can outlive a cleared
+    // settings entry.
+    const parsed = raw ? (JSON.parse(raw) as Record<string, unknown>) : {};
     // Migrate the v1 single-project shape ({ projectId, projectName }) to the
     // selectedProjects array — in place, so every other stored setting survives.
     if (!parsed.selectedProjects && parsed.projectId != null) {
@@ -169,7 +198,26 @@ function loadSettings(): StoredSettings {
     }
     delete parsed.projectId;
     delete parsed.projectName;
-    return { ...DEFAULTS, ...parsed };
+    const loaded = { ...DEFAULTS, ...parsed } as StoredSettings;
+    // Export identity fields used to live in their own device-wide localStorage
+    // keys. Fold them in once (they become the active — and therefore the
+    // inherited — set) and drop the old keys.
+    if (!parsed.exportFields) {
+      const legacy = readLegacyExportFields();
+      if (legacy) {
+        loaded.exportFields = legacy;
+        // Write the migrated settings back BEFORE dropping the old keys — a
+        // migration that only lived in memory would lose them on the next load.
+        try {
+          window.localStorage.setItem(LS_KEY, JSON.stringify(loaded));
+          clearLegacyExportFields();
+        } catch {
+          /* private mode / quota — the old keys stay put and we migrate again */
+        }
+      }
+    }
+    loaded.exportFields = normalizeExportFields(loaded.exportFields);
+    return loaded;
   } catch {
     return DEFAULTS;
   }
@@ -345,6 +393,21 @@ export interface UseTrackSource {
   // the entries together with the source-reported data time (see FetchedEntries).
   loadRange: (startISO: string, endISO: string, opts?: { force?: boolean }) => Promise<FetchedEntries>;
 
+  /**
+   * Remember the export dialog's identity fields (company, client, rate,
+   * engagement note …). They are scoped to the workspace the settings currently
+   * mirror: the write lands both in the active settings and in that stored
+   * workspace, so switching away and back keeps each workspace's own details.
+   */
+  setExportFields: (fields: ExportFieldValues) => void;
+  /**
+   * The stored workspace the current settings mirror — a store document in
+   * standalone mode (its numeric id as a string), a saved preset in Toggl mode
+   * — or null when they match none; per-workspace state, like the export
+   * fields above, is then simply this device's.
+   */
+  activeWorkspace: { id: string; name: string } | null;
+
   // ---- Cross-device settings sync (see lib/sync) ----
   sync: {
     /** Whether the deployment has a sync store (MONGODB_URI + APP_PASSWORD). */
@@ -361,6 +424,14 @@ export interface UseTrackSource {
     lastSyncedAt: number | null;
     /** Both sides changed since the last sync — the user picks a winner. */
     conflict: { rev: number; updatedAt: string; device: string } | null;
+    /**
+     * How many times a document from ANOTHER device has replaced these
+     * settings (a background pull that adopted it, or a conflict resolved in
+     * its favour). Any UI holding a mount-time snapshot of the settings — the
+     * Settings form, the export dialog — should key on this so it re-seeds
+     * instead of writing its stale copy back on the next save.
+     */
+    appliedEpoch: number;
     resolveConflict: (choice: 'remote' | 'local') => void;
     /** Download the syncable settings as a JSON file (never the token). */
     exportFile: () => void;
@@ -441,13 +512,14 @@ export function useTrackSource(): UseTrackSource {
   const [syncStatus, setSyncStatus] = useState<'idle' | 'syncing' | 'error'>('idle');
   const [syncErrorMsg, setSyncErrorMsg] = useState<string | null>(null);
   const [syncConflict, setSyncConflict] = useState<SyncDoc | null>(null);
+  // Counts documents adopted from another device (see applyRemoteDoc).
+  const [appliedEpoch, setAppliedEpoch] = useState(0);
   const [lastSyncedAt, setLastSyncedAt] = useState<number | null>(null);
   // The initial pull must finish before any push: a fresh device that pushed
   // first (baseRev null) would race the established document into a conflict.
   const [syncReady, setSyncReady] = useState(false);
-  // Bumped whenever the export dialog writes its identity fields (they live
-  // outside `settings`), and after a successful pull, so the push effect
-  // re-evaluates whether the syncable content drifted.
+  // Bumped after a successful pull so the push effect re-evaluates whether the
+  // syncable content drifted (e.g. a push that failed while offline).
   const [syncTick, setSyncTick] = useState(0);
 
   const [entries, setEntries] = useState<TimeEntry[]>([]);
@@ -779,6 +851,32 @@ export function useTrackSource(): UseTrackSource {
     return () => ch.removeEventListener('message', onMessage);
   }, [standalone, ready]);
 
+  // Standalone workspaces live in their own collection, outside the sync
+  // payload — so a rename, recapture, create or delete made on ANOTHER device
+  // reaches this one through neither the settings pull nor the (same-browser)
+  // BroadcastChannel. Re-list them when the window regains focus, throttled the
+  // way the sync pull is. Without this a recall could reapply an obsolete
+  // snapshot, and an export-detail write would be built on one (see
+  // setExportFields, which patches the workspace's cached settings).
+  const lastWsListRef = useRef(0);
+  useEffect(() => {
+    if (!standalone || !ready) return;
+    const onFocus = () => {
+      if (document.visibilityState !== 'visible') return;
+      if (Date.now() - lastWsListRef.current < 30_000) return;
+      lastWsListRef.current = Date.now();
+      refreshWorkspacesRef.current?.().catch(() => {
+        /* transient — the next focus (or any mutation) tries again */
+      });
+    };
+    window.addEventListener('focus', onFocus);
+    document.addEventListener('visibilitychange', onFocus);
+    return () => {
+      window.removeEventListener('focus', onFocus);
+      document.removeEventListener('visibilitychange', onFocus);
+    };
+  }, [standalone, ready]);
+
   // ---- Cross-device settings sync ----
   // Engine: pull on load and on window focus; push (debounced) whenever the
   // syncable content differs from what this device last synced. Every decision
@@ -795,6 +893,12 @@ export function useTrackSource(): UseTrackSource {
       persist(applySyncPayload(settingsRef.current, doc.payload));
       setSyncConflict(null);
       setLastSyncedAt(Date.now());
+      // Surfaces that another device's document replaced these settings — the
+      // Settings form and the export dialog both hold mount-time snapshots and
+      // must re-seed, or the next Save/Export would write the stale values
+      // back over what was just adopted (and push them at the NEW revision, so
+      // not even a conflict would catch it).
+      setAppliedEpoch((n) => n + 1);
     },
     [persist]
   );
@@ -852,14 +956,6 @@ export function useTrackSource(): UseTrackSource {
     };
   }, [syncActive, pullSync]);
 
-  // The export dialog's identity fields live outside `settings`; it announces
-  // writes on this event so the push effect re-checks the payload.
-  useEffect(() => {
-    const bump = () => setSyncTick((t) => t + 1);
-    window.addEventListener(EXPORT_FIELDS_EVENT, bump);
-    return () => window.removeEventListener(EXPORT_FIELDS_EVENT, bump);
-  }, []);
-
   // Debounced push of local changes.
   useEffect(() => {
     if (!syncActive || !syncReady || syncConflict) return;
@@ -895,7 +991,7 @@ export function useTrackSource(): UseTrackSource {
       }
     }, 1500);
     return () => clearTimeout(timer);
-    // syncTick re-runs this on export-field writes and after successful pulls.
+    // syncTick re-runs this after successful pulls.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [settings, syncTick, syncActive, syncReady, syncConflict]);
 
@@ -961,12 +1057,7 @@ export function useTrackSource(): UseTrackSource {
         ) {
           return 'Not a settings file exported by this app.';
         }
-        persist(
-          applySyncPayload(settingsRef.current, {
-            ...parsed,
-            exportFields: { ...EMPTY_EXPORT_FIELDS, ...parsed.exportFields },
-          })
-        );
+        persist(applySyncPayload(settingsRef.current, parsed));
         return null;
       } catch {
         return 'Could not read that file.';
@@ -1172,13 +1263,17 @@ export function useTrackSource(): UseTrackSource {
         setSettings((prev) => {
           const selectedProjects = prev.selectedProjects.filter((p) => p.id !== id);
           const codeMappings = (prev.codeMappings ?? []).filter((m) => m.projectId !== id);
+          // The recalled-workspace pointer goes too when it named this one.
+          const activePresetId =
+            prev.activePresetId === String(id) ? null : prev.activePresetId;
           if (
             selectedProjects.length === prev.selectedProjects.length &&
-            codeMappings.length === (prev.codeMappings ?? []).length
+            codeMappings.length === (prev.codeMappings ?? []).length &&
+            activePresetId === prev.activePresetId
           ) {
             return prev;
           }
-          const next = { ...prev, selectedProjects, codeMappings };
+          const next = { ...prev, selectedProjects, codeMappings, activePresetId };
           try {
             window.localStorage.setItem(LS_KEY, JSON.stringify(next));
           } catch {
@@ -1204,6 +1299,135 @@ export function useTrackSource(): UseTrackSource {
       }
     },
     [refreshWorkspaces]
+  );
+
+  // ---- Export identity fields (the export dialog's remembered details) ----
+  // They belong to the workspace being billed, so a write goes two places: the
+  // active settings (what the next export starts from) and the stored workspace
+  // those settings mirror, which is what makes the values survive a switch to
+  // another workspace and back. With no workspace stored — or with the settings
+  // no longer matching any — only the active settings are written, exactly as
+  // the device-wide behaviour used to be.
+  //
+  // The store write is debounced: the engagement note saves as it is typed, and
+  // a workspace document is a server round-trip.
+  const workspacesRef = useRef<StoreWorkspace[]>([]);
+  useEffect(() => {
+    workspacesRef.current = workspaces;
+  }, [workspaces]);
+
+  // The stored workspaces of whichever mode this is, in one shape (standalone:
+  // server documents; Toggl: the localStorage preset list).
+  const storedWorkspaces = useMemo(
+    () =>
+      standalone
+        ? workspaces.map((w) => ({ id: String(w.id), name: w.name, value: w.settings }))
+        : settings.presets.map((p) => ({ id: p.id, name: p.name, value: p.value })),
+    [standalone, workspaces, settings.presets]
+  );
+
+  // Which one the settings currently mirror. Content decides whether ANY of
+  // them is active; the recalled id then decides WHICH — two workspaces can be
+  // identical apart from their export details, and presetMatches (rightly)
+  // ignores those, so content alone could not tell them apart and a write
+  // would land on both.
+  const activeWorkspace = useMemo(() => {
+    const matching = storedWorkspaces.filter((w) => presetMatches(w.value, settings));
+    return matching.find((w) => w.id === settings.activePresetId) ?? matching[0] ?? null;
+  }, [storedWorkspaces, settings]);
+
+  const activeWorkspaceRef = useRef<string | null>(null);
+  useEffect(() => {
+    activeWorkspaceRef.current = activeWorkspace?.id ?? null;
+  }, [activeWorkspace]);
+
+  const exportCommitRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // The workspace to commit to is resolved when the write happens, not when the
+  // timer fires — switching workspaces mid-note must not redirect the note.
+  const exportPendingRef = useRef<{ workspaceId: number; fields: ExportFieldValues } | null>(null);
+
+  // Send the pending workspace write. `beacon` is the page-is-going-away path:
+  // it calls the API directly (nothing to reconcile into state that is about to
+  // disappear) with keepalive, so the browser finishes the request after this
+  // document is gone.
+  const commitExportFields = useCallback(
+    (pending: { workspaceId: number; fields: ExportFieldValues }, beacon = false) => {
+      const ws = workspacesRef.current.find((w) => w.id === pending.workspaceId);
+      if (!ws || exportFieldsEqual(ws.settings.exportFields, pending.fields)) return;
+      const patch = { settings: { ...ws.settings, exportFields: pending.fields } };
+      if (beacon) {
+        void updateWorkspaceApi(ws.id, patch, { keepalive: true }).catch(() => {
+          /* the value is already in the local settings; nothing to report to a
+             page that is unloading */
+        });
+        return;
+      }
+      updateWorkspace(ws.id, patch);
+    },
+    [updateWorkspace]
+  );
+
+  // Send whatever is still queued, now. Used when the page is hidden, unloaded
+  // or navigated away from — otherwise a note typed in the last 1.2s would
+  // reach the local settings but never the workspace document, and another
+  // device would never see it.
+  const flushExportFields = useCallback(
+    (beacon = false) => {
+      if (exportCommitRef.current) {
+        clearTimeout(exportCommitRef.current);
+        exportCommitRef.current = null;
+      }
+      const pending = exportPendingRef.current;
+      exportPendingRef.current = null;
+      if (pending) commitExportFields(pending, beacon);
+    },
+    [commitExportFields]
+  );
+
+  const flushExportFieldsRef = useRef(flushExportFields);
+  useEffect(() => {
+    flushExportFieldsRef.current = flushExportFields;
+  }, [flushExportFields]);
+
+  useEffect(() => {
+    const onHide = () => {
+      if (document.visibilityState === 'hidden') flushExportFieldsRef.current(true);
+    };
+    document.addEventListener('visibilitychange', onHide);
+    window.addEventListener('pagehide', onHide);
+    return () => {
+      document.removeEventListener('visibilitychange', onHide);
+      window.removeEventListener('pagehide', onHide);
+      // Leaving this page (a route change, or the tab closing without ever
+      // going hidden) — the queued write goes out now rather than dying here.
+      flushExportFieldsRef.current(true);
+    };
+  }, []);
+
+  const setExportFields = useCallback<UseTrackSource['setExportFields']>(
+    (fields) => {
+      const value = normalizeExportFields(fields);
+      const prev = settingsRef.current;
+      if (exportFieldsEqual(prev.exportFields, value)) return;
+      const activeId = activeWorkspaceRef.current;
+      // Toggl mode: the stored workspaces are part of the settings, so the
+      // active one — that one only, never a twin with the same tracking
+      // settings — is updated in the same write.
+      const presets = prev.presets.map((p) =>
+        p.id === activeId ? { ...p, value: { ...p.value, exportFields: value } } : p
+      );
+      persist({ ...prev, exportFields: value, presets });
+      if (!standalone || activeId === null) return;
+      exportPendingRef.current = { workspaceId: Number(activeId), fields: value };
+      if (exportCommitRef.current) clearTimeout(exportCommitRef.current);
+      exportCommitRef.current = setTimeout(() => {
+        exportCommitRef.current = null;
+        const pending = exportPendingRef.current;
+        exportPendingRef.current = null;
+        if (pending) commitExportFields(pending);
+      }, 1200);
+    },
+    [persist, standalone, commitExportFields]
   );
 
   return {
@@ -1235,6 +1459,8 @@ export function useTrackSource(): UseTrackSource {
     livePollPaused,
     setLivePollPaused,
     loadRange,
+    setExportFields,
+    activeWorkspace: activeWorkspace ? { id: activeWorkspace.id, name: activeWorkspace.name } : null,
     sync: {
       enabled: syncEnabled,
       misconfigured: syncMisconfig,
@@ -1245,6 +1471,7 @@ export function useTrackSource(): UseTrackSource {
       conflict: syncConflict
         ? { rev: syncConflict.rev, updatedAt: syncConflict.updatedAt, device: syncConflict.device }
         : null,
+      appliedEpoch,
       resolveConflict: resolveSyncConflict,
       exportFile: exportSettingsFile,
       importFile: importSettingsFile,

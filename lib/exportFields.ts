@@ -1,32 +1,44 @@
 // The export dialog's identity fields (role / company / client / approver /
 // rate / currency / reference / engagement notes). Their values are
-// user-entered and stored in localStorage under per-field keys — the app
-// itself ships no company names or rates.
+// user-entered — the app itself ships no company names or rates.
 //
-// This module is the single owner of those keys: the export dialog reads and
-// writes through it, and settings sync (lib/sync) snapshots/restores the whole
-// set so the fields travel across devices with the rest of the settings.
-// Every write announces itself on EXPORT_FIELDS_EVENT so the sync engine
-// knows the payload changed without the dialog having to talk to the hook.
+// These belong to a WORKSPACE, not to the device: they name the engagement the
+// timesheet is billed under, and a setup that tracks two clients must not
+// print one client's company (or rate) on the other's PDF. So they travel
+// inside PresetValue (components/SettingsPanel): every stored workspace
+// captures them, recalling a workspace recalls them, and the export dialog
+// writes back to whichever workspace is active. A workspace that has never
+// been given its own set inherits the values in use when it was created (or
+// when it is first recalled).
+//
+// What is left in this module is the value shape itself plus the reader for
+// the pre-workspace layout — one localStorage key per field, device-wide —
+// which loadSettings (lib/useTrackSource) migrates from once and then clears.
 
-export const ROLE_KEY = 'tqv.export.role.v1';
-export const COMPANY_KEY = 'tqv.export.company.v1';
-export const CLIENT_KEY = 'tqv.export.client.v1';
-export const APPROVER_KEY = 'tqv.export.approver.v1';
-export const RATE_KEY = 'tqv.export.rate.v1';
-export const CURRENCY_KEY = 'tqv.export.currency.v1';
-// Only a hand-typed reference is remembered. A derived one (TS-2026-07) is a
-// property of the exported month, not of the engagement, so persisting it would
-// carry July's reference into August.
-export const REFERENCE_KEY = 'tqv.export.reference.v1';
-// The engagement note has to be grammatical in the language it prints in, so
-// each template language keeps its own text rather than one being reused.
-export const ENGAGEMENT_KEY = (locale: 'en' | 'cs') => `tqv.export.engagement.${locale}.v1`;
+/** The pre-workspace, device-wide keys. Read once at migration, then removed. */
+const LEGACY_KEYS = {
+  role: 'tqv.export.role.v1',
+  company: 'tqv.export.company.v1',
+  client: 'tqv.export.client.v1',
+  approver: 'tqv.export.approver.v1',
+  rate: 'tqv.export.rate.v1',
+  currency: 'tqv.export.currency.v1',
+  reference: 'tqv.export.reference.v1',
+  engagementEn: 'tqv.export.engagement.en.v1',
+  engagementCs: 'tqv.export.engagement.cs.v1',
+} as const;
 
-/** Fired on window whenever any export field is written. */
-export const EXPORT_FIELDS_EVENT = 'tqv:export-fields-changed';
-
-/** The whole set, as the sync payload carries it. All plain strings; empty = unset. */
+/**
+ * The whole set, as a workspace snapshot (and the sync payload) carries it.
+ * All plain strings; empty = unset.
+ *
+ * Only a hand-typed `reference` is remembered. A derived one (TS-2026-07) is a
+ * property of the exported month, not of the engagement, so persisting it would
+ * carry July's reference into August.
+ *
+ * The engagement note has to be grammatical in the language it prints in, so
+ * each template language keeps its own text rather than one being reused.
+ */
 export interface ExportFieldValues {
   role: string;
   company: string;
@@ -51,51 +63,80 @@ export const EMPTY_EXPORT_FIELDS: ExportFieldValues = {
   engagementCs: '',
 };
 
-export const readStored = (key: string): string => {
-  try {
-    return window.localStorage.getItem(key) ?? '';
-  } catch {
-    return '';
-  }
-};
+/** Which engagement note a PDF template's language uses. */
+export const engagementKey = (locale: 'en' | 'cs'): 'engagementEn' | 'engagementCs' =>
+  locale === 'cs' ? 'engagementCs' : 'engagementEn';
 
-/** Persist a field, or drop it when blank. No-ops when storage is unavailable. */
-export const writeStored = (key: string, value: string): void => {
-  try {
-    if (value) window.localStorage.setItem(key, value);
-    else window.localStorage.removeItem(key);
-  } catch {
-    // Private mode — the export itself still works.
-  }
-  try {
-    window.dispatchEvent(new Event(EXPORT_FIELDS_EVENT));
-  } catch {
-    /* ignore */
-  }
-};
-
-export function readExportFields(): ExportFieldValues {
+/**
+ * A complete value from a partial (or missing) one — covers workspaces stored
+ * before export fields were part of a snapshot, and payloads from an older
+ * app version.
+ */
+export function normalizeExportFields(
+  v: Partial<ExportFieldValues> | null | undefined
+): ExportFieldValues {
+  if (!v || typeof v !== 'object') return { ...EMPTY_EXPORT_FIELDS };
+  const str = (x: unknown): string => (typeof x === 'string' ? x : '');
   return {
-    role: readStored(ROLE_KEY),
-    company: readStored(COMPANY_KEY),
-    client: readStored(CLIENT_KEY),
-    approver: readStored(APPROVER_KEY),
-    rate: readStored(RATE_KEY),
-    currency: readStored(CURRENCY_KEY),
-    reference: readStored(REFERENCE_KEY),
-    engagementEn: readStored(ENGAGEMENT_KEY('en')),
-    engagementCs: readStored(ENGAGEMENT_KEY('cs')),
+    role: str(v.role),
+    company: str(v.company),
+    client: str(v.client),
+    approver: str(v.approver),
+    rate: str(v.rate),
+    currency: str(v.currency),
+    reference: str(v.reference),
+    engagementEn: str(v.engagementEn),
+    engagementCs: str(v.engagementCs),
   };
 }
 
-export function writeExportFields(v: ExportFieldValues): void {
-  writeStored(ROLE_KEY, v.role ?? '');
-  writeStored(COMPANY_KEY, v.company ?? '');
-  writeStored(CLIENT_KEY, v.client ?? '');
-  writeStored(APPROVER_KEY, v.approver ?? '');
-  writeStored(RATE_KEY, v.rate ?? '');
-  writeStored(CURRENCY_KEY, v.currency ?? '');
-  writeStored(REFERENCE_KEY, v.reference ?? '');
-  writeStored(ENGAGEMENT_KEY('en'), v.engagementEn ?? '');
-  writeStored(ENGAGEMENT_KEY('cs'), v.engagementCs ?? '');
+/** True when both sets carry the same values (so a no-op write stays a no-op). */
+export function exportFieldsEqual(
+  a: Partial<ExportFieldValues> | null | undefined,
+  b: Partial<ExportFieldValues> | null | undefined
+): boolean {
+  const x = normalizeExportFields(a);
+  const y = normalizeExportFields(b);
+  return (Object.keys(EMPTY_EXPORT_FIELDS) as (keyof ExportFieldValues)[]).every(
+    (k) => x[k] === y[k]
+  );
+}
+
+/**
+ * The device-wide fields written by versions before workspace scoping, or null
+ * when this device never had any. Reading is one-way: the caller folds them
+ * into the settings and calls clearLegacyExportFields().
+ */
+export function readLegacyExportFields(): ExportFieldValues | null {
+  let found = false;
+  const read = (key: string): string => {
+    try {
+      const v = window.localStorage.getItem(key) ?? '';
+      if (v) found = true;
+      return v;
+    } catch {
+      return '';
+    }
+  };
+  const values: ExportFieldValues = {
+    role: read(LEGACY_KEYS.role),
+    company: read(LEGACY_KEYS.company),
+    client: read(LEGACY_KEYS.client),
+    approver: read(LEGACY_KEYS.approver),
+    rate: read(LEGACY_KEYS.rate),
+    currency: read(LEGACY_KEYS.currency),
+    reference: read(LEGACY_KEYS.reference),
+    engagementEn: read(LEGACY_KEYS.engagementEn),
+    engagementCs: read(LEGACY_KEYS.engagementCs),
+  };
+  return found ? values : null;
+}
+
+/** Drop the pre-workspace keys once their values live in the settings. */
+export function clearLegacyExportFields(): void {
+  try {
+    for (const key of Object.values(LEGACY_KEYS)) window.localStorage.removeItem(key);
+  } catch {
+    /* private mode — the migrated copy in the settings is what counts */
+  }
 }
