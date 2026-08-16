@@ -407,6 +407,17 @@ export interface UseTrackSource {
    * fields above, is then simply this device's.
    */
   activeWorkspace: { id: string; name: string } | null;
+  /**
+   * Every stored workspace in one shape, whichever mode this is (standalone:
+   * server documents; Toggl: the saved presets) — the list behind the topbar's
+   * quick switcher. `color` is standalone-only.
+   */
+  workspaceList: { id: string; name: string; color?: string; value: PresetValue }[];
+  /**
+   * Recall a stored workspace by id: the same live switch the Settings list
+   * performs, for the quick switcher. Unknown ids are ignored.
+   */
+  switchWorkspace: (id: string) => void;
 
   // ---- Cross-device settings sync (see lib/sync) ----
   sync: {
@@ -1317,12 +1328,23 @@ export function useTrackSource(): UseTrackSource {
   }, [workspaces]);
 
   // The stored workspaces of whichever mode this is, in one shape (standalone:
-  // server documents; Toggl: the localStorage preset list).
+  // server documents; Toggl: the localStorage preset list). The chip color is
+  // standalone-only — Toggl-mode presets carry none.
   const storedWorkspaces = useMemo(
     () =>
       standalone
-        ? workspaces.map((w) => ({ id: String(w.id), name: w.name, value: w.settings }))
-        : settings.presets.map((p) => ({ id: p.id, name: p.name, value: p.value })),
+        ? workspaces.map((w) => ({
+            id: String(w.id),
+            name: w.name,
+            color: w.color,
+            value: w.settings,
+          }))
+        : settings.presets.map((p) => ({
+            id: p.id,
+            name: p.name,
+            color: p.color,
+            value: p.value,
+          })),
     [standalone, workspaces, settings.presets]
   );
 
@@ -1340,6 +1362,19 @@ export function useTrackSource(): UseTrackSource {
   useEffect(() => {
     activeWorkspaceRef.current = activeWorkspace?.id ?? null;
   }, [activeWorkspace]);
+
+  // Recall a stored workspace by id — exactly what clicking one in
+  // Settings → Workspaces does, minus the panel (the topbar switcher). Recalled
+  // projects are re-enriched from the live list, so a renamed/recolored project
+  // shows its current name rather than the snapshot's.
+  const switchWorkspace = useCallback(
+    (id: string) => {
+      const ws = storedWorkspaces.find((w) => w.id === id);
+      if (!ws) return;
+      persist(applyPreset(settingsRef.current, ws, projects));
+    },
+    [storedWorkspaces, persist, projects]
+  );
 
   const exportCommitRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   // The workspace to commit to is resolved when the write happens, not when the
@@ -1461,6 +1496,8 @@ export function useTrackSource(): UseTrackSource {
     loadRange,
     setExportFields,
     activeWorkspace: activeWorkspace ? { id: activeWorkspace.id, name: activeWorkspace.name } : null,
+    workspaceList: storedWorkspaces,
+    switchWorkspace,
     sync: {
       enabled: syncEnabled,
       misconfigured: syncMisconfig,

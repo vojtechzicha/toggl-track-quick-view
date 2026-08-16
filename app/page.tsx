@@ -8,6 +8,7 @@ import LastUpdated from '@/components/LastUpdated';
 import MutationToast from '@/components/MutationToast';
 import ProjectChips from '@/components/ProjectChips';
 import PasswordGate from '@/components/PasswordGate';
+import WorkspaceSwitcher from '@/components/WorkspaceSwitcher';
 import { useTrackSource, fmtInterval } from '@/lib/useTrackSource';
 import { HOURLY_LIMIT } from '@/lib/source/toggl';
 import { mappingFor } from '@/lib/timesheet/mapping';
@@ -66,6 +67,10 @@ export default function Page() {
   const standalone = mode === 'standalone';
 
   const [snoozeUntil, setSnoozeUntil] = useState(0);
+  // Settings was opened from the switcher's "Manage workspaces…", so the panel
+  // should land on that section. One opening only — the gear must still open
+  // the form at the top, so it clears whenever the panel closes.
+  const [manageWorkspaces, setManageWorkspaces] = useState(false);
   const [dayTab, setDayTab] = useState<'today' | 'yesterday'>('today');
   // The side panel is hidden by CSS at narrow widths; this opens it as a
   // full-screen overlay sheet instead (toggled from the topbar Details button).
@@ -97,6 +102,10 @@ export default function Page() {
   const projectIds = useMemo(() => new Set(sel.map((p) => p.id)), [sel]);
   const nameOf = (id: number | null) =>
     id != null ? sel.find((p) => p.id === id)?.name ?? '' : '';
+
+  useEffect(() => {
+    if (!showSettings) setManageWorkspaces(false);
+  }, [showSettings]);
 
   // After a successful connection, prompt for a project if none is chosen yet.
   useEffect(() => {
@@ -525,6 +534,13 @@ export default function Page() {
                 <span className="navbtn-text">Tracker</span>
               </Link>
             )}
+            <WorkspaceSwitcher
+              t={t}
+              onManage={() => {
+                setManageWorkspaces(true);
+                setShowSettings(true);
+              }}
+            />
             <Link className="navbtn" href="/timesheet" aria-label="Timesheet">
               <span className="navbtn-icon">🧾</span>
               <span className="navbtn-text">Timesheet</span>
@@ -851,7 +867,13 @@ export default function Page() {
         <PasswordGate onSubmit={submitPassword} error={pwError} busy={pwBusy} />
       )}
 
-      {!needsPassword && showSettings && <AppSettings t={t} canClose={projectIds.size > 0} />}
+      {!needsPassword && showSettings && (
+        <AppSettings
+          t={t}
+          canClose={projectIds.size > 0}
+          openWorkspaces={manageWorkspaces}
+        />
+      )}
     </>
   );
 }

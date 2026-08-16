@@ -15,9 +15,13 @@ import { applyPreset, type UseTrackSource } from '@/lib/useTrackSource';
 export default function AppSettings({
   t,
   canClose,
+  openWorkspaces = false,
 }: {
   t: UseTrackSource;
   canClose: boolean;
+  // Opened from the topbar switcher's "Manage workspaces…": land on that
+  // section rather than at the top of the form.
+  openWorkspaces?: boolean;
 }) {
   const { settings, persist, projects, mode } = t;
   const standalone = mode === 'standalone';
@@ -131,6 +135,7 @@ export default function AppSettings({
       }}
       activeWorkspaceId={activeWorkspaceId}
       activePresetId={activePresetId}
+      openWorkspaces={openWorkspaces}
       onWorkspaceCreate={
         standalone
           ? async (name, snapshot) => {
