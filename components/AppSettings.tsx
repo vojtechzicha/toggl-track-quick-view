@@ -103,7 +103,7 @@ export default function AppSettings({
       onImportFile={async (file) => {
         const err = await t.sync.importFile(file);
         if (!err) {
-          setSyncNotice('Settings file imported — this setup is now active.');
+          setSyncNotice('Settings file imported — everything below is now the imported setup.');
           setFormEpoch((n) => n + 1);
         }
         return err;

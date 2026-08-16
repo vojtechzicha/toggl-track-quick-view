@@ -401,7 +401,7 @@ export default function ExportDialog({
             />
             <p className="hint">
               These details are remembered for the next export — on this device, and across your
-              devices when settings sync is on. No names or rates ship with the app itself.
+              devices when settings sync is on. The app itself ships no names or rates.
             </p>
           </div>
         )}

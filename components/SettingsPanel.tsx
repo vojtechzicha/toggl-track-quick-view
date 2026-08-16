@@ -1421,9 +1421,9 @@ export default function SettingsPanel({
               <p style={{ margin: '0 0 8px' }}>
                 These settings were changed on another device (
                 {sync.conflict.device || 'unknown device'},{' '}
-                {new Date(sync.conflict.updatedAt).toLocaleString()}) — and this device has
-                unsynced changes of its own. Pick which setup to keep; the other one is
-                overwritten everywhere.
+                {new Date(sync.conflict.updatedAt).toLocaleString()}), and this device has
+                unsynced changes of its own. Pick the setup to keep — the other is overwritten
+                everywhere.
               </p>
               <div className="row" style={{ justifyContent: 'flex-start' }}>
                 <button type="button" className="btn" onClick={() => onSyncResolve?.('remote')}>
@@ -1463,16 +1463,16 @@ export default function SettingsPanel({
                   </button>
                 </div>
                 <p className="hint">
-                  This deployment syncs settings across devices, protected by its app password
-                  (APP_PASSWORD). Enter it once on this device to start syncing.
+                  Settings sync on this deployment sits behind its app password (APP_PASSWORD).
+                  Enter it once on this device and syncing starts.
                 </p>
               </div>
             ) : (
               <p className="hint">
                 Your setup — {standalone ? '' : 'workspaces, '}targets, linked codes and export
                 details — syncs across your devices through this deployment&apos;s own store.
-                Changes upload automatically a moment after you make them and land on other
-                devices when their page next gains focus. The{' '}
+                Changes upload a moment after you make them; other devices pick them up when
+                their page next gains focus. The{' '}
                 {standalone ? 'refresh interval stays' : 'Toggl API token and the refresh interval stay'}{' '}
                 on each device.{' '}
                 {sync.status === 'syncing' ? (
@@ -1487,9 +1487,9 @@ export default function SettingsPanel({
           ) : (
             <p className="hint">
               {sync?.misconfigured ??
-                'Automatic sync is off — settings live only in this browser. To sync them across ' +
-                  'devices, deploy with MONGODB_URI and APP_PASSWORD set (add APP_MODE=toggl to ' +
-                  'keep the Toggl source). Settings can always be moved by file below.'}
+                'Automatic sync is off — settings live only in this browser. Deploy with ' +
+                  'MONGODB_URI and APP_PASSWORD to sync across devices (add APP_MODE=toggl to ' +
+                  'keep the Toggl source), or move settings by file below.'}
             </p>
           )}
 
@@ -1520,10 +1520,9 @@ export default function SettingsPanel({
             </div>
             {importMsg && <div className="err-msg">{importMsg}</div>}
             <p className="hint">
-              The file carries the same setup sync moves —{' '}
-              {standalone ? '' : 'workspaces, '}targets and export details, never the{' '}
-              {standalone ? 'app password' : 'Toggl API token'}. Download it here, import it on
-              another device, or keep it as a backup.
+              The file holds the same setup sync moves: {standalone ? '' : 'workspaces, '}targets
+              and export details. The {standalone ? 'app password' : 'Toggl API token'} is never
+              included. Download it here and import it on another device, or keep it as a backup.
             </p>
           </div>
         </details>
