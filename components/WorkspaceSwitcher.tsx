@@ -13,8 +13,16 @@
 import { useEffect, useRef, useState } from 'react';
 import type { UseTrackSource } from '@/lib/useTrackSource';
 
-export default function WorkspaceSwitcher({ t }: { t: UseTrackSource }) {
-  const { workspaceList, activeWorkspace, switchWorkspace, setShowSettings } = t;
+export default function WorkspaceSwitcher({
+  t,
+  onManage,
+}: {
+  t: UseTrackSource;
+  // Open the Settings panel *on* its Workspaces section — creating, renaming,
+  // recapturing and deleting all stay there.
+  onManage: () => void;
+}) {
+  const { workspaceList, activeWorkspace, switchWorkspace } = t;
   const [open, setOpen] = useState(false);
   const btnRef = useRef<HTMLButtonElement>(null);
   const menuRef = useRef<HTMLDivElement>(null);
@@ -146,7 +154,7 @@ export default function WorkspaceSwitcher({ t }: { t: UseTrackSource }) {
               className="ws-switch-manage"
               onClick={() => {
                 setOpen(false);
-                setShowSettings(true);
+                onManage();
               }}
             >
               ⚙ Manage workspaces…

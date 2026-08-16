@@ -1026,6 +1026,14 @@ body {
   .navbtn.details-btn {
     display: inline-flex;
   }
+  /* Where Details joins the row the labels stop fitting — five labelled buttons
+     (Details, Tracker, Workspace, Timesheet, Settings, in standalone mode) run
+     past the viewport and get clipped by body{overflow:hidden}. The workspace
+     name is the one to drop: the title above already names the workspace, and
+     the menu spells it out on open. */
+  .ws-switch-name {
+    display: none;
+  }
 }
 
 @media (max-width: 560px) {
@@ -1045,19 +1053,25 @@ body {
 /* The menu is anchored under the button on wide screens; below 560px the topbar
    buttons are icon-only, so it becomes a bottom sheet instead (see the media
    query at the end of this block) — comfortably reachable and thumb-sized. */
+/* Shrinkable, unlike the other topbar buttons: its label is the one piece of
+   variable-width text in the row, so it gives way (ellipsis) before a long
+   workspace name can push the row past the viewport. */
 .ws-switch {
   position: relative;
-  flex: 0 0 auto;
+  flex: 0 1 auto;
+  min-width: 0;
 }
 .ws-switch-btn {
   cursor: pointer;
   max-width: min(230px, 32vw);
+  width: 100%;
 }
 .ws-switch-btn.open {
   background: var(--card2);
   border-color: var(--accent);
 }
 .ws-switch-name {
+  min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;

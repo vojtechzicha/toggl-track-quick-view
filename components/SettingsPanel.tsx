@@ -1,6 +1,6 @@
 'use client';
 
-import { useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import type { SourceMode, TrackProject } from '@/lib/source/types';
 import {
   DEFAULT_WEEKLY_HOURS,
@@ -248,6 +248,7 @@ export default function SettingsPanel({
   canClose,
   activeWorkspaceId,
   activePresetId,
+  openWorkspaces = false,
   onWorkspaceCreate,
   onWorkspaceRecapture,
   onWorkspaceRename,
@@ -301,6 +302,10 @@ export default function SettingsPanel({
   // cannot do when two workspaces differ only in their export details. Marks
   // the row below; omitted (undefined) falls back to comparing content.
   activePresetId?: string | null;
+  // Opened from the topbar switcher's "Manage workspaces…" rather than the gear:
+  // the Workspaces section starts expanded and the panel scrolls to it, instead
+  // of landing at the top of the form with the section collapsed far below.
+  openWorkspaces?: boolean;
   // Standalone-mode workspace CRUD. Create resolves the stored workspace (as a
   // preset) so the form can switch to it, or null when the call failed. Delete
   // resolves whether the workspace was actually deleted (the wiring may cancel
@@ -589,8 +594,17 @@ export default function SettingsPanel({
 
   // ---- Workspaces (stored settings) ----
   // Starts open on a fresh standalone install (creating the first workspace is
-  // the very first thing to do); user toggling owns it from then on.
-  const [wsOpen, setWsOpen] = useState(standalone && presets.length === 0);
+  // the very first thing to do) and whenever the panel was opened *for* this
+  // section; user toggling owns it from then on.
+  const [wsOpen, setWsOpen] = useState(openWorkspaces || (standalone && presets.length === 0));
+  // The section sits near the bottom of a long form, so opening it isn't enough
+  // — scroll it into the panel's viewport too. Mount-time intent only (the prop
+  // is fixed for the panel's lifetime), which is why this runs once.
+  const wsSectionRef = useRef<HTMLDetailsElement>(null);
+  useEffect(() => {
+    if (!openWorkspaces) return;
+    wsSectionRef.current?.scrollIntoView({ block: 'start' });
+  }, [openWorkspaces]);
   const [newPresetName, setNewPresetName] = useState('');
   const [renamingId, setRenamingId] = useState<string | null>(null);
   const [renameText, setRenameText] = useState('');
@@ -1331,6 +1345,7 @@ export default function SettingsPanel({
 
         {showProjects && (
           <details
+            ref={wsSectionRef}
             className="advanced ws-block"
             open={wsOpen}
             onToggle={(e) => setWsOpen((e.target as HTMLDetailsElement).open)}
