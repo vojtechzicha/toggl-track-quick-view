@@ -123,6 +123,25 @@ eq(
   'a pre-scoping payload is read from its top level'
 );
 
+// A pre-scoping client keeps pushing back the nested copy it once pulled from
+// us while editing only the top level, so a disagreement means the top level is
+// the copy that was actually written.
+const oldClientEdit = {
+  v: payload.v,
+  settings: { ...payload.settings, exportFields: { ...EMPTY_EXPORT_FIELDS, company: 'Acme' } },
+  exportFields: { ...EMPTY_EXPORT_FIELDS, company: 'Edited On Old Client' },
+} as unknown as typeof payload;
+eq(
+  applySyncPayload(settings, oldClientEdit).exportFields.company,
+  'Edited On Old Client',
+  'a top level that disagrees with the nested copy wins'
+);
+eq(
+  applySyncPayload(settings, payload).exportFields.company,
+  'Acme',
+  'and a payload whose copies agree is unaffected by that rule'
+);
+
 // A document from a client too old to carry them at all: keep what we have.
 const barePayload = {
   v: payload.v,

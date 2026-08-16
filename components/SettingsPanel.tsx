@@ -247,6 +247,7 @@ export default function SettingsPanel({
   onClose,
   canClose,
   activeWorkspaceId,
+  activePresetId,
   onWorkspaceCreate,
   onWorkspaceRecapture,
   onWorkspaceRename,
@@ -295,6 +296,11 @@ export default function SettingsPanel({
   // (the "active" row in the Workspaces list below). A workspace can't be
   // linked onto its own timesheet, so it's excluded from the mapping picker.
   activeWorkspaceId?: number | null;
+  // Which stored workspace the saved settings mirror, by id — the wiring
+  // resolves it from the one that was recalled, which content comparison alone
+  // cannot do when two workspaces differ only in their export details. Marks
+  // the row below; omitted (undefined) falls back to comparing content.
+  activePresetId?: string | null;
   // Standalone-mode workspace CRUD. Create resolves the stored workspace (as a
   // preset) so the form can switch to it, or null when the call failed. Delete
   // resolves whether the workspace was actually deleted (the wiring may cancel
@@ -1349,7 +1355,10 @@ export default function SettingsPanel({
             {presets.length > 0 && (
               <ul className="ws-list">
                 {presets.map((p) => {
-                  const active = presetMatches(p.value, initial);
+                  const active =
+                    activePresetId !== undefined
+                      ? p.id === activePresetId
+                      : presetMatches(p.value, initial);
                   return (
                     <li key={p.id} className={`ws-row${active ? ' active' : ''}`}>
                       {renamingId === p.id ? (

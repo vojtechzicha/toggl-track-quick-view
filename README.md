@@ -439,6 +439,9 @@ client's company or rate can never end up on the other's PDF.
   re-capture needed), and recalling another workspace brings that one's details.
 - Workspaces stored **before** this existed carry no details of their own, so
   they keep using the ones already on the device until you first change them.
+- Two workspaces may be identical **apart from** these details — the same
+  project and targets billed under two identities. The app remembers which one
+  you recalled, so a write lands on that one and not on its twin.
 - With **no** workspace stored — or with your live settings no longer matching
   any — the details are simply this device's, as they always were.
 

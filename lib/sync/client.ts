@@ -11,7 +11,7 @@
 // hashes the same, no matter what key order a JSON round-trip produced.
 
 import type { StoredSettings } from '@/lib/useTrackSource';
-import { normalizeExportFields } from '@/lib/exportFields';
+import { exportFieldsEqual, normalizeExportFields } from '@/lib/exportFields';
 import { loadAuth, clearAuth } from '@/lib/source/auth';
 import { ApiError, AuthRequiredError } from '@/lib/source/errors';
 import { SYNC_PAYLOAD_VERSION, type SyncDoc, type SyncDocInfo, type SyncPayload } from './model';
@@ -90,20 +90,33 @@ export function buildSyncPayload(settings: StoredSettings): SyncPayload {
 /**
  * Apply a synced payload over the current settings, returning the value to
  * persist. The local token and refresh interval always survive. Spreading over
- * `prev` keeps any field a payload from an older app version doesn't carry —
- * and a payload written before workspace scoping carries the export fields at
- * the top level only, so they are read from there.
+ * `prev` keeps any field a payload from an older app version doesn't carry.
  */
 export function applySyncPayload(prev: StoredSettings, payload: SyncPayload): StoredSettings {
   return {
     ...prev,
     ...payload.settings,
-    exportFields: normalizeExportFields(
-      payload.settings?.exportFields ?? payload.exportFields ?? prev.exportFields
-    ),
+    exportFields: exportFieldsFrom(payload, prev),
     token: prev.token,
     refreshSec: prev.refreshSec,
   };
+}
+
+/**
+ * Which copy of the export fields a payload really means.
+ *
+ * A client that scopes them writes both copies from the same value, so they
+ * agree. A client from BEFORE the scoping writes only the top level — while
+ * still carrying (and pushing back) whatever nested copy it once pulled from
+ * us, which by then is stale. So when the two disagree, the top level is the
+ * one that was actually edited; when they agree, either will do.
+ */
+function exportFieldsFrom(payload: SyncPayload, prev: StoredSettings) {
+  const nested = payload.settings?.exportFields;
+  const top = payload.exportFields;
+  if (!nested) return normalizeExportFields(top ?? prev.exportFields);
+  if (!top || exportFieldsEqual(nested, top)) return normalizeExportFields(nested);
+  return normalizeExportFields(top);
 }
 
 // ---- API client ----

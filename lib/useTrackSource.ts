@@ -95,6 +95,14 @@ export interface StoredSettings extends SettingsValue {
   // SettingsPreset).
   // Toggl mode only — in standalone mode workspaces live in the store instead.
   presets: SettingsPreset[];
+  // Id of the workspace last recalled (a preset id in Toggl mode, the stored
+  // workspace's numeric id as a string in standalone). A pointer, not a
+  // setting: it disambiguates which workspace these settings mirror when two
+  // of them are identical apart from their export details — which
+  // presetMatches deliberately cannot see. Always re-checked against the
+  // content before it is used, so settings edited away from that workspace
+  // never keep writing into it.
+  activePresetId: string | null;
 }
 
 export const DEFAULTS: StoredSettings = {
@@ -119,6 +127,7 @@ export const DEFAULTS: StoredSettings = {
   exportName: '',
   exportFields: EMPTY_EXPORT_FIELDS,
   presets: [],
+  activePresetId: null,
 };
 
 /**
@@ -154,6 +163,9 @@ export function applyPreset(
     exportFields: preset.value.exportFields
       ? normalizeExportFields(preset.value.exportFields)
       : normalizeExportFields(settings.exportFields),
+    // Remember WHICH workspace this is, so later writes (export details) reach
+    // it and not a twin with the same tracking settings.
+    activePresetId: preset.id,
   };
 }
 
@@ -389,12 +401,12 @@ export interface UseTrackSource {
    */
   setExportFields: (fields: ExportFieldValues) => void;
   /**
-   * Name of the stored workspace the current settings mirror (a store document
-   * in standalone mode, a saved preset in Toggl mode), or null when they match
-   * none — then per-workspace state, like the export fields above, is simply
-   * this device's.
+   * The stored workspace the current settings mirror — a store document in
+   * standalone mode (its numeric id as a string), a saved preset in Toggl mode
+   * — or null when they match none; per-workspace state, like the export
+   * fields above, is then simply this device's.
    */
-  activeWorkspaceName: string | null;
+  activeWorkspace: { id: string; name: string } | null;
 
   // ---- Cross-device settings sync (see lib/sync) ----
   sync: {
@@ -1251,13 +1263,17 @@ export function useTrackSource(): UseTrackSource {
         setSettings((prev) => {
           const selectedProjects = prev.selectedProjects.filter((p) => p.id !== id);
           const codeMappings = (prev.codeMappings ?? []).filter((m) => m.projectId !== id);
+          // The recalled-workspace pointer goes too when it named this one.
+          const activePresetId =
+            prev.activePresetId === String(id) ? null : prev.activePresetId;
           if (
             selectedProjects.length === prev.selectedProjects.length &&
-            codeMappings.length === (prev.codeMappings ?? []).length
+            codeMappings.length === (prev.codeMappings ?? []).length &&
+            activePresetId === prev.activePresetId
           ) {
             return prev;
           }
-          const next = { ...prev, selectedProjects, codeMappings };
+          const next = { ...prev, selectedProjects, codeMappings, activePresetId };
           try {
             window.localStorage.setItem(LS_KEY, JSON.stringify(next));
           } catch {
@@ -1300,19 +1316,92 @@ export function useTrackSource(): UseTrackSource {
     workspacesRef.current = workspaces;
   }, [workspaces]);
 
-  const activeWorkspaceName = useMemo(() => {
-    const match = standalone
-      ? workspaces.find((w) => presetMatches(w.settings, settings))
-      : settings.presets.find((p) => presetMatches(p.value, settings));
-    return match?.name ?? null;
-  }, [standalone, workspaces, settings]);
+  // The stored workspaces of whichever mode this is, in one shape (standalone:
+  // server documents; Toggl: the localStorage preset list).
+  const storedWorkspaces = useMemo(
+    () =>
+      standalone
+        ? workspaces.map((w) => ({ id: String(w.id), name: w.name, value: w.settings }))
+        : settings.presets.map((p) => ({ id: p.id, name: p.name, value: p.value })),
+    [standalone, workspaces, settings.presets]
+  );
+
+  // Which one the settings currently mirror. Content decides whether ANY of
+  // them is active; the recalled id then decides WHICH — two workspaces can be
+  // identical apart from their export details, and presetMatches (rightly)
+  // ignores those, so content alone could not tell them apart and a write
+  // would land on both.
+  const activeWorkspace = useMemo(() => {
+    const matching = storedWorkspaces.filter((w) => presetMatches(w.value, settings));
+    return matching.find((w) => w.id === settings.activePresetId) ?? matching[0] ?? null;
+  }, [storedWorkspaces, settings]);
+
+  const activeWorkspaceRef = useRef<string | null>(null);
+  useEffect(() => {
+    activeWorkspaceRef.current = activeWorkspace?.id ?? null;
+  }, [activeWorkspace]);
 
   const exportCommitRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   // The workspace to commit to is resolved when the write happens, not when the
   // timer fires — switching workspaces mid-note must not redirect the note.
   const exportPendingRef = useRef<{ workspaceId: number; fields: ExportFieldValues } | null>(null);
-  useEffect(() => () => {
-    if (exportCommitRef.current) clearTimeout(exportCommitRef.current);
+
+  // Send the pending workspace write. `beacon` is the page-is-going-away path:
+  // it calls the API directly (nothing to reconcile into state that is about to
+  // disappear) with keepalive, so the browser finishes the request after this
+  // document is gone.
+  const commitExportFields = useCallback(
+    (pending: { workspaceId: number; fields: ExportFieldValues }, beacon = false) => {
+      const ws = workspacesRef.current.find((w) => w.id === pending.workspaceId);
+      if (!ws || exportFieldsEqual(ws.settings.exportFields, pending.fields)) return;
+      const patch = { settings: { ...ws.settings, exportFields: pending.fields } };
+      if (beacon) {
+        void updateWorkspaceApi(ws.id, patch, { keepalive: true }).catch(() => {
+          /* the value is already in the local settings; nothing to report to a
+             page that is unloading */
+        });
+        return;
+      }
+      updateWorkspace(ws.id, patch);
+    },
+    [updateWorkspace]
+  );
+
+  // Send whatever is still queued, now. Used when the page is hidden, unloaded
+  // or navigated away from — otherwise a note typed in the last 1.2s would
+  // reach the local settings but never the workspace document, and another
+  // device would never see it.
+  const flushExportFields = useCallback(
+    (beacon = false) => {
+      if (exportCommitRef.current) {
+        clearTimeout(exportCommitRef.current);
+        exportCommitRef.current = null;
+      }
+      const pending = exportPendingRef.current;
+      exportPendingRef.current = null;
+      if (pending) commitExportFields(pending, beacon);
+    },
+    [commitExportFields]
+  );
+
+  const flushExportFieldsRef = useRef(flushExportFields);
+  useEffect(() => {
+    flushExportFieldsRef.current = flushExportFields;
+  }, [flushExportFields]);
+
+  useEffect(() => {
+    const onHide = () => {
+      if (document.visibilityState === 'hidden') flushExportFieldsRef.current(true);
+    };
+    document.addEventListener('visibilitychange', onHide);
+    window.addEventListener('pagehide', onHide);
+    return () => {
+      document.removeEventListener('visibilitychange', onHide);
+      window.removeEventListener('pagehide', onHide);
+      // Leaving this page (a route change, or the tab closing without ever
+      // going hidden) — the queued write goes out now rather than dying here.
+      flushExportFieldsRef.current(true);
+    };
   }, []);
 
   const setExportFields = useCallback<UseTrackSource['setExportFields']>(
@@ -1320,27 +1409,25 @@ export function useTrackSource(): UseTrackSource {
       const value = normalizeExportFields(fields);
       const prev = settingsRef.current;
       if (exportFieldsEqual(prev.exportFields, value)) return;
+      const activeId = activeWorkspaceRef.current;
       // Toggl mode: the stored workspaces are part of the settings, so the
-      // active one is updated in the same write.
+      // active one — that one only, never a twin with the same tracking
+      // settings — is updated in the same write.
       const presets = prev.presets.map((p) =>
-        presetMatches(p.value, prev) ? { ...p, value: { ...p.value, exportFields: value } } : p
+        p.id === activeId ? { ...p, value: { ...p.value, exportFields: value } } : p
       );
       persist({ ...prev, exportFields: value, presets });
-      if (!standalone) return;
-      const active = workspaces.find((w) => presetMatches(w.settings, prev));
-      if (!active) return;
-      exportPendingRef.current = { workspaceId: active.id, fields: value };
+      if (!standalone || activeId === null) return;
+      exportPendingRef.current = { workspaceId: Number(activeId), fields: value };
       if (exportCommitRef.current) clearTimeout(exportCommitRef.current);
       exportCommitRef.current = setTimeout(() => {
         exportCommitRef.current = null;
         const pending = exportPendingRef.current;
         exportPendingRef.current = null;
-        const ws = pending && workspacesRef.current.find((w) => w.id === pending.workspaceId);
-        if (!ws || !pending || exportFieldsEqual(ws.settings.exportFields, pending.fields)) return;
-        updateWorkspace(ws.id, { settings: { ...ws.settings, exportFields: pending.fields } });
+        if (pending) commitExportFields(pending);
       }, 1200);
     },
-    [persist, standalone, updateWorkspace, workspaces]
+    [persist, standalone, commitExportFields]
   );
 
   return {
@@ -1373,7 +1460,7 @@ export function useTrackSource(): UseTrackSource {
     setLivePollPaused,
     loadRange,
     setExportFields,
-    activeWorkspaceName,
+    activeWorkspace: activeWorkspace ? { id: activeWorkspace.id, name: activeWorkspace.name } : null,
     sync: {
       enabled: syncEnabled,
       misconfigured: syncMisconfig,

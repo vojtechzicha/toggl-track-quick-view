@@ -9,7 +9,7 @@
 // "projects".
 
 import { useEffect, useState } from 'react';
-import SettingsPanel, { presetMatches, type SettingsPreset } from '@/components/SettingsPanel';
+import SettingsPanel, { type SettingsPreset } from '@/components/SettingsPanel';
 import { applyPreset, type UseTrackSource } from '@/lib/useTrackSource';
 
 export default function AppSettings({
@@ -54,10 +54,10 @@ export default function AppSettings({
 
   // The workspace the current settings mirror (the "active" row in the panel's
   // list) — excluded from the linked-codes picker: a workspace can't bill onto
-  // its own timesheet as a linked code.
-  const activeWorkspaceId = standalone
-    ? t.workspaces.find((w) => presetMatches(w.settings, settings))?.id ?? null
-    : null;
+  // its own timesheet as a linked code. The hook resolves it by the recalled
+  // id, so twins that differ only in their export details stay distinct.
+  const activePresetId = t.activeWorkspace?.id ?? null;
+  const activeWorkspaceId = standalone && activePresetId !== null ? Number(activePresetId) : null;
 
   return (
     <SettingsPanel
@@ -92,7 +92,18 @@ export default function AppSettings({
       authError={t.authError}
       connecting={t.connecting}
       presets={presets}
-      onPresetsChange={(next) => persist({ ...settings, presets: next })}
+      onPresetsChange={(next) => {
+        // Storing a workspace switches to it, and deleting the active one
+        // leaves nothing active — keep the recalled-id pointer honest either
+        // way, so export-detail writes land on the workspace on screen.
+        const added = next.find((p) => !settings.presets.some((q) => q.id === p.id));
+        const stillThere = next.some((p) => p.id === settings.activePresetId);
+        persist({
+          ...settings,
+          presets: next,
+          activePresetId: added?.id ?? (stillThere ? settings.activePresetId : null),
+        });
+      }}
       onApply={(p) => persist(applyPreset(settings, p, projects))}
       onConnect={(token) => t.connect(token, true)}
       onSave={(v) => {
@@ -119,6 +130,7 @@ export default function AppSettings({
         return err;
       }}
       activeWorkspaceId={activeWorkspaceId}
+      activePresetId={activePresetId}
       onWorkspaceCreate={
         standalone
           ? async (name, snapshot) => {

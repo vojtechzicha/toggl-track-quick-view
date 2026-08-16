@@ -352,7 +352,7 @@ export default function TimesheetPage() {
           loadRange={loadRange}
           fields={settings.exportFields}
           onFieldsChange={t.setExportFields}
-          fieldsScope={t.activeWorkspaceName ?? ''}
+          fieldsScope={t.activeWorkspace?.name ?? ''}
           onClose={() => setShowExport(false)}
         />
       )}
