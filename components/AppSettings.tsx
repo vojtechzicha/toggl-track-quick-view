@@ -8,7 +8,7 @@
 // localStorage preset list, and stored workspaces double as the selectable
 // "projects".
 
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import SettingsPanel, { presetMatches, type SettingsPreset } from '@/components/SettingsPanel';
 import { applyPreset, type UseTrackSource } from '@/lib/useTrackSource';
 
@@ -22,13 +22,24 @@ export default function AppSettings({
   const { settings, persist, projects, mode } = t;
   const standalone = mode === 'standalone';
 
-  // The panel's form snapshots `settings` once on mount. When sync replaces
-  // the settings underneath it (a settings-file import, or resolving a
-  // conflict in favour of the other device), the form must re-seed or its
-  // next Save would clobber what was just applied — bumping this key remounts
-  // it, and the notice tells the user what happened.
+  // The panel's form snapshots `settings` once on mount. When something
+  // replaces the settings underneath it, the form must re-seed or its next
+  // Save would clobber what was just applied — remounting on a changed key is
+  // what re-seeds it, and the notice tells the user why the fields moved.
+  //
+  // Two sources: a settings-file import (formEpoch, bumped by the wiring
+  // below) and a document adopted from another device — a background pull or a
+  // conflict resolved in its favour — which the hook counts for us. The pull
+  // arrives with no user action at all, so nothing else would catch it.
   const [formEpoch, setFormEpoch] = useState(0);
   const [syncNotice, setSyncNotice] = useState<string | null>(null);
+  const appliedEpoch = t.sync.appliedEpoch;
+  const [seenAppliedEpoch, setSeenAppliedEpoch] = useState(appliedEpoch);
+  useEffect(() => {
+    if (appliedEpoch === seenAppliedEpoch) return;
+    setSeenAppliedEpoch(appliedEpoch);
+    setSyncNotice('Settings from another device arrived — the fields below now show them.');
+  }, [appliedEpoch, seenAppliedEpoch]);
 
   // In standalone mode the panel lists the server's workspaces where Toggl mode
   // shows localStorage presets — same shape, different storage.
@@ -50,7 +61,7 @@ export default function AppSettings({
 
   return (
     <SettingsPanel
-      key={formEpoch}
+      key={`${formEpoch}:${appliedEpoch}`}
       initial={{
         token: settings.token,
         selectedProjects: settings.selectedProjects,
@@ -92,13 +103,9 @@ export default function AppSettings({
       canClose={canClose}
       sync={t.sync}
       syncNotice={syncNotice}
-      onSyncResolve={(choice) => {
-        t.sync.resolveConflict(choice);
-        if (choice === 'remote') {
-          setSyncNotice('Applied the other device’s settings.');
-          setFormEpoch((n) => n + 1);
-        }
-      }}
+      // Choosing "remote" applies the other device's document, which bumps
+      // appliedEpoch — the effect above remounts the form and says so.
+      onSyncResolve={(choice) => t.sync.resolveConflict(choice)}
       onSyncPassword={(pw) => t.submitPassword(pw)}
       syncPwBusy={t.pwBusy}
       syncPwError={t.pwError}

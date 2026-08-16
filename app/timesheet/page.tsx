@@ -327,6 +327,11 @@ export default function TimesheetPage() {
 
       {!needsPassword && showExport && hasProject && (
         <ExportDialog
+          // The dialog seeds its fields from the settings once, on mount. A
+          // document adopted from another device replaces those settings
+          // underneath it, so remount it rather than let the next export write
+          // the superseded details back.
+          key={t.sync.appliedEpoch}
           view={settings.timesheetMode}
           projects={sel}
           multi={multi}

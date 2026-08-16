@@ -117,6 +117,14 @@ revision-checked, so two devices editing at once can never silently clobber
 each other: if both changed since their last common revision, the app shows
 both sides in **Settings → Sync & transfer** and asks which setup to keep.
 
+An incoming setup that lands while **Settings** or the **export dialog** is
+open re-seeds their fields and says so — otherwise the next Save or Export
+would write the superseded values straight back over it. In standalone mode
+the **workspace list** lives outside the synced document (each workspace is
+its own server record), so it is re-listed when the window regains focus as
+well; a workspace renamed, recaptured, created or deleted on another device
+shows up there without a reload.
+
 **What never syncs**: the Toggl API token (a credential stays on the device it
 was entered on — each device connects with its own token, or the server holds
 one via `TOGGL_API_TOKEN`) and the refresh interval (a per-device/network

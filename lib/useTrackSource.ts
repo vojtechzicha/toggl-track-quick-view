@@ -412,6 +412,14 @@ export interface UseTrackSource {
     lastSyncedAt: number | null;
     /** Both sides changed since the last sync — the user picks a winner. */
     conflict: { rev: number; updatedAt: string; device: string } | null;
+    /**
+     * How many times a document from ANOTHER device has replaced these
+     * settings (a background pull that adopted it, or a conflict resolved in
+     * its favour). Any UI holding a mount-time snapshot of the settings — the
+     * Settings form, the export dialog — should key on this so it re-seeds
+     * instead of writing its stale copy back on the next save.
+     */
+    appliedEpoch: number;
     resolveConflict: (choice: 'remote' | 'local') => void;
     /** Download the syncable settings as a JSON file (never the token). */
     exportFile: () => void;
@@ -492,6 +500,8 @@ export function useTrackSource(): UseTrackSource {
   const [syncStatus, setSyncStatus] = useState<'idle' | 'syncing' | 'error'>('idle');
   const [syncErrorMsg, setSyncErrorMsg] = useState<string | null>(null);
   const [syncConflict, setSyncConflict] = useState<SyncDoc | null>(null);
+  // Counts documents adopted from another device (see applyRemoteDoc).
+  const [appliedEpoch, setAppliedEpoch] = useState(0);
   const [lastSyncedAt, setLastSyncedAt] = useState<number | null>(null);
   // The initial pull must finish before any push: a fresh device that pushed
   // first (baseRev null) would race the established document into a conflict.
@@ -829,6 +839,32 @@ export function useTrackSource(): UseTrackSource {
     return () => ch.removeEventListener('message', onMessage);
   }, [standalone, ready]);
 
+  // Standalone workspaces live in their own collection, outside the sync
+  // payload — so a rename, recapture, create or delete made on ANOTHER device
+  // reaches this one through neither the settings pull nor the (same-browser)
+  // BroadcastChannel. Re-list them when the window regains focus, throttled the
+  // way the sync pull is. Without this a recall could reapply an obsolete
+  // snapshot, and an export-detail write would be built on one (see
+  // setExportFields, which patches the workspace's cached settings).
+  const lastWsListRef = useRef(0);
+  useEffect(() => {
+    if (!standalone || !ready) return;
+    const onFocus = () => {
+      if (document.visibilityState !== 'visible') return;
+      if (Date.now() - lastWsListRef.current < 30_000) return;
+      lastWsListRef.current = Date.now();
+      refreshWorkspacesRef.current?.().catch(() => {
+        /* transient — the next focus (or any mutation) tries again */
+      });
+    };
+    window.addEventListener('focus', onFocus);
+    document.addEventListener('visibilitychange', onFocus);
+    return () => {
+      window.removeEventListener('focus', onFocus);
+      document.removeEventListener('visibilitychange', onFocus);
+    };
+  }, [standalone, ready]);
+
   // ---- Cross-device settings sync ----
   // Engine: pull on load and on window focus; push (debounced) whenever the
   // syncable content differs from what this device last synced. Every decision
@@ -845,6 +881,12 @@ export function useTrackSource(): UseTrackSource {
       persist(applySyncPayload(settingsRef.current, doc.payload));
       setSyncConflict(null);
       setLastSyncedAt(Date.now());
+      // Surfaces that another device's document replaced these settings — the
+      // Settings form and the export dialog both hold mount-time snapshots and
+      // must re-seed, or the next Save/Export would write the stale values
+      // back over what was just adopted (and push them at the NEW revision, so
+      // not even a conflict would catch it).
+      setAppliedEpoch((n) => n + 1);
     },
     [persist]
   );
@@ -1342,6 +1384,7 @@ export function useTrackSource(): UseTrackSource {
       conflict: syncConflict
         ? { rev: syncConflict.rev, updatedAt: syncConflict.updatedAt, device: syncConflict.device }
         : null,
+      appliedEpoch,
       resolveConflict: resolveSyncConflict,
       exportFile: exportSettingsFile,
       importFile: importSettingsFile,
