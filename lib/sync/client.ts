@@ -11,7 +11,7 @@
 // hashes the same, no matter what key order a JSON round-trip produced.
 
 import type { StoredSettings } from '@/lib/useTrackSource';
-import { readExportFields, writeExportFields, type ExportFieldValues } from '@/lib/exportFields';
+import { normalizeExportFields } from '@/lib/exportFields';
 import { loadAuth, clearAuth } from '@/lib/source/auth';
 import { ApiError, AuthRequiredError } from '@/lib/source/errors';
 import { SYNC_PAYLOAD_VERSION, type SyncDoc, type SyncDocInfo, type SyncPayload } from './model';
@@ -70,33 +70,37 @@ export function payloadHash(p: SyncPayload): string {
 
 /**
  * Snapshot the syncable state: settings minus the token (a credential never
- * leaves its device) and refreshSec (a device knob), plus the export dialog's
- * identity fields. Pass `exportFields` to override the localStorage read —
- * used to hash the pristine-baseline without touching storage.
+ * leaves its device) and refreshSec (a device knob).
+ *
+ * The export identity fields now live inside the settings (per workspace, and
+ * again inside every stored workspace), so they travel in `settings` like
+ * everything else. The top-level `exportFields` key is still filled with the
+ * active set: it is what a client from before workspace scoping reads, and
+ * dropping it would blank that client's export dialog.
  */
-export function buildSyncPayload(
-  settings: StoredSettings,
-  exportFields?: ExportFieldValues
-): SyncPayload {
+export function buildSyncPayload(settings: StoredSettings): SyncPayload {
   const { token: _token, refreshSec: _refreshSec, ...rest } = settings;
   return {
     v: SYNC_PAYLOAD_VERSION,
     settings: rest,
-    exportFields: exportFields ?? readExportFields(),
+    exportFields: normalizeExportFields(settings.exportFields),
   };
 }
 
 /**
  * Apply a synced payload over the current settings, returning the value to
- * persist. The local token and refresh interval always survive; the export
- * fields are written straight to their localStorage keys. Spreading over
- * `prev` keeps any field a payload from an older app version doesn't carry.
+ * persist. The local token and refresh interval always survive. Spreading over
+ * `prev` keeps any field a payload from an older app version doesn't carry —
+ * and a payload written before workspace scoping carries the export fields at
+ * the top level only, so they are read from there.
  */
 export function applySyncPayload(prev: StoredSettings, payload: SyncPayload): StoredSettings {
-  writeExportFields(payload.exportFields);
   return {
     ...prev,
     ...payload.settings,
+    exportFields: normalizeExportFields(
+      payload.settings?.exportFields ?? payload.exportFields ?? prev.exportFields
+    ),
     token: prev.token,
     refreshSec: prev.refreshSec,
   };

@@ -20,9 +20,12 @@ export const SYNC_PAYLOAD_VERSION = 1;
 
 export interface SyncPayload {
   v: number;
-  /** StoredSettings minus the credential and the per-device refresh knob. */
+  /** StoredSettings minus the credential and the per-device refresh knob.
+   * Carries the export dialog's identity fields twice over: the active set
+   * (settings.exportFields) and each stored workspace's own. */
   settings: Omit<StoredSettings, 'token' | 'refreshSec'>;
-  /** The export dialog's remembered identity fields. */
+  /** The active export identity fields, mirrored for clients from before they
+   * were scoped to a workspace (they read the payload's top level only). */
   exportFields: ExportFieldValues;
 }
 

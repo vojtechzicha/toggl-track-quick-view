@@ -345,6 +345,9 @@ export default function TimesheetPage() {
           personName={settings.exportName.trim() || settings.accountName}
           prefetched={exportPrefetched}
           loadRange={loadRange}
+          fields={settings.exportFields}
+          onFieldsChange={t.setExportFields}
+          fieldsScope={t.activeWorkspaceName ?? ''}
           onClose={() => setShowExport(false)}
         />
       )}

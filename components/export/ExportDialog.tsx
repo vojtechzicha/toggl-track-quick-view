@@ -24,21 +24,11 @@ import { PDF_TEMPLATES, DEFAULT_TEMPLATE_ID } from '@/lib/export/pdf';
 import { ENGAGEMENT_PLACEHOLDERS, ENGAGEMENT_LABELS } from '@/lib/export/pdf/report';
 
 // Identity fields some PDF templates print (role / company / client / approver /
-// rate). Their values are user-entered and remembered through lib/exportFields
-// — stored on this device, and carried to other devices by settings sync when
-// the deployment has one. The app itself ships no company names or rates.
-import {
-  ROLE_KEY,
-  COMPANY_KEY,
-  CLIENT_KEY,
-  APPROVER_KEY,
-  RATE_KEY,
-  CURRENCY_KEY,
-  REFERENCE_KEY,
-  ENGAGEMENT_KEY,
-  readStored,
-  writeStored,
-} from '@/lib/exportFields';
+// rate). Their values are user-entered and handed in by the page: they are
+// remembered with the workspace being billed (see lib/exportFields), and carried
+// to other devices by settings sync when the deployment has one. The app itself
+// ships no company names or rates.
+import { engagementKey, type ExportFieldValues } from '@/lib/exportFields';
 
 /**
  * Default document reference for a range — the year and month it starts in.
@@ -101,6 +91,12 @@ export interface ExportDialogProps {
    */
   prefetched: { fromMs: number; toMs: number; entries: TimeEntry[] } | null;
   loadRange: (startISO: string, endISO: string, opts?: { force?: boolean }) => Promise<FetchedEntries>;
+  /** Remembered identity fields of the workspace being exported. */
+  fields: ExportFieldValues;
+  /** Persist them back onto that workspace (see UseTrackSource.setExportFields). */
+  onFieldsChange: (fields: ExportFieldValues) => void;
+  /** Name of the workspace they belong to, for the hint; empty when none. */
+  fieldsScope: string;
   onClose: () => void;
 }
 
@@ -123,6 +119,9 @@ export default function ExportDialog({
   personName,
   prefetched,
   loadRange,
+  fields,
+  onFieldsChange,
+  fieldsScope,
   onClose,
 }: ExportDialogProps) {
   const [preset, setPreset] = useState<ExportPreset>('current-month');
@@ -141,25 +140,25 @@ export default function ExportDialog({
   // technical formats (CSV/XLSX) always honour the limit.
   const [pdfDescs, setPdfDescs] = useState<'full' | 'short'>('full');
   const [name, setName] = useState(personName);
-  const [role, setRole] = useState(() => readStored(ROLE_KEY));
-  const [company, setCompany] = useState(() => readStored(COMPANY_KEY));
-  const [client, setClient] = useState(() => readStored(CLIENT_KEY));
-  const [approver, setApprover] = useState(() => readStored(APPROVER_KEY));
+  // Seeded once from the workspace's remembered fields; written back on export
+  // (and, for the engagement note, as it is typed).
+  const [role, setRole] = useState(fields.role);
+  const [company, setCompany] = useState(fields.company);
+  const [client, setClient] = useState(fields.client);
+  const [approver, setApprover] = useState(fields.approver);
   // The reference tracks the chosen range (TS-2026-07) until the user types one
   // of their own — a PO or contract number, say — after which it is left alone
   // and remembered. Clearing the box hands it back to the range.
-  const [reference, setReference] = useState(
-    () => readStored(REFERENCE_KEY) || defaultReference(initial.fromMs)
-  );
-  const [refEdited, setRefEdited] = useState(() => readStored(REFERENCE_KEY) !== '');
+  const [reference, setReference] = useState(fields.reference || defaultReference(initial.fromMs));
+  const [refEdited, setRefEdited] = useState(fields.reference !== '');
   // Both languages' notes are held at once; the box shows the selected
   // template's, so switching language never overwrites the other text.
   const [engagements, setEngagements] = useState<Record<'en' | 'cs', string>>(() => ({
-    en: readStored(ENGAGEMENT_KEY('en')),
-    cs: readStored(ENGAGEMENT_KEY('cs')),
+    en: fields.engagementEn,
+    cs: fields.engagementCs,
   }));
-  const [rateStr, setRateStr] = useState(() => readStored(RATE_KEY));
-  const [currency, setCurrency] = useState(() => readStored(CURRENCY_KEY));
+  const [rateStr, setRateStr] = useState(fields.rate);
+  const [currency, setCurrency] = useState(fields.currency);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [done, setDone] = useState<string | null>(null);
@@ -238,18 +237,23 @@ export default function ExportDialog({
         rate: parseRate(rateStr),
         currency: currency.trim().toUpperCase(),
       });
-      // Remember the identity fields for the next export on this device. The
+      // Remember the identity fields for the next export of this workspace. The
       // engagement notes are saved as they are typed (see the textarea), since
       // losing a paragraph to a failed export would be the expensive mistake.
-      writeStored(ROLE_KEY, role.trim());
-      writeStored(COMPANY_KEY, company.trim());
-      writeStored(CLIENT_KEY, client.trim());
-      writeStored(APPROVER_KEY, approver.trim());
-      writeStored(RATE_KEY, rateStr.trim());
-      writeStored(CURRENCY_KEY, currency.trim().toUpperCase());
-      // A derived reference is dropped rather than stored, so next month's
-      // export starts from that month again.
-      writeStored(REFERENCE_KEY, refEdited ? reference.trim() : '');
+      onFieldsChange({
+        ...fields,
+        role: role.trim(),
+        company: company.trim(),
+        client: client.trim(),
+        approver: approver.trim(),
+        rate: rateStr.trim(),
+        currency: currency.trim().toUpperCase(),
+        // A derived reference is dropped rather than stored, so next month's
+        // export starts from that month again.
+        reference: refEdited ? reference.trim() : '',
+        engagementEn: engagements.en.trim(),
+        engagementCs: engagements.cs.trim(),
+      });
       const ok = await runExport(doc, format, templateId);
       if (!ok) {
         setError('No entries in this range — nothing to export.');
@@ -400,8 +404,17 @@ export default function ExportDialog({
               }}
             />
             <p className="hint">
-              These details are remembered for the next export — on this device, and across your
-              devices when settings sync is on. The app itself ships no names or rates.
+              {fieldsScope ? (
+                <>
+                  These details are remembered for the next export of{' '}
+                  <strong>{fieldsScope}</strong> — every workspace keeps its own set, so another
+                  client&apos;s company or rate never lands on this sheet.
+                </>
+              ) : (
+                <>These details are remembered on this device for the next export.</>
+              )}{' '}
+              They follow you across devices when settings sync is on. The app itself ships no
+              names or rates.
             </p>
           </div>
         )}
@@ -494,7 +507,7 @@ export default function ExportDialog({
                 setEngagements((prev) => ({ ...prev, [tplLocale]: v }));
                 // Saved as typed: this is the one field long enough that losing
                 // it to a failed export or a closed dialog would sting.
-                writeStored(ENGAGEMENT_KEY(tplLocale), v.trim());
+                onFieldsChange({ ...fields, [engagementKey(tplLocale)]: v.trim() });
                 setDone(null);
               }}
             />

@@ -17,6 +17,7 @@ import {
 // Type-only import from a client module — erased at compile time, so the
 // server bundle never pulls the component in.
 import type { PresetValue } from '@/components/SettingsPanel';
+import { EMPTY_EXPORT_FIELDS } from '@/lib/exportFields';
 
 export interface WorkspaceDoc {
   _id?: ObjectId;
@@ -150,5 +151,9 @@ export function defaultWorkspaceSettings(): PresetValue {
     codeMappings: [],
     timesheetMode: 'summary',
     exportName: '',
+    // A workspace created without a snapshot (e.g. one per Toggl project on the
+    // import page) starts with export details of its own rather than inheriting
+    // another client's: the first export fills them in, and they stay here.
+    exportFields: { ...EMPTY_EXPORT_FIELDS },
   };
 }

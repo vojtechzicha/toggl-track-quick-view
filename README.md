@@ -96,7 +96,8 @@ See `docs/standalone/` for the full design and phase plan.
 
 Once the app is set up the way you want it — stored workspaces, targets,
 linked billing codes, timesheet options, the export dialog's identity fields
-(role, company, client, approver, rate, engagement notes) — that setup can
+(role, company, client, approver, rate, engagement notes — each workspace's
+own) — that setup can
 follow you to every device instead of living in one browser's `localStorage`.
 
 **Enabling it.** Sync stores one revisioned settings document in MongoDB and
@@ -416,6 +417,27 @@ credential, shared across all workspaces) and the refresh interval (a per-device
 knob). The list lives in the browser's `localStorage` alongside your other
 settings — it's a secondary, tucked-away feature of the Settings panel.
 
+### Export details are per workspace
+
+The details the **export dialog** remembers — company, client, role, approver,
+reference, hourly rate and the engagement note — are part of the workspace too,
+because they describe *who is being billed*: with two clients stored, one
+client's company or rate can never end up on the other's PDF.
+
+- A workspace you **store now** starts from the details currently in use — that
+  is the inheriting step.
+- From then on each workspace keeps **its own**: filling a detail in the export
+  dialog writes it straight back onto the workspace you're on (no **↻**
+  re-capture needed), and recalling another workspace brings that one's details.
+- Workspaces stored **before** this existed carry no details of their own, so
+  they keep using the ones already on the device until you first change them.
+- With **no** workspace stored — or with your live settings no longer matching
+  any — the details are simply this device's, as they always were.
+
+**Settings → Advanced → Export details** names which of them are currently set
+(the values themselves are edited in the export dialog, next to the export that
+prints them).
+
 ## Timesheet
 
 The **Timesheet** button (top-right of the dashboard, or `/timesheet`) opens a
@@ -533,10 +555,11 @@ The export dialog's **PDF template** picker chooses the layout of the PDF:
   **signature area** at the bottom leaves room for a digital-signature stamp.
 
   This template asks for two extra fields in the dialog, **Role** and
-  **Company**. Like the name, they're free text and are remembered for the
-  next export — on the device (localStorage), and across devices when settings
-  sync is on — no company-specific values ship with the app. It works from either view; the Individual view carries
-  the richest per-day text.
+  **Company**. Like the name, they're free text and are remembered for the next
+  export — with the **workspace** being billed (see "Export details are per
+  workspace" above), and across devices when settings sync is on — no
+  company-specific values ship with the app. It works from either view; the
+  Individual view carries the richest per-day text.
 - **Timesheet Acceptance Protocol (Compact)** — the same sheet, but each day's
   **Project / Task** cell is one line: **every billing code** of the day
   (ordered by descending hours, ticket-shaped codes like `ITSD-…` included,

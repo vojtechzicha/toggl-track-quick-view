@@ -13,6 +13,7 @@ import {
   fmtHoursLabel,
 } from '@/lib/calc';
 import { mappingGridCompatible, type CodeMapping } from '@/lib/timesheet/mapping';
+import { EMPTY_EXPORT_FIELDS, type ExportFieldValues } from '@/lib/exportFields';
 
 export type TimesheetMode = 'summary' | 'individual';
 
@@ -74,6 +75,11 @@ export interface SettingsValue {
   timesheetMode: TimesheetMode;
   // Name printed on exports (PDF header). Blank falls back to the Toggl account name.
   exportName: string;
+  // The export dialog's identity fields (company, client, rate, engagement note
+  // …). Edited in the dialog rather than in this panel, but part of the value —
+  // and therefore of every workspace snapshot — because they describe the
+  // engagement being billed, not the device (see lib/exportFields).
+  exportFields: ExportFieldValues;
 }
 
 /**
@@ -113,6 +119,7 @@ export function toPresetValue(s: SettingsValue): PresetValue {
     codeMappings: s.codeMappings,
     timesheetMode: s.timesheetMode,
     exportName: s.exportName,
+    exportFields: s.exportFields ?? EMPTY_EXPORT_FIELDS,
   };
 }
 
@@ -120,6 +127,10 @@ export function toPresetValue(s: SettingsValue): PresetValue {
  * Whether a settings value currently matches a stored workspace. Projects are
  * compared by id set only (names/colors are denormalised and can drift as Toggl
  * changes), so recalling a workspace keeps reading as "active" after a refresh.
+ * The export identity fields are deliberately NOT compared: the export dialog
+ * writes them straight back into the active workspace, so they can never be the
+ * thing that makes a recalled workspace stop reading as active — and this
+ * function is what identifies that workspace in the first place.
  */
 export function presetMatches(value: PresetValue, s: SettingsValue): boolean {
   const ids = (ps: SelectedProject[]) =>
@@ -484,10 +495,32 @@ export default function SettingsPanel({
       refreshSec,
       timesheetMode,
       exportName: exportName.trim(),
+      // Not edited here — the export dialog owns these. Passed through from the
+      // live prop (not a mount-time snapshot) so saving, or storing a new
+      // workspace, carries whatever the dialog last wrote.
+      exportFields: initial.exportFields ?? EMPTY_EXPORT_FIELDS,
     };
   };
 
   const handleSave = () => onSave(buildValue());
+
+  // Which export-dialog details currently carry a value. Shown (read-only) next
+  // to "Name on exports" so the panel says what the active workspace would
+  // print, without duplicating the dialog's inputs.
+  const setExportFieldLabels = (
+    [
+      ['company', 'company'],
+      ['client', 'client'],
+      ['role', 'role'],
+      ['approver', 'approver'],
+      ['reference', 'reference'],
+      ['rate', 'rate'],
+      ['engagementEn', 'engagement note (English)'],
+      ['engagementCs', 'engagement note (Czech)'],
+    ] as [keyof ExportFieldValues, string][]
+  )
+    .filter(([key]) => (initial.exportFields?.[key] ?? '').trim() !== '')
+    .map(([, label]) => label);
 
   // ---- Linked billing codes ----
   // Rows are edited freely (a half-filled row is fine mid-edit); buildValue keeps
@@ -1224,6 +1257,28 @@ export default function SettingsPanel({
             <p className="hint">
               The default name printed in the header of PDF exports (you can still override it per
               export).{standalone ? '' : ' Leave blank to use your Toggl account name.'}
+            </p>
+          </div>
+
+          <div className="field">
+            <label>Export details</label>
+            <p className="hint">
+              Company, client, approver, reference, hourly rate and the engagement note are filled
+              in the <strong>export dialog</strong> and remembered{' '}
+              {presets.length > 0 ? (
+                <>
+                  <strong>per workspace</strong> — a workspace you store now starts from the values
+                  in use, and from its first change onwards each workspace keeps its own.
+                </>
+              ) : (
+                <>
+                  with these settings — store a workspace and each one keeps its own set from then
+                  on.
+                </>
+              )}{' '}
+              {setExportFieldLabels.length > 0
+                ? `Set here: ${setExportFieldLabels.join(', ')}.`
+                : 'None set yet.'}
             </p>
           </div>
         </details>

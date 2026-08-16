@@ -69,6 +69,9 @@ export default function AppSettings({
         refreshSec: settings.refreshSec,
         timesheetMode: settings.timesheetMode,
         exportName: settings.exportName,
+        // Edited in the export dialog, not in the panel — passed through so a
+        // Save (or storing a new workspace) carries the active set along.
+        exportFields: settings.exportFields,
       }}
       projects={projects}
       projectsLoaded={t.ready}
