@@ -10,6 +10,9 @@
 //    Toggl-mode only — the standalone store has no rate limit to work around.
 //  - passwordRequired: whether the password gate is active, so the client
 //    knows to prompt for the password before fetching.
+//  - sync: whether cross-device settings sync is available (MONGODB_URI +
+//    APP_PASSWORD, any mode — Toggl mode keeps its source with APP_MODE=toggl),
+//    plus a sync-specific misconfiguration message when applicable.
 //  - misconfigured: a human-readable problem the operator must fix (currently
 //    only: standalone mode without APP_PASSWORD — the store routes are writes,
 //    so they refuse to serve until one is set).
@@ -19,6 +22,7 @@
 import { cacheIntervalSec } from '@/lib/serverCache';
 import { gateEnabled } from '@/lib/serverAuth';
 import { standaloneEnabled } from '@/lib/store/mongo';
+import { syncEnabled, syncMisconfigured } from '@/lib/sync/server';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -39,6 +43,10 @@ export async function GET() {
     cache: {
       enabled: cacheEnabled,
       intervalSec: cacheEnabled ? interval : null,
+    },
+    sync: {
+      enabled: syncEnabled(),
+      misconfigured: syncMisconfigured(),
     },
   });
 }

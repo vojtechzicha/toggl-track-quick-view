@@ -11,9 +11,13 @@ import { MongoClient, type Db } from 'mongodb';
 
 const DEFAULT_DB = 'toggl-quick-view';
 
-/** Presence of MONGODB_URI is what switches a deployment to standalone mode. */
+/**
+ * Presence of MONGODB_URI is what switches a deployment to standalone mode —
+ * unless APP_MODE=toggl explicitly keeps the Toggl source, in which case the
+ * database serves only the settings-sync store (see lib/sync/server.ts).
+ */
 export function standaloneEnabled(): boolean {
-  return !!process.env.MONGODB_URI;
+  return !!process.env.MONGODB_URI && process.env.APP_MODE !== 'toggl';
 }
 
 async function connect(uri: string): Promise<Db> {

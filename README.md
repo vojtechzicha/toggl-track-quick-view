@@ -30,7 +30,9 @@ It fills the whole screen with no scrolling.
   same-origin proxy route (`app/api/toggl/[...path]`) that adds Basic auth — no
   CORS setup, and your token never touches a third party.
 - Your API token, selected project, and preferences live in the browser's
-  `localStorage`.
+  `localStorage`. Deployments with a MongoDB can additionally **sync the
+  preferences across devices** — see "Settings sync" below; the token itself
+  never syncs.
 - Alternatively, set a **`TOGGL_API_TOKEN`** env var for a private single-user
   deploy: the app detects it on load, connects automatically, and hides the
   token field in Settings (you only pick a project). A browser-entered token
@@ -89,6 +91,41 @@ delete, entry list grouped by day and (Saturday-start) week.
   already brought in are skipped, never duplicated or overwritten.
 
 See `docs/standalone/` for the full design and phase plan.
+
+## Settings sync across devices
+
+Once the app is set up the way you want it — stored workspaces, targets,
+linked billing codes, timesheet options, the export dialog's identity fields
+(role, company, client, approver, rate, engagement notes) — that setup can
+follow you to every device instead of living in one browser's `localStorage`.
+
+**Enabling it.** Sync stores one revisioned settings document in MongoDB and
+requires the password gate (it accepts writes):
+
+- **Standalone mode** (`MONGODB_URI` + `APP_PASSWORD`): nothing extra to set —
+  sync is on automatically, alongside the store.
+- **Toggl mode**: set `MONGODB_URI` + `APP_PASSWORD` **and `APP_MODE=toggl`**.
+  The `APP_MODE` override keeps the Toggl source (without it, `MONGODB_URI`
+  switches the deployment to standalone mode); the database is then used for
+  settings sync only. A free Atlas M0 cluster is plenty.
+
+**How it behaves.** Changes upload automatically a moment after you make them;
+other devices pick them up on load and whenever their page regains focus. A
+brand-new device adopts the synced setup silently. Every write is
+revision-checked, so two devices editing at once can never silently clobber
+each other: if both changed since their last common revision, the app shows
+both sides in **Settings → Sync & transfer** and asks which setup to keep.
+
+**What never syncs**: the Toggl API token (a credential stays on the device it
+was entered on — each device connects with its own token, or the server holds
+one via `TOGGL_API_TOKEN`) and the refresh interval (a per-device/network
+knob). The server additionally strips a token out of any payload it receives,
+so a credential cannot reach the database even from a tampered client.
+
+**No database? Move settings by file.** The same **Sync & transfer** section
+can download the whole setup as a JSON file (again: never the token) and
+import it on another device — handy as a one-off transfer or a backup, and it
+works on every deployment, synced or not.
 
 ## Install as an app (PWA)
 
@@ -496,9 +533,9 @@ The export dialog's **PDF template** picker chooses the layout of the PDF:
   **signature area** at the bottom leaves room for a digital-signature stamp.
 
   This template asks for two extra fields in the dialog, **Role** and
-  **Company**. Like the name, they're free text and are remembered **on the
-  device only** (localStorage) — no company-specific values ship with, or are
-  stored in, the app. It works from either view; the Individual view carries
+  **Company**. Like the name, they're free text and are remembered for the
+  next export — on the device (localStorage), and across devices when settings
+  sync is on — no company-specific values ship with the app. It works from either view; the Individual view carries
   the richest per-day text.
 - **Timesheet Acceptance Protocol (Compact)** — the same sheet, but each day's
   **Project / Task** cell is one line: **every billing code** of the day

@@ -8,6 +8,7 @@
 // localStorage preset list, and stored workspaces double as the selectable
 // "projects".
 
+import { useState } from 'react';
 import SettingsPanel, { presetMatches, type SettingsPreset } from '@/components/SettingsPanel';
 import { applyPreset, type UseTrackSource } from '@/lib/useTrackSource';
 
@@ -20,6 +21,14 @@ export default function AppSettings({
 }) {
   const { settings, persist, projects, mode } = t;
   const standalone = mode === 'standalone';
+
+  // The panel's form snapshots `settings` once on mount. When sync replaces
+  // the settings underneath it (a settings-file import, or resolving a
+  // conflict in favour of the other device), the form must re-seed or its
+  // next Save would clobber what was just applied — bumping this key remounts
+  // it, and the notice tells the user what happened.
+  const [formEpoch, setFormEpoch] = useState(0);
+  const [syncNotice, setSyncNotice] = useState<string | null>(null);
 
   // In standalone mode the panel lists the server's workspaces where Toggl mode
   // shows localStorage presets — same shape, different storage.
@@ -41,6 +50,7 @@ export default function AppSettings({
 
   return (
     <SettingsPanel
+      key={formEpoch}
       initial={{
         token: settings.token,
         selectedProjects: settings.selectedProjects,
@@ -77,6 +87,27 @@ export default function AppSettings({
       }}
       onClose={() => t.setShowSettings(false)}
       canClose={canClose}
+      sync={t.sync}
+      syncNotice={syncNotice}
+      onSyncResolve={(choice) => {
+        t.sync.resolveConflict(choice);
+        if (choice === 'remote') {
+          setSyncNotice('Applied the other device’s settings.');
+          setFormEpoch((n) => n + 1);
+        }
+      }}
+      onSyncPassword={(pw) => t.submitPassword(pw)}
+      syncPwBusy={t.pwBusy}
+      syncPwError={t.pwError}
+      onExportFile={t.sync.exportFile}
+      onImportFile={async (file) => {
+        const err = await t.sync.importFile(file);
+        if (!err) {
+          setSyncNotice('Settings file imported — this setup is now active.');
+          setFormEpoch((n) => n + 1);
+        }
+        return err;
+      }}
       activeWorkspaceId={activeWorkspaceId}
       onWorkspaceCreate={
         standalone

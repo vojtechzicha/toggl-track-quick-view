@@ -11,6 +11,8 @@ export interface AppConfig {
   /** A deployment problem the operator must fix (e.g. standalone without APP_PASSWORD). */
   misconfigured: string | null;
   cache: { enabled: boolean; intervalSec: number | null };
+  /** Cross-device settings sync availability (see app/api/sync). */
+  sync: { enabled: boolean; misconfigured: string | null };
 }
 
 const CONFIG_FALLBACK: AppConfig = {
@@ -19,6 +21,7 @@ const CONFIG_FALLBACK: AppConfig = {
   passwordRequired: false,
   misconfigured: null,
   cache: { enabled: false, intervalSec: null },
+  sync: { enabled: false, misconfigured: null },
 };
 
 export async function getConfig(): Promise<AppConfig> {
