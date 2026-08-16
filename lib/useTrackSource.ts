@@ -53,6 +53,19 @@ import {
   DEFAULT_ROUNDING_HOURS,
   DEFAULT_TIME_OFF_TAG,
 } from '@/lib/calc';
+import {
+  buildSyncPayload,
+  applySyncPayload,
+  payloadHash,
+  loadSyncMeta,
+  saveSyncMeta,
+  fetchSyncDoc,
+  pushSyncDoc,
+  deviceLabel,
+  SyncConflictError,
+} from '@/lib/sync/client';
+import { SYNC_PAYLOAD_VERSION, type SyncDoc, type SyncPayload } from '@/lib/sync/model';
+import { EXPORT_FIELDS_EVENT, EMPTY_EXPORT_FIELDS } from '@/lib/exportFields';
 
 const LS_KEY = 'tqv.settings.v1';
 const CACHE_KEY = 'tqv.cache.v1';
@@ -124,6 +137,21 @@ export function applyPreset(
     // And for presets stored before the parentheses strip existed.
     stripCodeParens: preset.value.stripCodeParens ?? false,
   };
+}
+
+/**
+ * Hash of what a never-configured device looks like: default settings (keeping
+ * only the connect-derived workspace/account identity) and no export fields.
+ * A fresh device matching this adopts the server's synced setup silently
+ * instead of raising a conflict banner over nothing.
+ */
+function pristineHash(s: StoredSettings): string {
+  return payloadHash(
+    buildSyncPayload(
+      { ...DEFAULTS, workspaceId: s.workspaceId, accountName: s.accountName },
+      EMPTY_EXPORT_FIELDS
+    )
+  );
 }
 
 function loadSettings(): StoredSettings {
@@ -317,6 +345,29 @@ export interface UseTrackSource {
   // the entries together with the source-reported data time (see FetchedEntries).
   loadRange: (startISO: string, endISO: string, opts?: { force?: boolean }) => Promise<FetchedEntries>;
 
+  // ---- Cross-device settings sync (see lib/sync) ----
+  sync: {
+    /** Whether the deployment has a sync store (MONGODB_URI + APP_PASSWORD). */
+    enabled: boolean;
+    /** Sync-specific deployment problem the operator must fix, or null. */
+    misconfigured: string | null;
+    /** Sync is enabled but this device hasn't passed the password gate yet
+     * (only reachable in browser-token Toggl mode, where no page-level gate
+     * shows — the Settings panel offers the password form instead). */
+    needsAuth: boolean;
+    status: 'idle' | 'syncing' | 'error';
+    error: string | null;
+    /** Last successful contact with the sync store (ms epoch; null = none). */
+    lastSyncedAt: number | null;
+    /** Both sides changed since the last sync — the user picks a winner. */
+    conflict: { rev: number; updatedAt: string; device: string } | null;
+    resolveConflict: (choice: 'remote' | 'local') => void;
+    /** Download the syncable settings as a JSON file (never the token). */
+    exportFile: () => void;
+    /** Apply a settings file; resolves an error message or null on success. */
+    importFile: (file: File) => Promise<string | null>;
+  };
+
   // ---- Standalone mode only (no-ops / empty elsewhere) ----
   /** Stored workspaces with their settings snapshots (the Settings section). */
   workspaces: StoreWorkspace[];
@@ -385,6 +436,20 @@ export function useTrackSource(): UseTrackSource {
   const [mutationError, setMutationError] = useState<string | null>(null);
   const [showSettings, setShowSettings] = useState(false);
 
+  const [syncEnabled, setSyncEnabled] = useState(false);
+  const [syncMisconfig, setSyncMisconfig] = useState<string | null>(null);
+  const [syncStatus, setSyncStatus] = useState<'idle' | 'syncing' | 'error'>('idle');
+  const [syncErrorMsg, setSyncErrorMsg] = useState<string | null>(null);
+  const [syncConflict, setSyncConflict] = useState<SyncDoc | null>(null);
+  const [lastSyncedAt, setLastSyncedAt] = useState<number | null>(null);
+  // The initial pull must finish before any push: a fresh device that pushed
+  // first (baseRev null) would race the established document into a conflict.
+  const [syncReady, setSyncReady] = useState(false);
+  // Bumped whenever the export dialog writes its identity fields (they live
+  // outside `settings`), and after a successful pull, so the push effect
+  // re-evaluates whether the syncable content drifted.
+  const [syncTick, setSyncTick] = useState(0);
+
   const [entries, setEntries] = useState<TimeEntry[]>([]);
   const [lastUpdatedMs, setLastUpdatedMs] = useState(0);
   const [nowMs, setNowMs] = useState(0);
@@ -401,6 +466,12 @@ export function useTrackSource(): UseTrackSource {
   useEffect(() => {
     entriesRef.current = entries;
   }, [entries]);
+  // Latest settings, for async sync callbacks (pull/conflict resolution).
+  const settingsRef = useRef<StoredSettings>(DEFAULTS);
+  useEffect(() => {
+    settingsRef.current = settings;
+  }, [settings]);
+  const lastPullRef = useRef(0);
 
   // Hydrate from localStorage after mount (avoids SSR/client mismatch) and
   // find out which mode the server runs / whether it already holds a token.
@@ -419,6 +490,8 @@ export function useTrackSource(): UseTrackSource {
         setPasswordRequired(!!c.passwordRequired);
         setMisconfigured(c.misconfigured ?? null);
         setServerCache(c.cache ?? { enabled: false, intervalSec: null });
+        setSyncEnabled(c.sync?.enabled ?? false);
+        setSyncMisconfig(c.sync?.misconfigured ?? null);
       })
       .catch(() => {
         setMode('toggl');
@@ -706,6 +779,202 @@ export function useTrackSource(): UseTrackSource {
     return () => ch.removeEventListener('message', onMessage);
   }, [standalone, ready]);
 
+  // ---- Cross-device settings sync ----
+  // Engine: pull on load and on window focus; push (debounced) whenever the
+  // syncable content differs from what this device last synced. Every decision
+  // goes through the content hash stored in the sync bookmark (tqv.sync.v1),
+  // so identical content never generates traffic and applying a pulled
+  // document never echoes back as a push. Conflicts (both sides changed since
+  // the last common revision) are never auto-resolved — the newer document is
+  // parked in `syncConflict` and the Settings panel asks the user to pick.
+  const syncActive = syncEnabled && hydrated && (!passwordRequired || authed);
+
+  const applyRemoteDoc = useCallback(
+    (doc: SyncDoc) => {
+      saveSyncMeta({ rev: doc.rev, hash: payloadHash(doc.payload) });
+      persist(applySyncPayload(settingsRef.current, doc.payload));
+      setSyncConflict(null);
+      setLastSyncedAt(Date.now());
+    },
+    [persist]
+  );
+
+  const pullSync = useCallback(async () => {
+    lastPullRef.current = Date.now();
+    try {
+      const doc = await fetchSyncDoc();
+      const meta = loadSyncMeta();
+      if (doc && (!meta || doc.rev > meta.rev)) {
+        // The server moved past this device. Adopt it unless this device has
+        // unsynced changes of its own — then hold both and let the user pick.
+        const localHash = payloadHash(buildSyncPayload(settingsRef.current));
+        const unchanged = meta
+          ? meta.hash === localHash
+          : localHash === pristineHash(settingsRef.current);
+        if (unchanged) applyRemoteDoc(doc);
+        else setSyncConflict(doc);
+      } else {
+        setLastSyncedAt(Date.now());
+      }
+      setSyncStatus('idle');
+      setSyncErrorMsg(null);
+      setSyncReady(true);
+      // Re-evaluate the push effect: local drift (or a push that failed while
+      // offline) gets uploaded now that the store is reachable again.
+      setSyncTick((t) => t + 1);
+    } catch (e) {
+      if (isAuthRequired(e)) {
+        setAuthed(false);
+        return;
+      }
+      setSyncStatus('error');
+      setSyncErrorMsg(
+        `Could not reach the sync store.${errorDetail(e) ? ` (${errorDetail(e)})` : ''}`
+      );
+    }
+  }, [applyRemoteDoc]);
+
+  // Pull on activation, then again whenever the window regains focus (another
+  // device may have synced meanwhile) — throttled so tab-switching is free.
+  useEffect(() => {
+    if (!syncActive) return;
+    pullSync();
+    const onFocus = () => {
+      if (document.visibilityState !== 'visible') return;
+      if (Date.now() - lastPullRef.current < 30_000) return;
+      pullSync();
+    };
+    window.addEventListener('focus', onFocus);
+    document.addEventListener('visibilitychange', onFocus);
+    return () => {
+      window.removeEventListener('focus', onFocus);
+      document.removeEventListener('visibilitychange', onFocus);
+    };
+  }, [syncActive, pullSync]);
+
+  // The export dialog's identity fields live outside `settings`; it announces
+  // writes on this event so the push effect re-checks the payload.
+  useEffect(() => {
+    const bump = () => setSyncTick((t) => t + 1);
+    window.addEventListener(EXPORT_FIELDS_EVENT, bump);
+    return () => window.removeEventListener(EXPORT_FIELDS_EVENT, bump);
+  }, []);
+
+  // Debounced push of local changes.
+  useEffect(() => {
+    if (!syncActive || !syncReady || syncConflict) return;
+    const payload = buildSyncPayload(settings);
+    const hash = payloadHash(payload);
+    const meta = loadSyncMeta();
+    if (meta?.hash === hash) return;
+    // A never-configured device that has never synced has nothing worth
+    // creating the server document for — and letting it push would make the
+    // user's REAL device raise a conflict over a document full of defaults
+    // if the fresh one merely loaded first.
+    if (!meta && hash === pristineHash(settings)) return;
+    const timer = setTimeout(async () => {
+      setSyncStatus('syncing');
+      try {
+        const info = await pushSyncDoc(meta?.rev ?? null, payload, deviceLabel());
+        saveSyncMeta({ rev: info.rev, hash });
+        setSyncStatus('idle');
+        setSyncErrorMsg(null);
+        setLastSyncedAt(Date.now());
+      } catch (e) {
+        if (e instanceof SyncConflictError) {
+          setSyncStatus('idle');
+          setSyncConflict(e.doc);
+          return;
+        }
+        if (isAuthRequired(e)) {
+          setAuthed(false);
+          return;
+        }
+        setSyncStatus('error');
+        setSyncErrorMsg('Could not save settings to the sync store.');
+      }
+    }, 1500);
+    return () => clearTimeout(timer);
+    // syncTick re-runs this on export-field writes and after successful pulls.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [settings, syncTick, syncActive, syncReady, syncConflict]);
+
+  const resolveSyncConflict = useCallback(
+    async (choice: 'remote' | 'local') => {
+      const doc = syncConflict;
+      if (!doc) return;
+      if (choice === 'remote') {
+        applyRemoteDoc(doc);
+        return;
+      }
+      // Keep this device: overwrite the server's revision explicitly.
+      setSyncStatus('syncing');
+      try {
+        const payload = buildSyncPayload(settingsRef.current);
+        const info = await pushSyncDoc(doc.rev, payload, deviceLabel());
+        saveSyncMeta({ rev: info.rev, hash: payloadHash(payload) });
+        setSyncConflict(null);
+        setSyncStatus('idle');
+        setSyncErrorMsg(null);
+        setLastSyncedAt(Date.now());
+      } catch (e) {
+        if (e instanceof SyncConflictError) {
+          // Another device raced in between — re-offer with the newest copy.
+          setSyncStatus('idle');
+          setSyncConflict(e.doc);
+          return;
+        }
+        if (isAuthRequired(e)) {
+          setAuthed(false);
+          return;
+        }
+        setSyncStatus('error');
+        setSyncErrorMsg('Could not save settings to the sync store.');
+      }
+    },
+    [syncConflict, applyRemoteDoc]
+  );
+
+  // Manual transfer: the same payload sync moves, as a downloadable file —
+  // the zero-infrastructure path for deployments without a sync store.
+  const exportSettingsFile = useCallback(() => {
+    const payload = buildSyncPayload(settingsRef.current);
+    const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = 'toggl-quick-view-settings.json';
+    a.click();
+    URL.revokeObjectURL(url);
+  }, []);
+
+  const importSettingsFile = useCallback(
+    async (file: File): Promise<string | null> => {
+      try {
+        const parsed = JSON.parse(await file.text()) as SyncPayload;
+        if (
+          !parsed ||
+          typeof parsed !== 'object' ||
+          parsed.v !== SYNC_PAYLOAD_VERSION ||
+          !parsed.settings ||
+          typeof parsed.settings !== 'object'
+        ) {
+          return 'Not a settings file exported by this app.';
+        }
+        persist(
+          applySyncPayload(settingsRef.current, {
+            ...parsed,
+            exportFields: { ...EMPTY_EXPORT_FIELDS, ...parsed.exportFields },
+          })
+        );
+        return null;
+      } catch {
+        return 'Could not read that file.';
+      }
+    },
+    [persist]
+  );
+
   // ---- Standalone mutations ----
   // Shared shape: apply the optimistic change to the entries state, run the
   // server call, reconcile with the canonical result, and kick an instant poll
@@ -966,6 +1235,20 @@ export function useTrackSource(): UseTrackSource {
     livePollPaused,
     setLivePollPaused,
     loadRange,
+    sync: {
+      enabled: syncEnabled,
+      misconfigured: syncMisconfig,
+      needsAuth: syncEnabled && passwordRequired && !authed,
+      status: syncStatus,
+      error: syncErrorMsg,
+      lastSyncedAt,
+      conflict: syncConflict
+        ? { rev: syncConflict.rev, updatedAt: syncConflict.updatedAt, device: syncConflict.device }
+        : null,
+      resolveConflict: resolveSyncConflict,
+      exportFile: exportSettingsFile,
+      importFile: importSettingsFile,
+    },
     workspaces,
     refetchEntries,
     mutationError,

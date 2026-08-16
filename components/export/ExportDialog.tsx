@@ -24,21 +24,21 @@ import { PDF_TEMPLATES, DEFAULT_TEMPLATE_ID } from '@/lib/export/pdf';
 import { ENGAGEMENT_PLACEHOLDERS, ENGAGEMENT_LABELS } from '@/lib/export/pdf/report';
 
 // Identity fields some PDF templates print (role / company / client / approver /
-// rate). Their values are user-entered and remembered per device — the app itself
-// ships no company names or rates.
-const ROLE_KEY = 'tqv.export.role.v1';
-const COMPANY_KEY = 'tqv.export.company.v1';
-const CLIENT_KEY = 'tqv.export.client.v1';
-const APPROVER_KEY = 'tqv.export.approver.v1';
-const RATE_KEY = 'tqv.export.rate.v1';
-const CURRENCY_KEY = 'tqv.export.currency.v1';
-// Only a hand-typed reference is remembered. A derived one (TS-2026-07) is a
-// property of the exported month, not of the engagement, so persisting it would
-// carry July's reference into August.
-const REFERENCE_KEY = 'tqv.export.reference.v1';
-// The engagement note has to be grammatical in the language it prints in, so
-// each template language keeps its own text rather than one being reused.
-const ENGAGEMENT_KEY = (locale: 'en' | 'cs') => `tqv.export.engagement.${locale}.v1`;
+// rate). Their values are user-entered and remembered through lib/exportFields
+// — stored on this device, and carried to other devices by settings sync when
+// the deployment has one. The app itself ships no company names or rates.
+import {
+  ROLE_KEY,
+  COMPANY_KEY,
+  CLIENT_KEY,
+  APPROVER_KEY,
+  RATE_KEY,
+  CURRENCY_KEY,
+  REFERENCE_KEY,
+  ENGAGEMENT_KEY,
+  readStored,
+  writeStored,
+} from '@/lib/exportFields';
 
 /**
  * Default document reference for a range — the year and month it starts in.
@@ -54,24 +54,6 @@ const defaultReference = (fromMs: number): string => {
 const parseRate = (s: string): number | null => {
   const n = parseFloat(s.replace(/\s/g, '').replace(',', '.'));
   return Number.isFinite(n) && n > 0 ? n : null;
-};
-
-const readStored = (key: string): string => {
-  try {
-    return window.localStorage.getItem(key) ?? '';
-  } catch {
-    return '';
-  }
-};
-
-/** Persist a field, or drop it when blank. No-ops when storage is unavailable. */
-const writeStored = (key: string, value: string): void => {
-  try {
-    if (value) window.localStorage.setItem(key, value);
-    else window.localStorage.removeItem(key);
-  } catch {
-    // Private mode — the export itself still works.
-  }
 };
 
 // The presets offered in the dropdown, in order. "custom" is added automatically
@@ -418,8 +400,8 @@ export default function ExportDialog({
               }}
             />
             <p className="hint">
-              These details are remembered on this device only — they are never stored in the
-              app.
+              These details are remembered for the next export — on this device, and across your
+              devices when settings sync is on. The app itself ships no names or rates.
             </p>
           </div>
         )}

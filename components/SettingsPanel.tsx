@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import type { SourceMode, TrackProject } from '@/lib/source/types';
 import {
   DEFAULT_WEEKLY_HOURS,
@@ -241,6 +241,14 @@ export default function SettingsPanel({
   onWorkspaceRename,
   onWorkspaceDelete,
   onWorkspaceColor,
+  sync,
+  syncNotice,
+  onSyncResolve,
+  onSyncPassword,
+  syncPwBusy,
+  syncPwError,
+  onExportFile,
+  onImportFile,
 }: {
   initial: SettingsValue;
   projects: TrackProject[];
@@ -285,6 +293,28 @@ export default function SettingsPanel({
   onWorkspaceRename?: (id: string, name: string) => void;
   onWorkspaceDelete?: (id: string) => Promise<boolean>;
   onWorkspaceColor?: (id: string, color: string) => void;
+  // ---- Cross-device settings sync (the "Sync & transfer" section) ----
+  // Read-only state mirrored from useTrackSource().sync; the callbacks below
+  // act on it. All optional so pages/tests without sync render unchanged.
+  sync?: {
+    enabled: boolean;
+    misconfigured: string | null;
+    needsAuth: boolean;
+    status: 'idle' | 'syncing' | 'error';
+    error: string | null;
+    lastSyncedAt: number | null;
+    conflict: { rev: number; updatedAt: string; device: string } | null;
+  } | null;
+  // One-shot message from the wiring (e.g. "settings file imported") shown in
+  // the section — survives the form remount that follows an import/resolve.
+  syncNotice?: string | null;
+  onSyncResolve?: (choice: 'remote' | 'local') => void;
+  // The password mini-form (browser-token Toggl mode has no page-level gate).
+  onSyncPassword?: (password: string) => void;
+  syncPwBusy?: boolean;
+  syncPwError?: string | null;
+  onExportFile?: () => void;
+  onImportFile?: (file: File) => Promise<string | null>;
 }) {
   const [token, setToken] = useState(initial.token);
   const [selectedIds, setSelectedIds] = useState<number[]>(
@@ -501,6 +531,22 @@ export default function SettingsPanel({
     projects.find((p) => p.id === id)?.name ??
     initial.selectedProjects.find((p) => p.id === id)?.name ??
     `#${id}`;
+
+  // ---- Sync & transfer ----
+  // Starts open when there's something that needs the user's eyes (a notice
+  // from an import/resolve, or a pending conflict keeps it forced open below).
+  const [syncOpen, setSyncOpen] = useState(!!syncNotice);
+  const [syncPw, setSyncPw] = useState('');
+  const [importMsg, setImportMsg] = useState<string | null>(null);
+  const importInputRef = useRef<HTMLInputElement>(null);
+
+  const handleImportFile = async (file: File) => {
+    if (!onImportFile) return;
+    const err = await onImportFile(file);
+    // Success is reported via syncNotice (the form remounts); only errors
+    // survive locally.
+    if (err) setImportMsg(err);
+  };
 
   // ---- Workspaces (stored settings) ----
   // Starts open on a fresh standalone install (creating the first workspace is
@@ -1360,6 +1406,126 @@ export default function SettingsPanel({
             </div>
           </details>
         )}
+
+        <details
+          className="advanced ws-block"
+          open={syncOpen || !!sync?.conflict || !!syncNotice}
+          onToggle={(e) => setSyncOpen((e.target as HTMLDetailsElement).open)}
+        >
+          <summary>Sync &amp; transfer</summary>
+
+          {syncNotice && <div className="exp-done">✓ {syncNotice}</div>}
+
+          {sync?.conflict && (
+            <div className="err-msg">
+              <p style={{ margin: '0 0 8px' }}>
+                These settings were changed on another device (
+                {sync.conflict.device || 'unknown device'},{' '}
+                {new Date(sync.conflict.updatedAt).toLocaleString()}), and this device has
+                unsynced changes of its own. Pick the setup to keep — the other is overwritten
+                everywhere.
+              </p>
+              <div className="row" style={{ justifyContent: 'flex-start' }}>
+                <button type="button" className="btn" onClick={() => onSyncResolve?.('remote')}>
+                  Use the other device&apos;s
+                </button>
+                <button type="button" className="btn" onClick={() => onSyncResolve?.('local')}>
+                  Keep this device&apos;s
+                </button>
+              </div>
+            </div>
+          )}
+
+          {sync?.enabled ? (
+            sync.needsAuth ? (
+              <div className="field">
+                <label htmlFor="sync-pw">App password</label>
+                <input
+                  id="sync-pw"
+                  type="password"
+                  value={syncPw}
+                  placeholder="Enter the app password to unlock sync"
+                  autoComplete="off"
+                  onChange={(e) => setSyncPw(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter' && syncPw) onSyncPassword?.(syncPw);
+                  }}
+                />
+                {syncPwError && <div className="err-msg">{syncPwError}</div>}
+                <div className="row" style={{ justifyContent: 'flex-start' }}>
+                  <button
+                    type="button"
+                    className="btn"
+                    disabled={!syncPw || !!syncPwBusy}
+                    onClick={() => onSyncPassword?.(syncPw)}
+                  >
+                    {syncPwBusy ? 'Unlocking…' : 'Unlock sync'}
+                  </button>
+                </div>
+                <p className="hint">
+                  Settings sync on this deployment sits behind its app password (APP_PASSWORD).
+                  Enter it once on this device and syncing starts.
+                </p>
+              </div>
+            ) : (
+              <p className="hint">
+                Your setup — {standalone ? '' : 'workspaces, '}targets, linked codes and export
+                details — syncs across your devices through this deployment&apos;s own store.
+                Changes upload a moment after you make them; other devices pick them up when
+                their page next gains focus. The{' '}
+                {standalone ? 'refresh interval stays' : 'Toggl API token and the refresh interval stay'}{' '}
+                on each device.{' '}
+                {sync.status === 'syncing' ? (
+                  <strong>Syncing…</strong>
+                ) : sync.status === 'error' ? (
+                  <strong>{sync.error ?? 'Sync error.'}</strong>
+                ) : sync.lastSyncedAt ? (
+                  <>Last synced at {new Date(sync.lastSyncedAt).toLocaleTimeString()}.</>
+                ) : null}
+              </p>
+            )
+          ) : (
+            <p className="hint">
+              {sync?.misconfigured ??
+                'Automatic sync is off — settings live only in this browser. Deploy with ' +
+                  'MONGODB_URI and APP_PASSWORD to sync across devices (add APP_MODE=toggl to ' +
+                  'keep the Toggl source), or move settings by file below.'}
+            </p>
+          )}
+
+          <div className="field">
+            <label>Settings file</label>
+            <div className="row" style={{ justifyContent: 'flex-start' }}>
+              <button type="button" className="btn" onClick={() => onExportFile?.()}>
+                Download settings file
+              </button>
+              <button
+                type="button"
+                className="btn"
+                onClick={() => importInputRef.current?.click()}
+              >
+                Import settings file…
+              </button>
+              <input
+                ref={importInputRef}
+                type="file"
+                accept="application/json,.json"
+                style={{ display: 'none' }}
+                onChange={(e) => {
+                  const f = e.target.files?.[0];
+                  e.target.value = '';
+                  if (f) handleImportFile(f);
+                }}
+              />
+            </div>
+            {importMsg && <div className="err-msg">{importMsg}</div>}
+            <p className="hint">
+              The file holds the same setup sync moves: {standalone ? '' : 'workspaces, '}targets
+              and export details. The {standalone ? 'app password' : 'Toggl API token'} is never
+              included. Download it here and import it on another device, or keep it as a backup.
+            </p>
+          </div>
+        </details>
 
         <div className="row">
           {canClose && (
