@@ -56,7 +56,8 @@ export interface SettingsValue {
   // billed, counted or exported. Other entries on that day still count in full.
   timeOffTag: string;
   // Granularity the timesheet rounds entries to, in hours. 0.25 (15 min) by
-  // default; some clients can't enter quarter-hours, so 0.2 (12 min) is offered.
+  // default; some clients can't enter quarter-hours, so 0.2 (12 min) is offered,
+  // and coarser 0.5 (30 min) / 1 (whole hour) grids for clients that bill that way.
   roundingHours: number;
   // Optional cap (characters) on every merged timesheet description — some
   // clients' systems reject longer entry messages. null = no limit. When set,
@@ -1074,8 +1075,8 @@ export default function SettingsPanel({
               The unit the timesheet rounds each entry to. Defaults to{' '}
               <strong>15 minutes ({numLabel(DEFAULT_ROUNDING_HOURS)}h)</strong>; pick{' '}
               <strong>12 minutes (0.2h)</strong> if your client can&apos;t bill quarter-hours, or{' '}
-              <strong>1 hour</strong> if they bill in whole hours. The dashboard and targets are
-              unaffected.
+              <strong>30 minutes (0.5h)</strong> / <strong>1 hour</strong> if they bill in coarser
+              blocks. The dashboard and targets are unaffected.
             </p>
           </div>
 
