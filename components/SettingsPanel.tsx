@@ -8,6 +8,7 @@ import {
   DEFAULT_ROUNDING_HOURS,
   DEFAULT_TIME_OFF_TAG,
   ROUNDING_HOURS_OPTIONS,
+  START_WINDOW_HOURS_OPTIONS,
   defaultMaxBillableHours,
   defaultMinWorkingDayHours,
   fmtHoursLabel,
@@ -59,6 +60,11 @@ export interface SettingsValue {
   // default; some clients can't enter quarter-hours, so 0.2 (12 min) is offered,
   // and coarser 0.5 (30 min) / 1 (whole hour) grids for clients that bill that way.
   roundingHours: number;
+  // Grid the Individual view anchors a line's start time to, in hours. null (the
+  // default) keeps it linked to roundingHours — 15-min rounding, times on
+  // :00/:15/:30/:45. A coarser window (e.g. 0.5 with 0.25 rounding) serves clients
+  // that take quarter-hour durations but only accept starts at :00 or :30.
+  startWindowHours: number | null;
   // Optional cap (characters) on every merged timesheet description — some
   // clients' systems reject longer entry messages. null = no limit. When set,
   // combined descriptions keep whole parts that fit and drop the rest behind a
@@ -115,6 +121,7 @@ export function toPresetValue(s: SettingsValue): PresetValue {
     stripCodeParens: s.stripCodeParens,
     timeOffTag: s.timeOffTag,
     roundingHours: s.roundingHours,
+    startWindowHours: s.startWindowHours,
     maxDescriptionLength: s.maxDescriptionLength,
     noOvertime: s.noOvertime,
     codeMappings: s.codeMappings,
@@ -164,6 +171,8 @@ export function presetMatches(value: PresetValue, s: SettingsValue): boolean {
     // `?? default` covers presets stored before the time-off tag existed.
     (value.timeOffTag ?? DEFAULT_TIME_OFF_TAG) === (s.timeOffTag ?? DEFAULT_TIME_OFF_TAG) &&
     value.roundingHours === s.roundingHours &&
+    // `?? null` covers presets stored before the start window existed.
+    (value.startWindowHours ?? null) === (s.startWindowHours ?? null) &&
     // `?? null` covers presets stored before the description limit existed.
     (value.maxDescriptionLength ?? null) === (s.maxDescriptionLength ?? null) &&
     value.noOvertime === s.noOvertime &&
@@ -209,6 +218,22 @@ function parseMaxDescLen(s: string): number | null {
 function roundingLabel(hours: number): string {
   if (Number.isInteger(hours)) return `${hours} hour${hours === 1 ? '' : 's'}`;
   return `${Math.round(hours * 60)} minutes (${numLabel(hours)}h)`;
+}
+
+// The clock marks an hour's worth of a grid falls on (":00, :15, :30, :45"). Every
+// offered granularity divides an hour, so one hour spells the whole grid out.
+function gridMarks(hours: number): string {
+  const mins = Math.round(hours * 60);
+  const marks: string[] = [];
+  for (let m = 0; m < 60; m += mins) marks.push(`:${String(m).padStart(2, '0')}`);
+  return marks.join(', ');
+}
+
+// Dropdown label for a start-time window, spelled out as the clock marks a
+// timesheet line may begin on ("Every 30 minutes (:00, :30)").
+function startWindowLabel(hours: number): string {
+  const mins = Math.round(hours * 60);
+  return `${mins === 60 ? 'Every hour' : `Every ${mins} minutes`} (${gridMarks(hours)})`;
 }
 
 // Inline phrasing of a grid unit for prose ("1-hour", "60 min"), used in warnings.
@@ -369,6 +394,11 @@ export default function SettingsPanel({
   const [stripCodeParens, setStripCodeParens] = useState(!!initial.stripCodeParens);
   const [timeOffTag, setTimeOffTag] = useState(initial.timeOffTag ?? DEFAULT_TIME_OFF_TAG);
   const [roundingHours, setRoundingHours] = useState(initial.roundingHours);
+  // `?? null` covers settings stored before the start window existed (null = the
+  // start times follow the rounding unit, as they always did).
+  const [startWindowHours, setStartWindowHours] = useState<number | null>(
+    initial.startWindowHours ?? null
+  );
   // Kept as a raw string like the hours fields; empty = no limit (null).
   const [maxDescLenStr, setMaxDescLenStr] = useState(
     initial.maxDescriptionLength == null ? '' : String(initial.maxDescriptionLength)
@@ -382,6 +412,7 @@ export default function SettingsPanel({
       !!initial.stripCodeParens ||
       (initial.timeOffTag ?? DEFAULT_TIME_OFF_TAG) !== DEFAULT_TIME_OFF_TAG ||
       initial.roundingHours !== DEFAULT_ROUNDING_HOURS ||
+      initial.startWindowHours != null ||
       initial.maxDescriptionLength != null ||
       initial.noOvertime ||
       (initial.codeMappings?.length ?? 0) > 0 ||
@@ -430,6 +461,14 @@ export default function SettingsPanel({
     ? clampQuarter(parsedWeekly, WEEKLY_MIN, WEEKLY_MAX)
     : DEFAULT_WEEKLY_HOURS;
 
+  // Start-time windows worth offering: only grids coarser than the rounding unit
+  // currently picked (anything else is the linked default). A window that stops
+  // qualifying because the unit grew simply drops out of the list — and out of the
+  // saved value, which buildValue resolves the same way.
+  const startWindowOptions = START_WINDOW_HOURS_OPTIONS.filter((h) => h > roundingHours);
+  const selectedStartWindow =
+    startWindowHours != null && startWindowHours > roundingHours ? startWindowHours : null;
+
   // Build the settings value from the current form state (parsing/clamping the
   // raw fields). Shared by Save and by "store as a workspace", so a workspace
   // snapshots exactly what the form would save.
@@ -458,6 +497,17 @@ export default function SettingsPanel({
     )
       ? roundingHours
       : DEFAULT_ROUNDING_HOURS;
+    // Start times follow the rounding unit unless an offered, strictly coarser
+    // window was picked — anything else *is* the linked behaviour, so it's stored
+    // as null rather than as a window that happens to match the unit.
+    const finalStartWindow =
+      startWindowHours != null &&
+      START_WINDOW_HOURS_OPTIONS.includes(
+        startWindowHours as (typeof START_WINDOW_HOURS_OPTIONS)[number]
+      ) &&
+      startWindowHours > finalRounding
+        ? startWindowHours
+        : null;
     // Linked codes: keep only complete rows on selected projects (one per
     // project). A grid that would take figures off this sheet's rounding unit is
     // coerced to the sheet's own — the equality with the sub-client sheet only
@@ -501,6 +551,7 @@ export default function SettingsPanel({
       // An empty tag can't mark anything, so fall back to the default.
       timeOffTag: timeOffTag.trim() || DEFAULT_TIME_OFF_TAG,
       roundingHours: finalRounding,
+      startWindowHours: finalStartWindow,
       maxDescriptionLength: parseMaxDescLen(maxDescLenStr),
       noOvertime,
       codeMappings: cleanedMappings,
@@ -627,6 +678,8 @@ export default function SettingsPanel({
     // `??` covers presets stored before the time-off tag existed.
     setTimeOffTag(v.timeOffTag ?? DEFAULT_TIME_OFF_TAG);
     setRoundingHours(v.roundingHours);
+    // `?? null` covers presets stored before the start window existed.
+    setStartWindowHours(v.startWindowHours ?? null);
     // `== null` covers presets stored before the description limit existed.
     setMaxDescLenStr(v.maxDescriptionLength == null ? '' : String(v.maxDescriptionLength));
     setNoOvertime(v.noOvertime);
@@ -638,6 +691,7 @@ export default function SettingsPanel({
       !!v.stripCodeParens ||
       (v.timeOffTag ?? DEFAULT_TIME_OFF_TAG) !== DEFAULT_TIME_OFF_TAG ||
       v.roundingHours !== DEFAULT_ROUNDING_HOURS ||
+      v.startWindowHours != null ||
       v.maxDescriptionLength != null ||
       v.noOvertime ||
       (v.codeMappings?.length ?? 0) > 0 ||
@@ -1079,6 +1133,36 @@ export default function SettingsPanel({
               blocks. The dashboard and targets are unaffected.
             </p>
           </div>
+
+          {startWindowOptions.length > 0 && (
+            <div className="field">
+              <label htmlFor="start-window">Timesheet lines may start</label>
+              <select
+                id="start-window"
+                value={selectedStartWindow ?? ''}
+                onChange={(e) =>
+                  setStartWindowHours(e.target.value === '' ? null : Number(e.target.value))
+                }
+              >
+                <option value="">Same as the rounding unit ({gridMarks(roundingHours)})</option>
+                {startWindowOptions.map((h) => (
+                  <option key={h} value={h}>
+                    {startWindowLabel(h)}
+                  </option>
+                ))}
+              </select>
+              <p className="hint">
+                Normally the clock times in the Individual view sit on the same grid as the
+                rounding — {gridLabel(roundingHours)} rounding, {gridLabel(roundingHours)} start
+                times. Some clients keep the two apart: they take{' '}
+                <strong>{gridLabel(roundingHours)}</strong> durations but only accept lines
+                starting on their own, coarser marks. Pick that window here and every line is
+                anchored to it — a line pushed past its mark by the one before it moves on to the{' '}
+                <em>next</em> mark, so times can leave a gap rather than drift off the window.
+                Durations, totals and the Summary view are untouched.
+              </p>
+            </div>
+          )}
 
           <div className="field">
             <label htmlFor="max-desc-len">Maximal description length</label>

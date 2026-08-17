@@ -735,6 +735,27 @@ export function roundingUnitSeconds(hours: number): number {
   return Math.round((hours > 0 ? hours : DEFAULT_ROUNDING_HOURS) * 3600);
 }
 
+// Grids the Individual view can anchor a line's *start time* to (hours), picked
+// independently of the rounding unit above. Normally the two are the same — 15-min
+// rounding puts times on :00/:15/:30/:45 — but some clients round durations finely
+// while only accepting coarser start times (e.g. 15-min blocks that may only begin
+// at :00 or :30). Null/absent means "follow the rounding unit", and a window at or
+// below it is exactly that, so only coarser picks are meaningful.
+export const START_WINDOW_HOURS_OPTIONS = [0.25, 0.5, 1] as const;
+
+/**
+ * The grid line start times snap to, in seconds: the workspace's start window when
+ * it's coarser than the rounding unit, else the rounding unit itself (the default —
+ * start times and rounding linked, as they always were).
+ */
+export function startWindowUnitSeconds(
+  windowHours: number | null | undefined,
+  roundingSeconds: number
+): number {
+  const window = windowHours && windowHours > 0 ? Math.round(windowHours * 3600) : 0;
+  return window > roundingSeconds ? window : roundingSeconds;
+}
+
 /**
  * Round a set of second-durations to whole rounding units (15 minutes by default,
  * or whatever `unitSeconds` is set to) so that the rounded values still **sum to

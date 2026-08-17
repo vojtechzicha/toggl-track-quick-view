@@ -96,6 +96,12 @@ export interface IndividualInput {
   billingTagPrefix: string;
   // The rounding granularity in seconds (e.g. 900 = 15 min, 720 = 12 min).
   roundingSeconds: number;
+  // The grid a line's displayed start time is anchored to, in seconds. Absent or
+  // finer than the rounding unit = the rounding unit itself (times and rounding
+  // linked, the default). A coarser window serves clients that take finely rounded
+  // durations but only accept starts on their own grid (e.g. 15-min durations that
+  // may only begin at :00 or :30).
+  startWindowSeconds?: number | null;
   // Optional cap (characters) on each billable row's merged description; the
   // client's system rejects longer messages. null/absent = no limit.
   maxDescriptionLength?: number | null;
@@ -135,9 +141,14 @@ function mergeDesc(into: string[], desc: string) {
   into.push(text);
 }
 
-/** Snap an absolute time to the nearest rounding-unit clock mark. */
+/** Snap an absolute time to the nearest clock mark of the given grid. */
 function snapToUnit(ms: number, unitMs: number): number {
   return Math.round(ms / unitMs) * unitMs;
+}
+
+/** The first clock mark of the given grid at or after `ms`. */
+function ceilToUnit(ms: number, unitMs: number): number {
+  return Math.ceil(ms / unitMs) * unitMs;
 }
 
 /** A day classified into billable lines and warning aggregates, already rounded. */
@@ -318,8 +329,12 @@ function classifyDay(
  *
  * Billable lines that round to nothing are dropped (warning rows always stay so the
  * tag/length problem keeps surfacing); each surviving billable line's start is
- * snapped to the nearest unit and packed forward so the displayed blocks never
- * overlap. `overtimeStripped` is the billable time (seconds) shaved off this day to
+ * snapped to the nearest mark of the start-time grid (`windowMs` — the rounding unit
+ * unless the workspace anchors starts to a coarser window) and packed forward so the
+ * displayed blocks never overlap. Packing keeps a line on the grid too: a block
+ * pushed past its own mark moves on to the *next* one, which on a window coarser
+ * than the rounding unit leaves a gap rather than an off-grid start.
+ * `overtimeStripped` is the billable time (seconds) shaved off this day to
  * keep the week within the cap — reported separately, not part of the billed total.
  *
  * The total is billable-only: warning rows ride along as view hints (a tag/length
@@ -330,7 +345,7 @@ function finalizeDay(
   dayIdx: number,
   dateMs: number,
   { bill, warnRows, overlaps }: ClassifiedDay,
-  roundingMs: number,
+  windowMs: number,
   overtimeStripped: number,
   maxDescLen: number | null | undefined,
   holiday: boolean
@@ -339,8 +354,10 @@ function finalizeDay(
 
   let cursor = -Infinity;
   for (const r of billKept) {
-    let start = snapToUnit(r.groupStartMs, roundingMs);
-    if (start < cursor) start = cursor;
+    let start = snapToUnit(r.groupStartMs, windowMs);
+    // When the window equals the rounding unit the ceiling is a no-op — `cursor`
+    // is a mark plus whole rounding units — so linked grids pack exactly as before.
+    if (start < cursor) start = ceilToUnit(cursor, windowMs);
     const end = start + r.rounded * 1000;
     r.startMs = start;
     r.endMs = end;
@@ -375,6 +392,7 @@ export function buildIndividualWeek({
   maxBillableHours,
   billingTagPrefix,
   roundingSeconds,
+  startWindowSeconds,
   maxDescriptionLength,
   noOvertime,
   weeklyHours,
@@ -385,7 +403,13 @@ export function buildIndividualWeek({
   if (!weekStart) return null;
   const ids = new Set(projects.map((p) => p.id));
   const maxBillableSeconds = maxBillableHours * 3600;
-  const roundingMs = roundingSeconds * 1000;
+  // Durations round on the rounding unit; start times anchor to the window, which
+  // is the same grid unless the workspace picked a coarser one. A finer window would
+  // be meaningless (a rounded block can't start off the unit it's measured in), so
+  // it collapses back to the rounding unit.
+  const windowMs =
+    Math.max(roundingSeconds, startWindowSeconds && startWindowSeconds > 0 ? startWindowSeconds : 0) *
+    1000;
   const weekEnd = weekStart + 7 * DAY_MS;
 
   // Days marked as time off by a selected project's entry: non-working days for
@@ -522,7 +546,7 @@ export function buildIndividualWeek({
         dayIdx,
         weekStart + dayIdx * DAY_MS,
         c,
-        roundingMs,
+        windowMs,
         overtimeByDay[dayIdx],
         maxDescriptionLength,
         holidays.has(dayIdx)

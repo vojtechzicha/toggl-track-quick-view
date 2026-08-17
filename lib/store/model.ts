@@ -146,6 +146,7 @@ export function defaultWorkspaceSettings(): PresetValue {
     stripCodeParens: false,
     timeOffTag: DEFAULT_TIME_OFF_TAG,
     roundingHours: DEFAULT_ROUNDING_HOURS,
+    startWindowHours: null,
     maxDescriptionLength: null,
     noOvertime: false,
     codeMappings: [],

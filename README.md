@@ -245,6 +245,16 @@ for a client that can't bill quarter-hours, or **30 minutes (0.5h)** / **1 hour*
 for one that bills in coarser blocks. Only the timesheet and exports are affected
 — the dashboard and the targets above are not.
 
+Right below it, **Timesheet lines may start** unlinks *when* a line may begin from
+the unit its duration is rounded to. Normally the two are the same grid: 15-minute
+rounding puts the Individual view's clock times on `:00/:15/:30/:45`. Some clients
+keep them apart — they take quarter-hour durations but only accept lines starting
+at `:00` or `:30` — so pick that window here and every start is anchored to it. A
+line pushed past its own mark by the one before it moves on to the **next** mark,
+so the times may leave a gap rather than drift off the window. Durations, totals,
+the Summary view and the dashboard are all untouched; the field only appears when a
+window coarser than the rounding unit exists to pick.
+
 ### Don't bill overtime
 
 Some engagements contractually disallow billing more than the agreed weekly hours.
@@ -516,7 +526,10 @@ the hourly budget — it resumes when you click **This week**.
   description.
 - **Times are rounded too:** each row's start is snapped to the nearest rounding
   unit and the end is start + the rounded duration, and rows are **packed
-  forward so they never overlap** even after rounding.
+  forward so they never overlap** even after rounding. When the workspace sets a
+  coarser **start window** (see Advanced above), starts snap to _that_ grid
+  instead — including the packed ones, which land on the next window mark — while
+  the durations keep rounding on the rounding unit.
 - **Adjacent same-tag entries combine** into one row — but only when they sit
   **within an hour** of each other and the combined time stays **≤ 4h**. So
   `D-1, D-2, D-1` stays three rows, while the first two of `D-1, D-1, D-2, D-1`
@@ -757,3 +770,7 @@ The fixed, deliberately **un-scaled** thresholds stay exported:
 `BREAK_GAP_MINUTES`, and `UNREPORTED_MIN_MINUTES`. The timesheet's rounding
 granularity defaults to `QUARTER_SECONDS` (15 min) but is a user setting
 (`roundingHours`); `roundingUnitSeconds` converts it to seconds for the builders.
+The grid the Individual view's start times sit on is a second setting
+(`startWindowHours`, null = follow the rounding unit); `startWindowUnitSeconds`
+resolves the pair into the one figure the builder anchors times to, so a window
+that isn't coarser than the unit collapses back to the linked behaviour.
