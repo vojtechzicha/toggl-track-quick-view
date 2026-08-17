@@ -141,14 +141,41 @@ function mergeDesc(into: string[], desc: string) {
   into.push(text);
 }
 
-/** Snap an absolute time to the nearest clock mark of the given grid. */
-function snapToUnit(ms: number, unitMs: number): number {
-  return Math.round(ms / unitMs) * unitMs;
+// Grid marks are measured from the day's own local midnight, not from the epoch:
+// a grid the epoch aligns to is only the *local* clock's grid where the zone's
+// offset happens to be a whole multiple of the unit. In UTC+05:30 an hourly grid
+// laid over the epoch lands on :30 — the times a client is promised on the hour
+// would all be half past. Anchoring to local midnight makes the marks true clock
+// marks in every zone (and keeps them so across a DST shift within the day).
+
+/** Local midnight of the day `ms` falls on — the grid's anchor. */
+function dayAnchor(ms: number): number {
+  const d = new Date(ms);
+  d.setHours(0, 0, 0, 0);
+  return d.getTime();
 }
 
-/** The first clock mark of the given grid at or after `ms`. */
-function ceilToUnit(ms: number, unitMs: number): number {
-  return Math.ceil(ms / unitMs) * unitMs;
+/** The local midnight that ends the day starting at `anchor` (DST-safe: 23–25h). */
+function dayEnd(anchor: number): number {
+  const d = new Date(anchor);
+  d.setDate(d.getDate() + 1);
+  d.setHours(0, 0, 0, 0);
+  return d.getTime();
+}
+
+/** Snap a time to the nearest mark of the grid running from `anchor`. */
+function snapToUnit(ms: number, unitMs: number, anchor: number): number {
+  return anchor + Math.round((ms - anchor) / unitMs) * unitMs;
+}
+
+/** The first mark of that grid at or after `ms`. */
+function ceilToUnit(ms: number, unitMs: number, anchor: number): number {
+  return anchor + Math.ceil((ms - anchor) / unitMs) * unitMs;
+}
+
+/** The last mark of that grid at or before `ms`. */
+function floorToUnit(ms: number, unitMs: number, anchor: number): number {
+  return anchor + Math.floor((ms - anchor) / unitMs) * unitMs;
 }
 
 /** A day classified into billable lines and warning aggregates, already rounded. */
@@ -331,10 +358,11 @@ function classifyDay(
  * tag/length problem keeps surfacing); each surviving billable line's start is
  * snapped to the nearest mark of the start-time grid (`windowMs` — the rounding unit
  * unless the workspace anchors starts to a coarser window) and packed forward so the
- * displayed blocks never overlap. Packing keeps a line on the grid too: a block
- * pushed past its own mark moves on to the *next* one, which on a window coarser
- * than the rounding unit leaves a gap rather than an off-grid start.
- * `overtimeStripped` is the billable time (seconds) shaved off this day to
+ * displayed blocks never overlap. The grid is the *local* clock's, running from the
+ * day's midnight, and a line's own mark stays inside that day. Packing keeps a line
+ * on the grid too: a block pushed past its own mark moves on to the *next* one, which
+ * on a window coarser than the rounding unit leaves a gap rather than an off-grid
+ * start. `overtimeStripped` is the billable time (seconds) shaved off this day to
  * keep the week within the cap — reported separately, not part of the billed total.
  *
  * The total is billable-only: warning rows ride along as view hints (a tag/length
@@ -354,10 +382,18 @@ function finalizeDay(
 
   let cursor = -Infinity;
   for (const r of billKept) {
-    let start = snapToUnit(r.groupStartMs, windowMs);
+    // The grid runs from the local midnight of the day the entry was tracked on.
+    const anchor = dayAnchor(r.groupStartMs);
+    // A line's own mark never leaves that day: a late entry whose nearest mark is
+    // already tomorrow (23:40 on an hourly grid) falls back to the day's last mark
+    // instead of being displayed — and exported — under the wrong date.
+    const lastMark = floorToUnit(dayEnd(anchor) - 1, windowMs, anchor);
+    let start = Math.min(snapToUnit(r.groupStartMs, windowMs, anchor), lastMark);
+    // Packing still wins over that clamp: a day whose rounded lines genuinely fill
+    // it runs past midnight rather than stacking two lines on the same mark.
     // When the window equals the rounding unit the ceiling is a no-op — `cursor`
     // is a mark plus whole rounding units — so linked grids pack exactly as before.
-    if (start < cursor) start = ceilToUnit(cursor, windowMs);
+    if (start < cursor) start = ceilToUnit(cursor, windowMs, anchor);
     const end = start + r.rounded * 1000;
     r.startMs = start;
     r.endMs = end;

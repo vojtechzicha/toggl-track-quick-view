@@ -529,7 +529,11 @@ the hourly budget — it resumes when you click **This week**.
   forward so they never overlap** even after rounding. When the workspace sets a
   coarser **start window** (see Advanced above), starts snap to _that_ grid
   instead — including the packed ones, which land on the next window mark — while
-  the durations keep rounding on the rounding unit.
+  the durations keep rounding on the rounding unit. The marks are read off the
+  **local clock** (they run from the day's own midnight, so a half-hour timezone
+  offset doesn't put an "hourly" grid on `:30`), and a line's own mark never
+  leaves the day it was tracked on: a late entry falls back to the day's last
+  mark rather than being shown — and exported — under tomorrow's date.
 - **Adjacent same-tag entries combine** into one row — but only when they sit
   **within an hour** of each other and the combined time stays **≤ 4h**. So
   `D-1, D-2, D-1` stays three rows, while the first two of `D-1, D-1, D-2, D-1`
