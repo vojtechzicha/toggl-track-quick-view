@@ -119,6 +119,7 @@ export const DEFAULTS: StoredSettings = {
   stripCodeParens: false,
   timeOffTag: DEFAULT_TIME_OFF_TAG,
   roundingHours: DEFAULT_ROUNDING_HOURS,
+  startWindowHours: null,
   maxDescriptionLength: null,
   noOvertime: false,
   codeMappings: [],
@@ -150,6 +151,8 @@ export function applyPreset(
     codeMappings: preset.value.codeMappings ?? [],
     // Same for presets stored before the description limit existed.
     maxDescriptionLength: preset.value.maxDescriptionLength ?? null,
+    // And for presets stored before start times could leave the rounding grid.
+    startWindowHours: preset.value.startWindowHours ?? null,
     // And for presets stored before the time-off tag existed.
     timeOffTag: preset.value.timeOffTag ?? DEFAULT_TIME_OFF_TAG,
     // And for presets stored before the parentheses strip existed.

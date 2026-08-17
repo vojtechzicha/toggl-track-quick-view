@@ -27,6 +27,11 @@ export interface ExportOptions {
   billingTagPrefix: string;
   /** Rounding granularity in seconds (900 = 15 min default, 720 = 12 min). */
   roundingSeconds: number;
+  /**
+   * Grid the Individual view's start times anchor to, in seconds; omitted/finer
+   * than the rounding unit = the rounding unit itself (see lib/timesheet/individual).
+   */
+  startWindowSeconds?: number | null;
   /** Optional cap (characters) on every merged description; null/omitted = no limit. */
   maxDescriptionLength?: number | null;
   /** When true, cap each week's billable total at `weeklyHours` (overtime unbilled). */
@@ -281,7 +286,7 @@ function buildSummaryDoc(o: ExportOptions): SummaryDoc {
 }
 
 function buildIndividualDoc(o: ExportOptions): IndividualDoc {
-  const { range, entries, nowMs, projects, multi, maxBillableHours, billingTagPrefix, roundingSeconds, maxDescriptionLength, noOvertime, weeklyHours, timeOffTag, codeMappings, stripCodeParens } = o;
+  const { range, entries, nowMs, projects, multi, maxBillableHours, billingTagPrefix, roundingSeconds, startWindowSeconds, maxDescriptionLength, noOvertime, weeklyHours, timeOffTag, codeMappings, stripCodeParens } = o;
   const nameById = new Map(projects.map((p) => [p.id, p.name]));
   const days: IndividualDayBlock[] = [];
 
@@ -294,6 +299,7 @@ function buildIndividualDoc(o: ExportOptions): IndividualDoc {
       maxBillableHours,
       billingTagPrefix,
       roundingSeconds,
+      startWindowSeconds,
       maxDescriptionLength,
       noOvertime,
       weeklyHours,

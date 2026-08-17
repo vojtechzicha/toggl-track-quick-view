@@ -30,6 +30,11 @@ export interface TimesheetViewProps {
   billingTagPrefix: string;
   // The rounding granularity in seconds (900 = 15 min default, 720 = 12 min).
   roundingSeconds: number;
+  // The grid the Individual view anchors a line's start time to, in seconds —
+  // already resolved: the rounding unit unless the workspace anchors starts to a
+  // coarser window (see lib/calc startWindowUnitSeconds). The Summary view shows
+  // no times, so it ignores this.
+  startWindowSeconds: number;
   // Optional cap (characters) on every merged description the timesheet shows,
   // copies or exports — the client's system rejects longer messages. null = off.
   maxDescriptionLength: number | null;

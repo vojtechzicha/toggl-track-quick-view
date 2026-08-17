@@ -78,6 +78,7 @@ export default function AppSettings({
         stripCodeParens: settings.stripCodeParens,
         timeOffTag: settings.timeOffTag,
         roundingHours: settings.roundingHours,
+        startWindowHours: settings.startWindowHours,
         maxDescriptionLength: settings.maxDescriptionLength,
         noOvertime: settings.noOvertime,
         codeMappings: settings.codeMappings,

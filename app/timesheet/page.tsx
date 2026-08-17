@@ -18,6 +18,7 @@ import {
   startOfWeek,
   effectiveMaxBillableHours,
   roundingUnitSeconds,
+  startWindowUnitSeconds,
   fmtTimeOfDay,
   type TimeEntry,
 } from '@/lib/calc';
@@ -28,16 +29,24 @@ const PICKER_PAGE = 12; // how many previous weeks the picker reveals at a time
 
 // One entry per timesheet view. Adding a new view is just another row here plus
 // its component — the shell below stays untouched.
+// `windowMins` is the grid the Individual view's start times sit on; it equals the
+// rounding unit unless the workspace anchors starts to a coarser window, which is
+// worth spelling out in the note (the times then leave gaps by design).
 const VIEWS: Record<
   TimesheetMode,
-  { note: (roundMins: number) => string; Component: ComponentType<TimesheetViewProps> }
+  {
+    note: (roundMins: number, windowMins: number) => string;
+    Component: ComponentType<TimesheetViewProps>;
+  }
 > = {
   summary: {
     note: (m) => `Combined per billing tag, rounded to ${m} min · copy a cell to paste into your timesheet`,
     Component: SummaryTimesheet,
   },
   individual: {
-    note: (m) => `One row per entry, with times · same-code neighbours combined, rounded to ${m} min`,
+    note: (m, w) =>
+      `One row per entry, with times · same-code neighbours combined, rounded to ${m} min` +
+      (w > m ? ` · starting every ${w} min` : ''),
     Component: IndividualTimesheet,
   },
 };
@@ -93,6 +102,13 @@ export default function TimesheetPage() {
 
   const view = VIEWS[settings.timesheetMode];
   const needsPassword = serverManaged === true && passwordRequired && !authed;
+
+  // The grid the Individual view's clock times sit on: the rounding unit, unless
+  // the workspace anchors line starts to a coarser window (see lib/calc).
+  const startWindowSeconds = startWindowUnitSeconds(
+    settings.startWindowHours,
+    roundingUnitSeconds(settings.roundingHours)
+  );
 
   const sel = settings.selectedProjects;
   const multi = sel.length > 1;
@@ -299,6 +315,7 @@ export default function TimesheetPage() {
             maxBillableHours={effectiveMaxBillableHours(settings)}
             billingTagPrefix={settings.billingTagPrefix}
             roundingSeconds={roundingUnitSeconds(settings.roundingHours)}
+            startWindowSeconds={startWindowSeconds}
             maxDescriptionLength={settings.maxDescriptionLength}
             noOvertime={settings.noOvertime}
             weeklyHours={settings.weeklyHours}
@@ -310,7 +327,8 @@ export default function TimesheetPage() {
 
         <footer className="footer">
           <span>
-            {view.note(Math.round(settings.roundingHours * 60))} ·{' '}
+            {view.note(Math.round(settings.roundingHours * 60), Math.round(startWindowSeconds / 60))}{' '}
+            ·{' '}
             {mode === 'history'
               ? 'past week · manual refresh'
               : cacheEnabled
@@ -340,6 +358,7 @@ export default function TimesheetPage() {
           maxBillableHours={effectiveMaxBillableHours(settings)}
           billingTagPrefix={settings.billingTagPrefix}
           roundingSeconds={roundingUnitSeconds(settings.roundingHours)}
+          startWindowSeconds={startWindowSeconds}
           maxDescriptionLength={settings.maxDescriptionLength}
           noOvertime={settings.noOvertime}
           weeklyHours={settings.weeklyHours}
