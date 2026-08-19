@@ -113,10 +113,11 @@ eq(
 eq(clipRangeToStart(aug, ''), aug, 'no start date leaves the range alone');
 eq(clipRangeToStart(aug, '2026-05-01'), aug, 'a start before the range leaves it alone');
 eq(clipRangeToStart(aug, '2026-08-01'), aug, 'a start on the first day is a no-op');
+const sep15 = fromDateInput('2026-09-15')!;
 eq(
   clipRangeToStart(aug, '2026-09-15'),
-  aug,
-  'a range wholly before the start is returned as-is (it exports nothing)'
+  { fromMs: sep15, toMs: sep15 },
+  'a range wholly before the start collapses to empty — never the pre-engagement range'
 );
 eq(
   clipRangeToStart(aug, '2026-08-31'),

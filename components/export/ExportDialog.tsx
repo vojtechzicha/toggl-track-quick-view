@@ -349,6 +349,14 @@ export default function ExportDialog({
           </div>
         </div>
 
+        {!rangeValid && (
+          <p className="err-msg">
+            Empty range — the “to” day is before the “from” day. A week or month preset
+            collapses like this when it ends before the workspace start date below: there is
+            nothing billable to export there.
+          </p>
+        )}
+
         <div className="field">
           <label htmlFor="exp-start-date">Workspace start date (optional)</label>
           <input
