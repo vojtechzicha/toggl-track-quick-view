@@ -16,7 +16,7 @@
 //    unavailable, so the export dialog offers the throwaway path and nothing
 //    silently half-works while the token is in the post.
 
-import { generateThrowawayKey, type ThrowawayKey } from './throwaway';
+import { generateThrowawayKey, type ThrowawayKey, type ThrowawayKeyOptions } from './throwaway';
 
 export interface TokenCertificate {
   /** Stable within a bridge session; what signDigest() selects on. */
@@ -65,17 +65,12 @@ export class TokenBridgeUnavailableError extends Error {
 
 // ---- WebCrypto (phase 2: a throwaway key, no hardware) ----
 
-export interface WebCryptoBridgeOptions {
-  /** CN of the generated certificate. Defaults to a clearly-marked test name. */
-  commonName?: string;
-  organization?: string;
-  country?: string;
-  /** Fixed validity, so a regenerated fixture is byte-identical. */
-  notBeforeMs?: number;
-  notAfterMs?: number;
-  /** Fixed serial, same reason. */
-  serialNumber?: Uint8Array;
-}
+/**
+ * Everything ./throwaway.ts takes: a name for the certificate, and — for the
+ * checks — a fixed key, serial and validity, so the committed fixture can be
+ * regenerated to the same bytes.
+ */
+export type WebCryptoBridgeOptions = ThrowawayKeyOptions;
 
 /**
  * A bridge backed by a self-signed key generated with WebCrypto and held in

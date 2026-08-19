@@ -14,8 +14,10 @@
     "check:codes": "node scripts/check-codes.ts",
     "check:windows": "node scripts/check-windows.ts",
     "check:export": "node scripts/check-export-scope.ts",
-    "check": "npm run check:money && npm run check:report && npm run check:acceptance && npm run check:codes && npm run check:windows && npm run check:export && npm run check:fonts",
-    "check:fonts": "node scripts/check-fonts.ts"
+    "check:signature": "node scripts/check-signature.ts",
+    "check": "npm run check:money && npm run check:report && npm run check:acceptance && npm run check:codes && npm run check:windows && npm run check:export && npm run check:fonts && npm run check:signature",
+    "check:fonts": "node scripts/check-fonts.ts",
+    "make:signature-fixture": "node scripts/make-signature-fixture.ts"
   },
   "dependencies": {
     "@cantoo/pdf-lib": "^2.9.1",
