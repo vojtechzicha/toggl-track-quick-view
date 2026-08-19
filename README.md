@@ -637,11 +637,16 @@ The export dialog's **PDF template** picker chooses the layout of the PDF:
 
 ### Digital signature
 
-The acceptance protocol's dashed box can be a **real signature field** rather
-than a space to print and sign. Pick **Sign the PDF** under *Digital signature*
-in the export dialog — the option only appears for templates that reserve an
-area for it — and the exported file carries a PAdES signature over the whole
-document, with the visible block sitting exactly inside the box.
+The **Timesheet Report**'s *Prepared by* box — the issuer's, on the sign-off
+page — can be a **real signature field** rather than a space to print and sign.
+Pick **Sign the PDF** under *Digital signature* in the export dialog and the
+exported file carries a PAdES signature over the whole document, with the
+visible block sitting exactly inside that box.
+
+The option appears for the two report templates only. The *Approved by* box
+beside it, and the acceptance protocol's box, belong to the **client**
+countersigning — they stay blank for whoever signs them, by hand or in their own
+reader, and carry a date prompt for that.
 
 What you can set:
 

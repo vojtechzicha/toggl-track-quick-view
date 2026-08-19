@@ -53,7 +53,7 @@ registerHooks({
 export const FIXTURES = new URL('fixtures/', import.meta.url);
 export const KEY_PEM = new URL('throwaway-signer-key.pem', FIXTURES);
 export const CERT_PEM = new URL('throwaway-signer-cert.pem', FIXTURES);
-export const SIGNED_PDF = new URL('signed-acceptance.pdf', FIXTURES);
+export const SIGNED_PDF = new URL('signed-report.pdf', FIXTURES);
 
 /**
  * The throwaway signer, pinned in every respect that would otherwise vary, so
@@ -72,7 +72,7 @@ export const SIGNER = {
 /** Fixed signing instant, so /M and the printed date are the same every run. */
 export const SIGNED_AT_MS = Date.UTC(2026, 7, 19, 10, 30);
 
-export const TEMPLATE_ID = 'acceptance-protocol';
+export const TEMPLATE_ID = 'report-en';
 
 /** The base64 body between a PEM's BEGIN/END markers, comments and all ignored. */
 const pemBody = (pem: string): Uint8Array => {
@@ -107,9 +107,10 @@ export async function loadFixtureKeyPair(): Promise<CryptoKeyPair> {
 }
 
 /**
- * A fixed acceptance sheet: 22 worked days across July 2026, enough rows that
- * the signature block has real content above it but not enough to spill onto a
- * second page. Nothing here comes from a clock or a random source.
+ * A fixed report document: 22 worked days across July 2026, with an hourly rate
+ * so the sign-off page carries its investment box (the widest thing above the
+ * signature row, and so the case worth fixing in place). Nothing here comes
+ * from a clock or a random source.
  */
 export function fixtureDoc(): unknown {
   const fromMs = Date.UTC(2026, 6, 1);
@@ -140,12 +141,12 @@ export function fixtureDoc(): unknown {
     personName: 'Throwaway Test Signer',
     role: 'Integration architect',
     company: 'Fixture Company s.r.o.',
-    client: '',
-    approver: '',
+    client: 'Fixture Client a.s.',
+    approver: 'Fixture Approver',
     reference: 'TS-2026-07',
-    engagement: '',
-    rate: null,
-    currency: '',
+    engagement: 'Contract 2026/001, order 4500123456, for the end customer Fixture Client a.s.',
+    rate: 1200,
+    currency: 'CZK',
     fromMs,
     toMs,
     multi: false,

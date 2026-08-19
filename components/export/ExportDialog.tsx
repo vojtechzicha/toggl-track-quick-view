@@ -805,9 +805,11 @@ export default function ExportDialog({
               <option value="on">Sign the PDF</option>
             </select>
             <p className="hint">
-              The box on the last page becomes a real signature field. The handwritten image
-              is cosmetic — what makes the sheet signed is the certificate, so an export with
-              signing off stays exactly the document it has always been.
+              The <strong>Prepared by</strong> box on the sign-off page becomes a real
+              signature field — the issuer&apos;s box; the client&apos;s stays blank for them
+              to sign. The handwritten image is cosmetic: what makes the document signed is
+              the certificate, so an export with signing off stays exactly the document it
+              has always been.
             </p>
           </div>
         )}

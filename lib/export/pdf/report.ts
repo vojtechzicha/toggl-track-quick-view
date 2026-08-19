@@ -17,7 +17,7 @@
 import type { TDocumentDefinitions, Content, ContentTable, TableCell } from 'pdfmake/interfaces';
 import type { ExportDoc } from '../model';
 import { DAY_MS } from '@/lib/timesheet/constants';
-import type { PdfTemplate } from './templates';
+import type { PdfTemplate, SignatureWidget } from './templates';
 import { allocate, allocateMd, allocateShares, makeMoney, HOURS_PER_MD } from './money';
 
 type ReportLocale = 'en' | 'cs';
@@ -42,6 +42,67 @@ const PROJECT_COLORS = ['#14564F', '#B0792E', '#4A5D7E', '#6B4E71', '#556B2F', '
 
 /** Printable width of an A4 portrait page with the 48pt side margins below. */
 const CW = 499;
+
+// ---- the sign-off signatures ----
+//
+// The report is signed by its ISSUER — the person whose hours it reports — and
+// the left-hand "Prepared by" box is where that signature goes. (The right-hand
+// box is the client's, and the acceptance protocol's box is the client's too:
+// see ./templates.ts.) So this rectangle has to be knowable before the document
+// exists, because the signing stage is handed a finished blob that says nothing
+// about where a flowing block landed — and on the sign-off page the flow above
+// the signatures varies with the investment box and how far the declaration
+// wraps.
+//
+// It is guaranteed rather than reported, by the same two-part trick the widget
+// contract calls for:
+//
+//  - `signatureReserve` flows at the end of the page's content. It is an
+//    invisible canvas exactly as tall as the signature row, so pdfmake's own
+//    "does this still fit above the bottom margin" arithmetic pushes it — and
+//    with it the row — onto a fresh page as soon as the flow reaches the
+//    reserved band. A `pageBreakBefore` rule keyed on its id asserts the same
+//    thing directly, so the contract does not rest on a measured height alone.
+//  - the row itself is drawn at a fixed `absolutePosition`, in three pieces per
+//    block, so the dashed box's Y needs no text metrics.
+//
+// This is also why the "Basis of preparation" box sits ABOVE the signatures
+// rather than below them: the signature row is bottom-anchored, so anything
+// after it in the flow would have nowhere to go.
+const REPORT_PAGE = { width: 595.28, height: 841.89 };
+const SIGN = {
+  left: 48,
+  /** Room above the box for the rule, the role and (up to two lines of) name. */
+  headerHeight: 64,
+  /** The box: sized for a signature widget's stamp, not for a pen stroke. */
+  box: { width: CW / 2 - 20, height: 76 },
+  /** Gap between the issuer's block and the client's. */
+  gap: 40,
+  /**
+   * Clearance between the row and the bottom margin. Not cosmetic: pdfmake
+   * still applies its does-this-line-fit test to absolutely positioned content,
+   * so a date line placed flush against the margin is moved to a page of its
+   * own — which also makes that empty page the last one, and the widget follows
+   * the last page.
+   */
+  bottomGap: 12,
+};
+const SIGN_ROW_HEIGHT = SIGN.headerHeight + SIGN.box.height;
+/** Top of the row, measured up from the page's 60pt bottom margin. */
+const SIGN_ROW_TOP = REPORT_PAGE.height - 60 - SIGN.bottomGap - SIGN_ROW_HEIGHT;
+/** Node id the page-break rule keys on. */
+const SIGN_ANCHOR_ID = 'report-signature-anchor';
+
+/** The issuer's box — where a digital signature lands. */
+export const REPORT_SIGNATURE_WIDGET: SignatureWidget = {
+  rect: {
+    x: SIGN.left,
+    y: SIGN_ROW_TOP + SIGN.headerHeight,
+    width: SIGN.box.width,
+    height: SIGN.box.height,
+  },
+  page: REPORT_PAGE,
+};
 
 // Caps on user-supplied text. A timesheet takes whatever Toggl holds — project
 // names, descriptions and client names have no length limit at the source — and
@@ -891,36 +952,86 @@ function buildReport(doc: ExportDoc, locale: ReportLocale): TDocumentDefinitions
         ]
       : [];
 
-  // Reserved area for the signature. Sized for a digital-signature widget's
-  // visual stamp (Adobe / eIDAS panels are around 190x70pt) rather than for a
-  // pen stroke on a line, since these reports are signed in a PDF reader.
-  const SIG_W = CW / 2 - 20;
-  const SIG_H = 76;
-
-  const signBlock = (signRole: string, name: string): Content => ({
-    stack: [
-      { canvas: [{ type: 'line', x1: 0, y1: 0, x2: SIG_W, y2: 0, lineWidth: 1.2, lineColor: R.ink }] },
-      { text: signRole, style: 'signRole', margin: [0, 8, 0, 0] },
-      { text: name || ' ', style: 'signName', margin: [0, 2, 0, 0] },
-      { text: L.signatureHint, style: 'signHint', margin: [0, 10, 0, 0] },
-      {
-        canvas: [
-          {
-            type: 'rect',
-            x: 0,
-            y: 0,
-            w: SIG_W,
-            h: SIG_H,
-            lineWidth: 0.75,
-            lineColor: R.faint,
-            dash: { length: 2.5, space: 2.5 },
-          },
-        ],
-        margin: [0, 4, 0, 0],
+  // The signature row: two blocks, each drawn as three absolutely positioned
+  // pieces so the dashed box lands at a fixed Y. See SIGN near the top of the
+  // file for why the position is fixed rather than flowed.
+  const { box: SIG } = SIGN;
+  const signBlock = (x: number, signRole: string, name: string): Content[] => [
+    {
+      absolutePosition: { x, y: SIGN_ROW_TOP },
+      // Wrapped in a single fixed-width column so a long name wraps inside the
+      // block instead of running under the one beside it.
+      columns: [
+        {
+          width: SIG.width,
+          stack: [
+            {
+              canvas: [
+                { type: 'line', x1: 0, y1: 0, x2: SIG.width, y2: 0, lineWidth: 1.2, lineColor: R.ink },
+              ],
+            },
+            { text: signRole, style: 'signRole', margin: [0, 8, 0, 0] },
+            { text: name || ' ', style: 'signName', margin: [0, 2, 0, 0] },
+            { text: L.signatureHint, style: 'signHint', margin: [0, 10, 0, 0] },
+          ],
+        },
+      ],
+    },
+    {
+      absolutePosition: { x, y: SIGN_ROW_TOP + SIGN.headerHeight },
+      canvas: [
+        {
+          type: 'rect',
+          x: 0,
+          y: 0,
+          w: SIG.width,
+          h: SIG.height,
+          lineWidth: 0.75,
+          lineColor: R.faint,
+          dash: { length: 2.5, space: 2.5 },
+        },
+      ],
+    },
+    {
+      // The date prompt goes INSIDE the box rather than on a line beneath it.
+      // Beneath it, it would be a blank that nothing ever fills: a digital
+      // signature records its date inside the box (the stamp prints it, and the
+      // signature dictionary's /M carries it), so the line would sit empty
+      // under a signature that is already dated. Inside, it reads as part of
+      // what the box asks for — and the stamp, which paints its own background,
+      // covers it the moment the box is signed.
+      absolutePosition: {
+        x: x + 6,
+        y: SIGN_ROW_TOP + SIGN.headerHeight + SIG.height - 15,
       },
-      { text: L.dateLine, style: 'smallMuted', margin: [0, 8, 0, 0] },
+      text: L.dateLine,
+      style: 'signDateHint',
+    },
+  ];
+
+  // `id` is cast in: pdfmake honours it on every node (it is how the
+  // pageBreakBefore rule identifies this one), but @types/pdfmake declares it
+  // only on a few content shapes, canvas not among them.
+  const signatureReserve = {
+    id: SIGN_ANCHOR_ID,
+    // A fully transparent fill: it measures the row's full height — which is
+    // what makes pdfmake reserve the band — while drawing nothing. It has to be
+    // a real op with real extents, because pdfmake drops zero-extent nodes from
+    // the list its page-break rule walks, and a dropped anchor would be a
+    // silent no-guarantee. `lineWidth` is left off on purpose: 0 means "the
+    // thinnest line the device can draw", not "no line".
+    canvas: [
+      {
+        type: 'rect',
+        x: 0,
+        y: 0,
+        w: 1,
+        h: SIGN_ROW_HEIGHT + SIGN.bottomGap,
+        color: R.paper,
+        fillOpacity: 0,
+      },
     ],
-  });
+  } as unknown as Content;
 
   const signoffPage: Content[] = [
     ...phead(rate != null ? L.signoffFees : L.signoffPlain, ref),
@@ -936,14 +1047,6 @@ function buildReport(doc: ExportDoc, locale: ReportLocale): TDocumentDefinitions
       }),
       style: 'declare',
       margin: [0, rate != null ? 22 : 4, 0, 0],
-    },
-    {
-      columns: [
-        signBlock(L.preparedBy, [personName, role].filter(Boolean).join(' · ')),
-        signBlock(L.approvedBy, clamp(doc.approver, MAX.approver)),
-      ],
-      columnGap: 40,
-      margin: [0, 36, 0, 0],
     },
     {
       unbreakable: true,
@@ -978,6 +1081,13 @@ function buildReport(doc: ExportDoc, locale: ReportLocale): TDocumentDefinitions
         paddingRight: () => 12,
       },
     },
+    signatureReserve,
+    ...signBlock(SIGN.left, L.preparedBy, [personName, role].filter(Boolean).join(' · ')),
+    ...signBlock(
+      SIGN.left + SIGN.box.width + SIGN.gap,
+      L.approvedBy,
+      clamp(doc.approver, MAX.approver)
+    ),
   ];
 
   return {
@@ -986,6 +1096,10 @@ function buildReport(doc: ExportDoc, locale: ReportLocale): TDocumentDefinitions
     pageMargins: [48, 48, 48, 60],
     info: { title: `${L.docTitle} — ${client}`.trim() },
     content: [...cover, ...summaryPage, ...detailPage, ...signoffPage],
+    // The other half of the placement guarantee: never let the flow reach into
+    // the band the signature row is drawn in.
+    pageBreakBefore: (node) =>
+      node.id === SIGN_ANCHOR_ID && node.startPosition.top > SIGN_ROW_TOP,
     footer: (currentPage: number, pageCount: number): Content =>
       currentPage === 1
         ? { text: '' }
@@ -1033,6 +1147,7 @@ function buildReport(doc: ExportDoc, locale: ReportLocale): TDocumentDefinitions
       declare: { font: 'Fraunces', fontSize: 11, color: R.ink2, lineHeight: 1.45 },
       signRole: { fontSize: 9.2, bold: true, color: R.ink },
       signHint: { fontSize: 6.6, color: R.faint, characterSpacing: 0.6 },
+      signDateHint: { fontSize: 7, color: R.faint },
       basisLead: { fontSize: 7.9, color: R.ink2, lineHeight: 1.45 },
       signName: { fontSize: 8.2, color: R.muted },
       basisTitle: { fontSize: 7, bold: true, color: R.muted, characterSpacing: 1.5 },
@@ -1068,6 +1183,7 @@ export const reportTemplates: PdfTemplate[] = [
     fields: ['role', 'client', 'approver', 'reference', 'engagement', 'rate'],
     locale: 'en',
     fontset: 'report',
+    signatureWidget: REPORT_SIGNATURE_WIDGET,
     build: (doc) => buildReport(doc, 'en'),
   },
   {
@@ -1080,6 +1196,7 @@ export const reportTemplates: PdfTemplate[] = [
     fields: ['role', 'client', 'approver', 'reference', 'engagement', 'rate'],
     locale: 'cs',
     fontset: 'report',
+    signatureWidget: REPORT_SIGNATURE_WIDGET,
     build: (doc) => buildReport(doc, 'cs'),
   },
 ];

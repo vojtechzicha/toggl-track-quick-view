@@ -116,6 +116,23 @@ export function appearanceDocDefinition(
   return {
     pageSize: { width: rect.width, height: rect.height },
     pageMargins: [PAD, PAD, PAD, PAD],
+    // An opaque background, as a real signature stamp has: the templates print
+    // a faint "sign and date here" prompt inside the reserved box, and once the
+    // box IS signed that prompt has to be gone rather than showing through.
+    // Inset by a point so the box's own dashed border stays the width it was
+    // drawn at.
+    background: () => ({
+      canvas: [
+        {
+          type: 'rect',
+          x: 1,
+          y: 1,
+          w: rect.width - 2,
+          h: rect.height - 2,
+          color: COLOR.paper,
+        },
+      ],
+    }),
     content,
     styles: {
       sigCaption: { fontSize: STAMP_STYLE.font.caption, color: COLOR.muted },

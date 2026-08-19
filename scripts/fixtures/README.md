@@ -6,7 +6,7 @@ Test material for `npm run check:signature` (see `../check-signature.ts`).
 |---|---|
 | `throwaway-signer-key.pem` | An RSA-2048 private key. **Not a secret.** |
 | `throwaway-signer-cert.pem` | The self-signed certificate derived from it. |
-| `signed-acceptance.pdf` | An acceptance sheet signed with that key, as the app signs it. |
+| `signed-report.pdf` | A timesheet report signed with that key, as the app signs it. |
 
 ## The private key is committed on purpose
 
@@ -34,7 +34,7 @@ npm run make:signature-fixture
 Rewrites the certificate and the signed PDF from the committed key. Everything
 that would otherwise vary — serial, validity, signing instant, document
 contents — is pinned in `../signatureFixture.ts`, so a diff in
-`signed-acceptance.pdf` beyond its `/CreationDate` and trailer `/ID` means the
+`signed-report.pdf` beyond its `/CreationDate` and trailer `/ID` means the
 way this app signs has actually changed. That is worth reading before
 committing.
 
@@ -42,7 +42,7 @@ committing.
 
 ```sh
 pipx install pyhanko-cli    # the CLI ships separately from the pyhanko library
-pyhanko sign validate --pretty-print --trust throwaway-signer-cert.pem signed-acceptance.pdf
+pyhanko sign validate --pretty-print --trust throwaway-signer-cert.pem signed-report.pdf
 ```
 
 `check:signature` runs the same command when `pyhanko` is on `PATH` (or at

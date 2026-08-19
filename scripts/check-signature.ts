@@ -3,7 +3,7 @@
 //
 // It does two things:
 //
-//  1. Builds a signed acceptance sheet here and now, with the committed
+//  1. Builds a signed timesheet report here and now, with the committed
 //     throwaway key, and asserts everything a validator would care about:
 //     where the widget landed, what the appearance stream looks like, that the
 //     signed attributes are EXACTLY the three PAdES allows, that the
@@ -13,7 +13,7 @@
 //     template's own bytes, unchanged.
 //
 //  2. Runs pyHanko over the COMMITTED fixture
-//     (scripts/fixtures/signed-acceptance.pdf), which is the independent
+//     (scripts/fixtures/signed-report.pdf), which is the independent
 //     opinion: a different language, a different ASN.1 stack, a different PDF
 //     parser. pyHanko checks crypto and trust and explicitly does not check
 //     profile conformance — that is the DSS validator's job, run by hand at
@@ -137,8 +137,14 @@ const { unsigned, signed, certificateDer, rect } = await buildFixture();
   const { PDF_TEMPLATES } = await import('../lib/export/pdf/templates.ts');
   const { widgetRectToPdf, widgetRectFits } = await import('../lib/export/pdf/sign/widget.ts');
 
+  // The report is the document its ISSUER signs; the acceptance protocol's box
+  // belongs to the client countersigning it, so it declares no widget.
   const signable = PDF_TEMPLATES.filter((t) => t.signatureWidget);
-  ok(signable.length >= 2, 'both acceptance variants declare a signature widget');
+  eq(
+    signable.map((t) => t.id).sort(),
+    ['report-cs', 'report-en'],
+    'both report languages are signable, and only they are'
+  );
   for (const tpl of signable) {
     const { rect: r, page } = tpl.signatureWidget!;
     ok(widgetRectFits(r, page), `${tpl.id}: the declared rect fits its declared page`);

@@ -189,31 +189,47 @@ viewer maps the transformed BBox onto the Rect, so same size at the origin maps 
 `scripts/check-signature.ts` asserts the two are the same size rather than the same
 numbers.
 
-**Widget placement contract.** The existing dashed `signatureBlock`
-(`lib/export/pdf/templates.ts`) is flowing pdfmake content: its page and Y position vary
-with the number of table rows, and the finished blob handed to `prepareSignature()`
-carries no metadata about where it landed. So the visual box alone is not a usable
-position config. Each signable template instead declares an explicit
-`signatureWidget: { rect }` — a fixed rectangle anchored above the bottom margin, valid
-on the **last page** — and guarantees it in phase 1 by rendering the dashed box at that
-fixed `absolutePosition`, with a `pageBreakBefore` rule (pdfmake exposes node
-`startPosition`) that pushes the block onto a fresh page whenever the flow has already
-passed the reserved Y. `prepareSignature()` then places the widget at `rect` on the last
-page deterministically — converting from pdfmake's top-left origin to the PDF
-bottom-left origin — with no post-hoc geometry scanning. Reworking `signatureBlock` to
-this contract is part of phase 1.
+**Which box gets signed.** The app signs as the document's **issuer**, so the widget
+belongs in the issuer's box and nowhere else. That is the *Prepared by* box on the
+report templates' sign-off page (`lib/export/pdf/report.ts`, both languages). The
+*Approved by* box beside it, and the acceptance protocol's dashed box, belong to the
+**client countersigning** — they carry no widget, stay ordinary flowing content, and
+keep a date prompt for whoever signs them by hand or in their own reader.
 
-**Implementation note — the reserve node.** `pageBreakBefore` alone cannot carry the
-guarantee, because pdfmake drops zero-extent nodes from the list its rule walks, and an
+*(This was got wrong first time round: the acceptance protocol's box looks like the
+obvious place for a signature and is in fact the approver's. Worth stating plainly here
+so it is not re-derived incorrectly later.)*
+
+**Widget placement contract.** A signature block drawn as flowing pdfmake content has a
+page and a Y that vary — with the number of table rows, with whether the investment box
+is printed, with how far the declaration wraps — and the finished blob handed to
+`prepareSignature()` carries no metadata about where it landed. So the visual box alone
+is not a usable position config. Each signable template instead declares an explicit
+`signatureWidget: { rect }` — a fixed rectangle anchored above the bottom margin, valid
+on the **last page** — and *guarantees* it rather than reporting it.
+`prepareSignature()` then places the widget at `rect` on the last page deterministically
+— converting from pdfmake's top-left origin to the PDF bottom-left origin — with no
+post-hoc geometry scanning.
+
+**Implementation note — how the guarantee is made.** `pageBreakBefore` alone cannot
+carry it: pdfmake drops zero-extent nodes from the list its rule walks, and an
 absolutely positioned node reports its *absolute* Y as `startPosition.top` rather than
 the flow's. So the template emits two things: an invisible canvas node exactly as tall
-as the whole block (a fully transparent fill, since `lineWidth: 0` means a hairline, not
-no line), which makes pdfmake's own "does this still fit above the bottom margin"
-arithmetic push the block onto a fresh page; and the `pageBreakBefore` rule keyed on
-that node's id, which asserts the same thing directly. The label and the dashed box are
-then drawn as two absolutely positioned nodes, so the box's Y needs no text metrics.
-Swept over 1–120 table rows: the flow never reaches into the reserved band and the block
-is always on the last page.
+as the signature row (a fully transparent fill, since `lineWidth: 0` means a hairline,
+not no line), which makes pdfmake's own "does this still fit above the bottom margin"
+arithmetic push the row onto a fresh page; and the `pageBreakBefore` rule keyed on that
+node's id, which asserts the same thing directly. The row itself is drawn as absolutely
+positioned pieces, so the dashed box's Y needs no text metrics.
+
+Two consequences for the report's sign-off page. The *Basis of preparation* box moved
+**above** the signatures, because the row is bottom-anchored and anything after it in
+the flow would have nowhere to go. And the row keeps a 12pt clearance from the bottom
+margin: pdfmake applies its does-this-line-fit test to absolutely positioned content
+too, so content flush against the margin gets moved to a page of its own — which would
+also make that empty page the last one, and the widget follows the last page.
+
+Swept over both languages × 9 document lengths × with and without fees and a long
+engagement note: both sign blocks land on the last page every time, and on no other.
 
 The handwritten signature image is a
 user-supplied PNG and **must not be committed to the repo** — loaded at export time (file
@@ -256,7 +272,7 @@ point at it.
 
 ### Phase 2 results (2026-08-19)
 
-Fixture: `scripts/fixtures/signed-acceptance.pdf`, signed with the committed throwaway
+Fixture: `scripts/fixtures/signed-report.pdf`, signed with the committed throwaway
 key.
 
 - **EU DSS demo validator** — `SignatureFormat: PAdES-BASELINE-B`, signature scope

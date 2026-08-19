@@ -2,18 +2,17 @@
 //   node scripts/make-signature-fixture.ts
 //
 // Writes scripts/fixtures/throwaway-signer-cert.pem (derived from the committed
-// private key) and scripts/fixtures/signed-acceptance.pdf. Everything that
+// private key) and scripts/fixtures/signed-report.pdf. Everything that
 // would otherwise vary — the certificate's serial and validity, the signing
 // instant, the document's contents — is pinned in scripts/signatureFixture.ts,
 // so the only thing that moves the fixture is a real change to how signing
 // works. That is the point of committing it: `npm run check:signature`
 // validates this file, and a diff here is a change worth looking at.
 //
-// The one thing that is NOT reproducible byte for byte is the PDF itself: the
-// acceptance template stamps "Generated <today>" into its footer and pdfkit
-// writes a /CreationDate, so a regenerated file always differs a little from
-// the committed one. The check therefore re-signs and asserts, rather than
-// comparing bytes.
+// The one thing that is NOT reproducible byte for byte is the PDF itself:
+// pdfkit writes a /CreationDate and derives the trailer /ID from it, so a
+// regenerated file always differs a little from the committed one. The check
+// therefore re-signs and asserts, rather than comparing bytes.
 
 import { buildFixture, CERT_PEM, KEY_PEM, SIGNED_PDF } from './signatureFixture.ts';
 import fs from 'node:fs';

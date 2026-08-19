@@ -75,10 +75,15 @@ export const STAMP_STYLE = {
   gutter: 8,
   /** Share of the width the image takes in the 'image-left' layout. */
   imageColumnRatio: 0.42,
-  /** Share of the height the image takes in the 'image-above' layout. */
-  imageRowRatio: 0.5,
+  /**
+   * Share of the height the image takes in the 'image-above' layout. Sized so
+   * the four detail lines below it still fit the reserved box — the date line
+   * is the one that falls off the bottom first, and it is the one line the
+   * stamp cannot do without.
+   */
+  imageRowRatio: 0.4,
   font: { caption: 6, name: 9, meta: 5.5 },
-  color: { text: '#1f2937', muted: '#6b7280', frame: '#9ca3af' },
+  color: { text: '#1f2937', muted: '#6b7280', frame: '#9ca3af', paper: '#ffffff' },
 } as const;
 
 /**
