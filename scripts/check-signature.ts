@@ -110,9 +110,7 @@ const { unsigned, signed, certificateDer, rect } = await buildFixture();
 
 // ---- what a viewer sees ----
 {
-  const { PDFDocument, PDFArray, PDFDict, PDFName, PDFNumber, PDFRef, PDFString } = await import(
-    '@cantoo/pdf-lib'
-  );
+  const { PDFDocument, PDFArray, PDFDict, PDFName } = await import('@cantoo/pdf-lib');
   const doc = await PDFDocument.load(signed, { updateMetadata: false });
   const pages = doc.getPages();
 
@@ -184,7 +182,6 @@ const { unsigned, signed, certificateDer, rect } = await buildFixture();
       .slice(0, 14),
     '/M is the same instant the appearance printed'
   );
-  ok(PDFString != null, 'pdf-lib is the aliased fork (its string type resolves)');
 }
 
 // ---- the ByteRange and the CMS ----
