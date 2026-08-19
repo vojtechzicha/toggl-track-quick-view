@@ -1,9 +1,13 @@
 # PDF export v2 — qualified digital signing
 
-Status: **approved and hardware ordered** (2026-08-19, I.CA Premium USB with the A7
-device). Implementation phases 1–2 can start now; phase 3 waits for the token.
-Vendor/product facts below were validated 2026-08-19 (some directly from downloaded
-binaries); re-verify versions and prices if significant time has passed.
+Status: **phases 1–2 implemented** (2026-08-19); hardware ordered (I.CA Premium USB
+with the A7 device) and phase 3 waits for it. Vendor/product facts below were validated
+2026-08-19 (some directly from downloaded binaries); re-verify versions and prices if
+significant time has passed.
+
+The design below is as approved. Where the implementation turned out to need something
+the design did not anticipate, it is marked **Implementation note** — those are the
+paragraphs to read if the code looks like it disagrees with the plan.
 
 ## Goal
 
@@ -80,18 +84,39 @@ New module `lib/export/pdf/sign/`, an optional post-processing stage:
 
 ```
 toPDF() Blob
+  → renderAppearance(rect, appearance)        [pdfmake]
+      the visible block as a one-page PDF exactly the size of the widget rect
   → prepareSignature(blob, appearance)        [@cantoo/pdf-lib + @signpdf placeholder]
       adds the signature field + visible widget (stamp-PDF appearance) and a
       /Contents placeholder; save({ useObjectStreams: false }); returns bytes + ByteRange
-  → bridge.signDigest(byteRangeDigest)        [TokenBridge: Fortify impl / helper impl]
-      user approves, enters token PIN; raw RSA-SHA256 signature
-  → buildCMS(signature, cert, chain)          [PKI.js + @peculiar/asn1-ess]
+  → buildCMS(byteRangeDigest, cert, chain)    [PKI.js + @peculiar/asn1-ess]
       SignedData, subFilter ETSI.CAdES.detached; signed attributes EXACTLY:
       content-type, message-digest, signing-certificate-v2 — PAdES-B forbids a signed
       signing-time attribute; the time goes in the signature dictionary's /M entry
+      → bridge.signDigest(signedAttributes)   [TokenBridge: Fortify impl / helper impl]
+          user approves, enters token PIN; RSASSA-PKCS1-v1_5 over SHA-256
   → embedCMS(bytes, cms)                      → PAdES-B-B PDF Blob
   → (later) RFC 3161 timestamp as unsigned attribute via TSA proxy route → PAdES-B-T
 ```
+
+**Implementation note — what the bridge signs.** The sketch above originally had
+`bridge.signDigest(byteRangeDigest)` feeding `buildCMS`, which is the wrong way round:
+in CMS the bytes that get signed are the DER-encoded SignedAttributes, and the byte
+range's digest is only one attribute *inside* them. So `buildCMS` runs first and calls
+the bridge in the middle. The interface keeps the name `signDigest`, but its argument is
+the SignedAttributes and the bridge hashes them itself — matching WebCrypto's
+`subtle.sign`, Fortify's remote crypto, and PKCS#11's `CKM_SHA256_RSA_PKCS`, none of
+which take a bare digest.
+
+**Implementation note — one copy of pdf-lib.** `@signpdf/placeholder-pdf-lib` does
+`require('pdf-lib')` while this code imports `@cantoo/pdf-lib`. Two things follow.
+`pdf-lib` is declared in package.json as an alias for the fork, and both specifiers are
+pinned to the fork's ES build (`next.config.js` for the bundle,
+`scripts/signatureFixture.ts` for the checks) because the package's exports map answers
+`require` and `import` with *different builds*. Two builds means two PDFName pools, and
+pdf-lib keys dictionaries by PDFName identity — so the placeholder would write an
+`/AcroForm` that the code looking for the widget cannot see. It fails silently and only
+at the point where the appearance is attached.
 
 Design rules:
 
@@ -108,6 +133,25 @@ Design rules:
   dev-only tool for phase 2's throwaway-cert testing; the real signer is custom (~150
   lines on PKI.js).
 
+**Implementation note — two ASN.1 library bugs to know about.** Both were found by
+validators rather than by reading, and both are worked around in `sign/`:
+
+- `@peculiar/asn1-ess`'s `IssuerSerial` declares `serialNumber` as a bare
+  `AsnPropTypes.Integer`, whose converter encodes through `+value`. Certificate serials
+  arrive from `@peculiar/asn1-x509` as raw INTEGER content octets (up to 20 bytes), and
+  `+arrayBuffer` is `NaN` — so signing-certificate-v2 carried serial 0 and pyHanko
+  rejected the signature outright. `cms.ts` overrides `toASN()` on a subclass, which is
+  the library's own escape hatch; the rest of the structure still comes from the
+  published ASN.1 module.
+- PKI.js's `RelativeDistinguishedNames` packs everything in `typesAndValues` into one
+  multi-valued RDN and does not DER-sort that SET. Certificates *built* with it are then
+  re-encoded differently by anything that canonicalises before hashing, which broke
+  signing-certificate-v2 against DSS. `throwaway.ts` emits a proper RDNSequence of
+  single-attribute RDNs. Certificates *parsed* from DER — every certificate in the real
+  flow, the token's included — round-trip through PKI.js byte-identically, verified
+  against a multi-RDN certificate from OpenSSL, so the real signing path was never
+  exposed to this.
+
 ## Visible signature appearance — stamp-PDF pattern
 
 The appearance is a form XObject on the signature widget: an arbitrary PDF content
@@ -116,9 +160,17 @@ the appearance — so the design is fully free: images with alpha, embedded font
 
 The signature block is authored **with pdfmake itself**: rendered as a tiny standalone
 PDF (same fonts, layout language, and theming as the export templates) and embedded as
-the appearance via `embedPage`. This makes the design previewable in the ExportDialog
-before signing and customizable with zero new tooling — handwritten PNG + name + date +
-certificate CN composed freely.
+the appearance via `embedPage`. This makes the design customizable with zero new tooling
+— handwritten PNG + name + date + certificate CN composed freely.
+
+**Implementation note — the preview.** Showing that same stamp PDF in the ExportDialog
+does not work: at 280×95pt the browsers' built-in PDF viewers ignore `#view=Fit` and
+render the page at a zoom of their own, so the preview showed a corner of the block
+blown up (Chromium, tested across `view`/`zoom` combinations). The dialog therefore
+draws the block in HTML at 1pt = 1px, from the same appearance values and the same
+measurements the pdfmake definition uses (`STAMP_STYLE` in
+`lib/export/pdf/sign/types.ts`), so the two cannot drift on size or spacing. It is a
+preview of the design at printed size rather than of the PDF bytes.
 
 Rules that keep Adobe happy:
 
@@ -129,6 +181,13 @@ Rules that keep Adobe happy:
   true by construction here.
 - Subset-embed every font; keep the XObject BBox equal to the widget Rect; render the
   visible date from the same clock as `/M`.
+
+**Implementation note — the BBox.** "Equal to the widget Rect" means equal in *size*:
+the XObject's BBox is `[0, 0, w, h]` with an identity Matrix, which is what `embedPdf`
+produces from a stamp page of exactly that size and what Acrobat itself writes. A
+viewer maps the transformed BBox onto the Rect, so same size at the origin maps 1:1.
+`scripts/check-signature.ts` asserts the two are the same size rather than the same
+numbers.
 
 **Widget placement contract.** The existing dashed `signatureBlock`
 (`lib/export/pdf/templates.ts`) is flowing pdfmake content: its page and Y position vary
@@ -144,15 +203,38 @@ page deterministically — converting from pdfmake's top-left origin to the PDF
 bottom-left origin — with no post-hoc geometry scanning. Reworking `signatureBlock` to
 this contract is part of phase 1.
 
+**Implementation note — the reserve node.** `pageBreakBefore` alone cannot carry the
+guarantee, because pdfmake drops zero-extent nodes from the list its rule walks, and an
+absolutely positioned node reports its *absolute* Y as `startPosition.top` rather than
+the flow's. So the template emits two things: an invisible canvas node exactly as tall
+as the whole block (a fully transparent fill, since `lineWidth: 0` means a hairline, not
+no line), which makes pdfmake's own "does this still fit above the bottom margin"
+arithmetic push the block onto a fresh page; and the `pageBreakBefore` rule keyed on
+that node's id, which asserts the same thing directly. The label and the dashed box are
+then drawn as two absolutely positioned nodes, so the box's Y needs no text metrics.
+Swept over 1–120 table rows: the flow never reaches into the reserved band and the block
+is always on the last page.
+
 The handwritten signature image is a
 user-supplied PNG and **must not be committed to the repo** — loaded at export time (file
 picker) or from the app's Mongo-backed config, embedded only into the appearance stream.
+
+**Implementation note — where the image is remembered.** It is an export identity field
+like the rest (`lib/exportFields.ts`): held as a `data:` URL, scoped to the workspace,
+and carried across devices by settings sync, which is the Mongo-backed config. The
+dialog caps what it will store (`MAX_SIGNATURE_IMAGE_CHARS`, ~256 kB of base64) —
+a larger scan is used for the export at hand and not written into a document that syncs
+on every settings change. `.gitignore` covers `signature.png`, `signature-*.png`,
+`*.signature.png` and `/signatures/` so the file can live in the working tree.
 
 ## Validation
 
 - **EU DSS demo validator** (EC digital-building-blocks webapp) — the conformance oracle:
   reports the exact profile (`PAdES-BASELINE-B/T`) and QES determination against the EU
-  Trust List. Use at every milestone.
+  Trust List. Use at every milestone. It has a REST endpoint
+  (`…/webapp-demo/services/rest/validation/validateSignature`, POST
+  `{"signedDocument":{"bytes":"<base64>","name":"x.pdf"}}`), which is how phase 2 was
+  checked without the webapp.
 - **Adobe Acrobat Reader** — EUTL enabled by default; I.CA is on the Czech trusted list,
   so a correct signature shows the green banner untouched. The socially decisive test.
 - **CI** — `check:signature` script running pyHanko CLI (crypto + trust; it explicitly
@@ -160,19 +242,52 @@ picker) or from the app's Mongo-backed config, embedded only into the appearance
   cert. Profile conformance via the self-hostable `dss-demonstrations` REST validator,
   run manually at milestones.
 
+**Implementation note — the two validators disagree, usefully.** pyHanko validates
+against the bytes it received; DSS re-encodes through BouncyCastle first. A certificate
+whose DER is merely *legal* rather than canonical therefore passes pyHanko and fails
+DSS, with a cascade of misleading symptoms ("the signature is not intact", "the key size
+is unknown") behind one real cause. Run both; DSS is the one that catches encoding sins.
+
+**Implementation note — pyHanko's CLI moved.** It ships as the separate `pyhanko-cli`
+package now (`pipx install pyhanko-cli`); installing `pyhanko` alone gives the library
+and no binary. `check:signature` skips the pyHanko half with a message when the binary
+is absent, so a missing Python tool never disables the whole check chain; `PYHANKO` can
+point at it.
+
+### Phase 2 results (2026-08-19)
+
+Fixture: `scripts/fixtures/signed-acceptance.pdf`, signed with the committed throwaway
+key.
+
+- **EU DSS demo validator** — `SignatureFormat: PAdES-BASELINE-B`, signature scope
+  `FULL` ("The document ByteRange"), one error: *the certificate chain for signature is
+  not trusted, it does not contain a trust anchor*. That is the whole of what should be
+  wrong with a self-signed throwaway certificate.
+- **pyHanko** — VALID against the fixture's own certificate as trust anchor;
+  cryptographically sound, `sha256`, `rsassa_pkcs1v15`, covers the entire file.
+- **Adobe Acrobat Reader** — not run here (no Acrobat in the build environment). The
+  structural properties Acrobat is fussy about are asserted instead: flat single
+  appearance XObject, `/Resources` present, BBox sized to the Rect, `/SubFilter
+  /ETSI.CAdES.detached`, `/M` present. Worth eyeballing once on a real machine.
+
 ## Implementation phases
 
-1. **Placeholder + appearance** — `prepareSignature()` with the stamp-PDF visible widget;
-   verify in Adobe Reader that an unsigned field renders correctly. No hardware needed.
-2. **CMS assembly + embed** — custom PAdES signer exercised with a self-signed throwaway
-   key via WebCrypto; verify the PDF validates cryptographically (as untrusted) in Adobe
-   and as `PAdES-BASELINE-B` in the DSS validator. Still no hardware.
-3. **Bridge wiring** — `TokenBridge` interface, Fortify implementation, cert discovery UI
-   in ExportDialog, sign via token. Requires the smoke-tested token. Result validates
-   green.
+1. **Placeholder + appearance** — ✅ **done.** `prepareSignature()` with the stamp-PDF
+   visible widget; the widget placement contract (`signatureWidget: { rect }`) and the
+   reworked acceptance signature block.
+2. **CMS assembly + embed** — ✅ **done.** Custom PAdES signer on PKI.js, exercised with a
+   self-signed throwaway key via WebCrypto; `PAdES-BASELINE-B` per the DSS validator (see
+   the results above). `TokenBridge` is defined and has its WebCrypto implementation;
+   signing is offered from the ExportDialog behind a switch that is off by default.
+3. **Bridge wiring** — the Fortify implementation (`FortifyBridge` is a stub that reports
+   itself unavailable), cert discovery UI in ExportDialog, sign via token. Requires the
+   smoke-tested token. Result validates green. What phase 3 has to fill in:
+   `@peculiar/fortify-webcomponents`' provider list behind `listCertificates()` and its
+   `crypto.subtle.sign()` behind `signDigest()` — the seam is already the only thing the
+   pipeline talks to.
 4. **(Later) B-T timestamp** — TSA proxy route + unsigned attribute embedding.
 
-Phases 1–2 start now; only phase 3 waits on delivery.
+Only phase 3 waits on delivery.
 
 ## Legal notes
 
