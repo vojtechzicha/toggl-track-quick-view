@@ -130,9 +130,21 @@ Rules that keep Adobe happy:
 - Subset-embed every font; keep the XObject BBox equal to the widget Rect; render the
   visible date from the same clock as `/M`.
 
-Templates gain a reserved signature box (position config per template) so the widget
-lands intentionally — the acceptance template already reserves one
-(`lib/export/pdf/templates.ts`, `signatureBlock`). The handwritten signature image is a
+**Widget placement contract.** The existing dashed `signatureBlock`
+(`lib/export/pdf/templates.ts`) is flowing pdfmake content: its page and Y position vary
+with the number of table rows, and the finished blob handed to `prepareSignature()`
+carries no metadata about where it landed. So the visual box alone is not a usable
+position config. Each signable template instead declares an explicit
+`signatureWidget: { rect }` — a fixed rectangle anchored above the bottom margin, valid
+on the **last page** — and guarantees it in phase 1 by rendering the dashed box at that
+fixed `absolutePosition`, with a `pageBreakBefore` rule (pdfmake exposes node
+`startPosition`) that pushes the block onto a fresh page whenever the flow has already
+passed the reserved Y. `prepareSignature()` then places the widget at `rect` on the last
+page deterministically — converting from pdfmake's top-left origin to the PDF
+bottom-left origin — with no post-hoc geometry scanning. Reworking `signatureBlock` to
+this contract is part of phase 1.
+
+The handwritten signature image is a
 user-supplied PNG and **must not be committed to the repo** — loaded at export time (file
 picker) or from the app's Mongo-backed config, embedded only into the appearance stream.
 
