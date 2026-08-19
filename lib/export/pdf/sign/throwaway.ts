@@ -72,6 +72,32 @@ function positiveSerial(bytes: Uint8Array): Uint8Array {
 const typeAndValue = (type: string, value: string) =>
   new pkijs.AttributeTypeAndValue({ type, value: new asn1js.Utf8String({ value }) });
 
+/**
+ * An X.501 Name that encodes the way every real CA encodes one: an RDNSequence
+ * of single-attribute RDNs.
+ *
+ * PKI.js packs the whole of `typesAndValues` into ONE relative distinguished
+ * name — a legal but unusual multi-valued RDN — and does not sort that SET into
+ * DER order. Any validator that re-encodes the certificate before hashing it
+ * (BouncyCastle does, so the EU DSS validator does) then computes a different
+ * digest from ours, and the signing-certificate-v2 attribute stops matching the
+ * certificate it names: DSS reports "the signing certificate digest value does
+ * not match" and gives up on the signature. Hence the override.
+ *
+ * Only certificates BUILT here are affected. A certificate parsed from DER —
+ * which is every certificate in the real flow, including the token's — keeps
+ * its original encoding through PKI.js untouched.
+ */
+class DistinguishedName extends pkijs.RelativeDistinguishedNames {
+  toSchema(): asn1js.Sequence {
+    return new asn1js.Sequence({
+      value: this.typesAndValues.map(
+        (typeAndValue) => new asn1js.Set({ value: [typeAndValue.toSchema()] })
+      ),
+    });
+  }
+}
+
 /** Generate the key and its self-signed certificate. */
 export async function generateThrowawayKey(
   options: ThrowawayKeyOptions = {}
@@ -108,8 +134,8 @@ export async function generateThrowawayKey(
     );
   }
   // Self-signed: issuer and subject are the same name.
-  certificate.issuer.typesAndValues.push(...name);
-  certificate.subject.typesAndValues.push(...name);
+  certificate.issuer = new DistinguishedName({ typesAndValues: name });
+  certificate.subject = new DistinguishedName({ typesAndValues: name });
   certificate.notBefore.value = new Date(notBeforeMs);
   certificate.notAfter.value = new Date(notAfterMs);
 
