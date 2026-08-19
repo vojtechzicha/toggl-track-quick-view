@@ -1,10 +1,12 @@
 // PDF generation entry point. pdfmake and its bundled fonts are lazy-loaded so the
 // (sizeable) library only reaches the browser when an export actually runs.
 
+import type { TDocumentDefinitions } from 'pdfmake/interfaces';
 import type { ExportDoc } from '../model';
 import { getTemplate } from './templates';
 
 export { PDF_TEMPLATES, DEFAULT_TEMPLATE_ID } from './templates';
+export type { PdfTemplate, SignatureWidget } from './templates';
 
 /**
  * pdfmake's bundled default. Declaring any custom font replaces the implicit
@@ -48,18 +50,26 @@ export function fontConfig(
   };
 }
 
-/** Render the document to a PDF Blob using the chosen template. */
-export async function toPDF(doc: ExportDoc, templateId: string): Promise<Blob> {
-  const template = getTemplate(templateId);
+/**
+ * Render a pdfmake document definition to a Blob, lazy-loading the library and
+ * the requested fontset.
+ *
+ * Shared with the signature stamp (lib/export/pdf/sign/appearance.ts), which is
+ * authored with pdfmake too so the visible signature block inherits the export
+ * templates' fonts and layout language.
+ */
+export async function renderPdfMake(
+  def: TDocumentDefinitions,
+  fontset?: 'report'
+): Promise<Blob> {
   const [{ default: pdfMake }, fonts, extra] = await Promise.all([
     import('pdfmake/build/pdfmake'),
     import('pdfmake/build/vfs_fonts'),
     // Templates with their own typography also pull in the embedded font module.
-    template.fontset === 'report' ? import('./reportFonts') : Promise.resolve(null),
+    fontset === 'report' ? import('./reportFonts') : Promise.resolve(null),
   ]);
 
   const cfg = fontConfig(resolveBaseVfs(fonts), extra);
-  const def = template.build(doc);
 
   return new Promise<Blob>((resolve) => {
     // Everything is passed per call rather than assigned to pdfMake.vfs /
@@ -75,4 +85,10 @@ export async function toPDF(doc: ExportDoc, templateId: string): Promise<Blob> {
       .createPdf(def, {}, cfg.fonts, cfg.vfs)
       .getBlob((blob: Blob) => resolve(blob));
   });
+}
+
+/** Render the document to a PDF Blob using the chosen template. */
+export async function toPDF(doc: ExportDoc, templateId: string): Promise<Blob> {
+  const template = getTemplate(templateId);
+  return renderPdfMake(template.build(doc), template.fontset);
 }

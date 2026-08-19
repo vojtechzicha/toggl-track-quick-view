@@ -27,12 +27,36 @@ function computeBuildId() {
 
 const buildId = computeBuildId();
 
+// The PDF signing stage (lib/export/pdf/sign) and @signpdf/placeholder-pdf-lib
+// must share ONE copy of pdf-lib. `pdf-lib` is already an alias for
+// @cantoo/pdf-lib (see package.json and pnpm-workspace.yaml), but that is not
+// enough on its own: the placeholder package does `require('pdf-lib')` while
+// our own modules `import` it, and the package's exports map answers those two
+// with different builds (cjs/ vs es/). Two builds means two PDFName pools and
+// two sets of PDFDict classes — and since pdf-lib keys dictionaries by PDFName
+// IDENTITY, the placeholder would write /AcroForm and /Annots entries that our
+// code cannot read back. Pinning both specifiers to the ES build collapses them
+// to one module instance. Node's own resolution is pinned the same way in
+// scripts/check-signature.ts.
+const pdfLibEsm = require('path').join(
+  require('path').dirname(require.resolve('@cantoo/pdf-lib')),
+  '../es/index.js'
+);
+
 /** @type {import('next').NextConfig} */
 const nextConfig = {
   reactStrictMode: true,
   generateBuildId: () => buildId,
   env: {
     NEXT_PUBLIC_BUILD_ID: buildId,
+  },
+  webpack: (config) => {
+    config.resolve.alias = {
+      ...config.resolve.alias,
+      'pdf-lib$': pdfLibEsm,
+      '@cantoo/pdf-lib$': pdfLibEsm,
+    };
+    return config;
   },
 };
 

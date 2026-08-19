@@ -17,6 +17,25 @@ import { reportTemplates } from './report';
 import { allocateMd, HOURS_PER_MD } from './money';
 import { compactDayText, fixDescTypos, type CompactRow } from './acceptanceCompact';
 
+/**
+ * Where a signable template puts its signature widget.
+ *
+ * The rectangle is in pdfmake's coordinates — points from the page's TOP-left
+ * corner — and is guaranteed to be free on the document's LAST page. The
+ * signing stage converts it to the PDF's bottom-left origin against the page it
+ * actually finds (see lib/export/pdf/sign/widget.ts).
+ *
+ * This exists because the finished blob carries no metadata about where a
+ * flowing signature block landed: its page and Y vary with the number of table
+ * rows. So the template does not report a position, it *guarantees* one — see
+ * signatureBlock() for the two halves of that guarantee.
+ */
+export interface SignatureWidget {
+  rect: { x: number; y: number; width: number; height: number };
+  /** Page size the rect is expressed against; a mismatch means a wrong contract. */
+  page: { width: number; height: number };
+}
+
 export interface PdfTemplate {
   id: string;
   name: string;
@@ -40,6 +59,11 @@ export interface PdfTemplate {
    * Fraunces / IBM Plex Mono cuts (lazy-loaded next to pdfmake itself).
    */
   fontset?: 'report';
+  /**
+   * Present when the template reserves a signature area — the only templates
+   * that can be digitally signed. Absent = the export dialog offers no signing.
+   */
+  signatureWidget?: SignatureWidget;
   build: (doc: ExportDoc) => TDocumentDefinitions;
 }
 
@@ -230,6 +254,47 @@ const ACCEPT = {
   boxFill: '#ebf1de',
 };
 
+// ---- the acceptance sheet's signature area ----
+//
+// The reserved area is a FIXED rectangle rather than flowing content, because
+// the signing stage has to know where the widget goes without re-measuring
+// anything: it is handed a finished blob, which says nothing about where a
+// flowing block landed. Two nodes make that guarantee hold:
+//
+//  - `signatureReserve` flows with the table. It is an invisible canvas exactly
+//    as tall as the whole block, so pdfmake's own "does this still fit above
+//    the bottom margin" arithmetic pushes it — and therefore the block — onto a
+//    fresh page as soon as the table has eaten into the reserved band. A
+//    `pageBreakBefore` rule keyed on its id asserts the same thing directly
+//    (pdfmake exposes each node's `startPosition`), so the contract does not
+//    rest on the reserve's measured height alone.
+//  - `signatureBlock` draws at a fixed `absolutePosition` on whatever page the
+//    reserve ended up on — which, being last in the content, is the last page.
+//
+// The dashed box is exactly the widget rect, so the visible signature lands
+// inside the box that was drawn for it.
+
+const A4_PORTRAIT = { width: 595.28, height: 841.89 };
+const ACCEPTANCE_MARGIN = 40;
+/** Room above the box for the 9pt label. Fixed, so the box's Y needs no metrics. */
+const SIGNATURE_LABEL_HEIGHT = 18;
+const SIGNATURE_BOX = { width: 280, height: 95 };
+const SIGNATURE_BLOCK_HEIGHT = SIGNATURE_LABEL_HEIGHT + SIGNATURE_BOX.height;
+/** Top of the whole block; its bottom sits flush with the page's bottom margin. */
+const SIGNATURE_BLOCK_TOP = A4_PORTRAIT.height - ACCEPTANCE_MARGIN - SIGNATURE_BLOCK_HEIGHT;
+/** Node id the page-break rule keys on. */
+const SIGNATURE_ANCHOR_ID = 'acceptance-signature-anchor';
+
+export const ACCEPTANCE_SIGNATURE_WIDGET: SignatureWidget = {
+  rect: {
+    x: ACCEPTANCE_MARGIN,
+    y: SIGNATURE_BLOCK_TOP + SIGNATURE_LABEL_HEIGHT,
+    width: SIGNATURE_BOX.width,
+    height: SIGNATURE_BOX.height,
+  },
+  page: A4_PORTRAIT,
+};
+
 const fmtNum = (n: number): string => n.toFixed(2);
 const secsToHoursNumLabel = (secs: number): string => fmtNum(secs / 3600);
 
@@ -410,29 +475,54 @@ function buildAcceptance(doc: ExportDoc, variant: AcceptanceVariant): TDocumentD
   };
 
   // Reserved area for the (digital) signature — a labelled dashed box with room
-  // for a signature widget's name/date stamp, never a printed name.
-  const signatureBlock: Content = {
-    unbreakable: true,
-    margin: [0, 18, 0, 0],
-    stack: [
-      { text: 'Approved by (digital signature):', style: 'acceptSigLabel' },
+  // for a signature widget's name/date stamp, never a printed name. See the
+  // constants above for why it is placed absolutely rather than flowed.
+  const { rect } = ACCEPTANCE_SIGNATURE_WIDGET;
+  // `id` is cast in: pdfmake honours it on every node (it is how the
+  // pageBreakBefore rule below identifies this one), but @types/pdfmake only
+  // declares it on a few content shapes, canvas not among them.
+  const signatureReserve = {
+    id: SIGNATURE_ANCHOR_ID,
+    // A fully transparent fill: it measures the full block height (which is what
+    // makes pdfmake's own fitting arithmetic reserve the band) while drawing
+    // nothing. It has to be a real op with real extents — pdfmake drops
+    // zero-extent nodes from the list its page-break rule walks, and a dropped
+    // anchor would be a silent no-guarantee. `lineWidth` is left off on purpose:
+    // 0 means "thinnest line the device can draw", not "no line".
+    canvas: [
       {
-        canvas: [
-          {
-            type: 'rect',
-            x: 0,
-            y: 0,
-            w: 280,
-            h: 95,
-            lineWidth: 0.75,
-            lineColor: COLOR.muted,
-            dash: { length: 4, space: 3 },
-          },
-        ],
-        margin: [0, 6, 0, 0],
+        type: 'rect',
+        x: 0,
+        y: 0,
+        w: 1,
+        h: SIGNATURE_BLOCK_HEIGHT,
+        color: '#ffffff',
+        fillOpacity: 0,
       },
     ],
-  };
+  } as unknown as Content;
+  const signatureBlock: Content[] = [
+    {
+      absolutePosition: { x: rect.x, y: SIGNATURE_BLOCK_TOP },
+      text: 'Approved by (digital signature):',
+      style: 'acceptSigLabel',
+    },
+    {
+      absolutePosition: { x: rect.x, y: rect.y },
+      canvas: [
+        {
+          type: 'rect',
+          x: 0,
+          y: 0,
+          w: rect.width,
+          h: rect.height,
+          lineWidth: 0.75,
+          lineColor: COLOR.muted,
+          dash: { length: 4, space: 3 },
+        },
+      ],
+    },
+  ];
 
   return {
     pageOrientation: 'portrait',
@@ -443,8 +533,13 @@ function buildAcceptance(doc: ExportDoc, variant: AcceptanceVariant): TDocumentD
       { text: 'PROJECT EXTERNAL TIMESHEET', style: 'acceptTitle' },
       infoBlock,
       dayTable,
-      signatureBlock,
+      signatureReserve,
+      ...signatureBlock,
     ],
+    // The other half of the placement guarantee: never let the flow reach into
+    // the reserved band on the page the block will be drawn on.
+    pageBreakBefore: (node) =>
+      node.id === SIGNATURE_ANCHOR_ID && node.startPosition.top > SIGNATURE_BLOCK_TOP,
     styles: {
       ...baseStyles,
       acceptTitle: { fontSize: 13, bold: true, color: COLOR.heading, margin: [0, 0, 0, 10] },
@@ -476,6 +571,7 @@ export const PDF_TEMPLATES: PdfTemplate[] = [
       '(hours and man-days, 8h = 1 MD), and a signature area for digital approval. ' +
       'Each day lists every entry description in full.',
     fields: ['role', 'company'],
+    signatureWidget: ACCEPTANCE_SIGNATURE_WIDGET,
     build: (doc) => buildAcceptance(doc, 'full'),
   },
   {
@@ -486,6 +582,7 @@ export const PDF_TEMPLATES: PdfTemplate[] = [
       '(ordered by hours) and a single overall description of the day — no ' +
       'per-entry times. Daily hours and man-days are identical to the Full variant.',
     fields: ['role', 'company'],
+    signatureWidget: ACCEPTANCE_SIGNATURE_WIDGET,
     build: (doc) => buildAcceptance(doc, 'compact'),
   },
   ...reportTemplates,

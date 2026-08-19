@@ -1,2 +1,18 @@
 allowBuilds:
   sharp: true
+
+# `pdf-lib` is an ALIAS for @cantoo/pdf-lib (see package.json). The signing
+# pipeline works with the maintained fork — incremental save built for signing,
+# embedPage — while @signpdf/placeholder-pdf-lib does a plain
+# `require('pdf-lib')`. Two separate copies would mean two sets of PDFName /
+# PDFArray / PDFDict classes, and the placeholder's `instanceof` and
+# identity-keyed dictionary lookups would silently take the wrong branch: the
+# AcroForm would be recreated instead of extended and the widget would never be
+# annotated onto the page. The alias makes both halves share one module.
+#
+# The fork's major (2.x) does not satisfy the declared `pdf-lib@^1.17.1` peer,
+# which is a version-number mismatch rather than an API one — widened here so
+# the deliberate alias does not print an unmet-peer warning on every install.
+peerDependencyRules:
+  allowedVersions:
+    '@signpdf/placeholder-pdf-lib>pdf-lib': '2'

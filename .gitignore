@@ -148,3 +148,13 @@ vite.config.ts.timestamp-*
 next-env.d.ts
 .vercel
 *.tsbuildinfo
+
+# Handwritten signature scans. The visible signature block embeds the user's own
+# PNG (see lib/export/pdf/sign/appearance.ts) — it is loaded at export time from
+# the file picker or the workspace's remembered fields, and must NEVER be
+# committed: a signature image in a public repo is a signature anyone can paste.
+# Keep the file in the working tree under one of these names while developing.
+signature.png
+signature-*.png
+*.signature.png
+/signatures/
