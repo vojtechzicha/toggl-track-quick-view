@@ -2245,7 +2245,10 @@ body:has(.tracker-page) {
 }
 
 /* Post-deploy refresh hint (see components/UpdateHint.tsx). Persistent until
-   refreshed or dismissed, so it gets real controls instead of click-anywhere. */
+   refreshed or dismissed, so it gets real controls instead of click-anywhere.
+   Sits above the MutationToast slot (bottom: 24px, ~2 lines tall at most) —
+   both are fixed bottom-center .toasts, and a persistent hint in the same
+   slot would paint over a transient mutation error and hide it. */
 .toast.update {
   display: flex;
   align-items: center;
@@ -2253,6 +2256,7 @@ body:has(.tracker-page) {
   cursor: default;
   border-color: var(--accent);
   max-width: min(92vw, 560px);
+  bottom: calc(96px + env(safe-area-inset-bottom, 0px));
 }
 .toast.update .update-msg {
   line-height: 1.4;
