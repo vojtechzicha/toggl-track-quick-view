@@ -81,6 +81,41 @@ export const STAMP_STYLE = {
   color: { text: '#1f2937', muted: '#6b7280', frame: '#9ca3af' },
 } as const;
 
+/**
+ * The image formats the signature block can actually carry.
+ *
+ * pdfmake embeds images through PDFKit, which reads PNG and JPEG and nothing
+ * else. A browser will happily display (and a file picker happily accept) a
+ * WebP, so the mismatch only surfaces at render time — and pdfmake's callback
+ * API has no error channel, so it surfaces as a render that never finishes
+ * rather than as a message. Hence the check, and hence it being applied
+ * wherever an image can enter: the picker, the remembered value, and the
+ * document definition itself.
+ */
+export const SIGNATURE_IMAGE_MIME_TYPES = ['image/png', 'image/jpeg'] as const;
+export const SIGNATURE_IMAGE_ACCEPT = SIGNATURE_IMAGE_MIME_TYPES.join(',');
+
+/**
+ * True when the data URL holds a PNG or a JPEG, judged by its first bytes
+ * rather than by the type it claims — a renamed or mislabelled file is exactly
+ * the case worth catching.
+ */
+export function isEmbeddableSignatureImage(dataUrl: string): boolean {
+  const comma = dataUrl.indexOf(',');
+  if (!dataUrl.startsWith('data:') || comma < 0) return false;
+  if (!/;base64/i.test(dataUrl.slice(0, comma))) return false;
+  let head: string;
+  try {
+    head = atob(dataUrl.slice(comma + 1, comma + 9));
+  } catch {
+    return false;
+  }
+  const byte = (i: number): number => head.charCodeAt(i);
+  const png = byte(0) === 0x89 && byte(1) === 0x50 && byte(2) === 0x4e && byte(3) === 0x47;
+  const jpeg = byte(0) === 0xff && byte(1) === 0xd8 && byte(2) === 0xff;
+  return png || jpeg;
+}
+
 /** The stamp's date line — the same clock /M records, printed to the minute. */
 export function formatSignedAt(ms: number, locale: string): string {
   return new Date(ms).toLocaleString(locale === 'cs' ? 'cs-CZ' : undefined, {

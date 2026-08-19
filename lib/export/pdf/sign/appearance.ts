@@ -22,6 +22,7 @@ import type { SignatureWidget } from '../templates';
 import { renderPdfMake } from '../index';
 import {
   formatSignedAt,
+  isEmbeddableSignatureImage,
   SIGNATURE_STRINGS,
   STAMP_STYLE,
   type SignatureAppearance,
@@ -45,6 +46,13 @@ export function appearanceDocDefinition(
 ): TDocumentDefinitions {
   const t = SIGNATURE_STRINGS[appearance.locale];
   const cn = appearance.certificateCN.trim() || t.unknownCert;
+
+  // Last line of defence. The dialog rejects an unusable scan when it is picked
+  // and refuses to carry a remembered one, so this should be unreachable — but
+  // the alternative to failing here is pdfmake never calling back at all.
+  if (appearance.image && !isEmbeddableSignatureImage(appearance.image)) {
+    throw new Error('The signature image must be a PNG or a JPEG.');
+  }
 
   const details: Content[] = [
     { text: t.signedBy, style: 'sigCaption' },

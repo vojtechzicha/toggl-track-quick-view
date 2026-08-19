@@ -645,14 +645,18 @@ document, with the visible block sitting exactly inside the box.
 
 What you can set:
 
-- **Handwritten signature** — your own scan (PNG, JPEG or WebP), picked from
-  the file system. It never leaves the browser: it is embedded into the
-  signature block of the export and remembered with the **workspace**, like the
-  other export details, so you pick it once. Nothing of the sort ships with the
-  app and no signature image is in this repository — a signature image in a
-  public repo is a signature anyone can paste. A scan larger than ~256 kB is
-  used for the export at hand and not remembered, so it never bloats the synced
-  settings; trimming the PNG to the ink is worth the minute.
+- **Handwritten signature** — your own scan, picked from the file system. It
+  has to be a **PNG or a JPEG**: those are the formats a PDF can carry, and a
+  WebP or HEIC is rejected when you pick it rather than at export time. The
+  image is embedded into the signature block of the export and remembered with
+  the **workspace**, like the other export details — which means it is stored
+  in your own deployment and travels between your devices when settings sync is
+  on (see "Settings sync across devices"). It goes nowhere else. Nothing of the
+  sort ships with the app and no signature image is in this repository — a
+  signature image in a public repo is a signature anyone can paste. A scan
+  larger than ~256 kB is used for the export at hand and not remembered, so it
+  never bloats the synced settings; trimming the PNG to the ink is worth the
+  minute.
 - **Signature block layout** — the handwriting above the certificate details,
   or beside them. The **preview** below shows the block at its printed size,
   280 × 95 pt.

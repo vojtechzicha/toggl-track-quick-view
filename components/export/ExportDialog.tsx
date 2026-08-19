@@ -29,6 +29,8 @@ import { ENGAGEMENT_PLACEHOLDERS, ENGAGEMENT_LABELS } from '@/lib/export/pdf/rep
 // @signpdf) is dynamically imported, and only once the user turns signing on.
 import {
   DEFAULT_SIGNATURE_APPEARANCE,
+  isEmbeddableSignatureImage,
+  SIGNATURE_IMAGE_ACCEPT,
   type SignatureAppearance,
   type SignatureLayout,
 } from '@/lib/export/pdf/sign/types';
@@ -199,11 +201,21 @@ export default function ExportDialog({
   // only by templates that reserve an area for the widget: an export nobody
   // asked to sign has to come out exactly as it always did.
   const [signing, setSigning] = useState(false);
-  const [signatureImage, setSignatureImage] = useState(fields.signatureImage);
+  // A remembered scan is only usable if pdfmake can embed it. One stored by an
+  // earlier build (the picker used to accept WebP) is dropped rather than
+  // carried into an export that would fail on it.
+  const rememberedImage = isEmbeddableSignatureImage(fields.signatureImage)
+    ? fields.signatureImage
+    : '';
+  const [signatureImage, setSignatureImage] = useState(rememberedImage);
   const [signatureLayout, setSignatureLayout] = useState<SignatureLayout>(
     fields.signatureLayout === 'image-left' ? 'image-left' : 'image-above'
   );
-  const [signatureNote, setSignatureNote] = useState<string | null>(null);
+  const [signatureNote, setSignatureNote] = useState<string | null>(
+    fields.signatureImage && !rememberedImage
+      ? 'The remembered signature scan is not a PNG or a JPEG and cannot be embedded — pick the file again.'
+      : null
+  );
   const [signerCN, setSignerCN] = useState<string>('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -285,17 +297,24 @@ export default function ExportDialog({
   const pickSignatureImage = async (file: File | null) => {
     if (!file) return;
     setDone(null);
-    if (!/^image\/(png|jpeg|webp)$/.test(file.type)) {
-      setError('Pick a PNG, JPEG or WebP image of your signature.');
-      return;
-    }
-    setError(null);
     const dataUrl = await new Promise<string>((resolve, reject) => {
       const reader = new FileReader();
       reader.onload = () => resolve(String(reader.result));
       reader.onerror = () => reject(reader.error);
       reader.readAsDataURL(file);
     });
+    // Judged by the file's own bytes, not by the type it claims: PDFKit — which
+    // is what pdfmake embeds images through — reads PNG and JPEG and nothing
+    // else, and a browser will display a WebP quite happily right up to the
+    // point where the export cannot be produced.
+    if (!isEmbeddableSignatureImage(dataUrl)) {
+      setError(
+        'The signature has to be a PNG or a JPEG — those are the formats a PDF can carry. ' +
+          'A WebP or HEIC will need converting first.'
+      );
+      return;
+    }
+    setError(null);
     setSignatureImage(dataUrl);
     setSignatureNote(
       dataUrl.length > MAX_SIGNATURE_IMAGE_CHARS
@@ -801,7 +820,7 @@ export default function ExportDialog({
                 <input
                   id="exp-signature-image"
                   type="file"
-                  accept="image/png,image/jpeg,image/webp"
+                  accept={SIGNATURE_IMAGE_ACCEPT}
                   onChange={(e) => {
                     void pickSignatureImage(e.target.files?.[0] ?? null);
                     // Let the same file be picked again after a mistake.
@@ -822,10 +841,13 @@ export default function ExportDialog({
                 )}
               </div>
               <p className="hint">
-                Your own scan, on a transparent or white background. It stays in the browser:
-                it is embedded into the signature block of this export and remembered with{' '}
+                Your own scan as a <strong>PNG or JPEG</strong>, on a transparent or white
+                background. It is embedded into the signature block of this export and
+                remembered with{' '}
                 {fieldsScope ? <strong>{fieldsScope}</strong> : 'this device'} so you need not
-                pick it again. The app ships no signature image, and none is ever committed to
+                pick it again — which means that, like the other export details, it is
+                uploaded to your deployment and travels between your devices when settings
+                sync is on. The app ships no signature image, and none is ever committed to
                 the repository.
               </p>
             </div>

@@ -39,6 +39,7 @@ import {
   SIGNED_PDF,
   TEMPLATE_ID,
   fixtureDoc,
+  syntheticSignaturePng,
 } from './signatureFixture.ts';
 
 let checks = 0;
@@ -85,6 +86,50 @@ const { unsigned, signed, certificateDer, rect } = await buildFixture();
     'an unsigned export is byte-for-byte the template output — signing adds, never rewrites'
   );
   ok(signed.length > unsigned.length, 'signing only ever adds to the document');
+}
+
+// ---- which signature images can be embedded ----
+//
+// pdfmake embeds images through PDFKit, which reads PNG and JPEG only — and its
+// callback API has no error channel, so anything else does not fail, it simply
+// never calls back. Every path an image can take into the appearance is guarded;
+// these assert the guard itself.
+{
+  const { isEmbeddableSignatureImage } = await import('../lib/export/pdf/sign/types.ts');
+  const { appearanceDocDefinition } = await import('../lib/export/pdf/sign/appearance.ts');
+  const { DEFAULT_SIGNATURE_APPEARANCE } = await import('../lib/export/pdf/sign/types.ts');
+
+  const dataUrl = (mime: string, bytes: number[]): string =>
+    `data:${mime};base64,${Buffer.from(bytes).toString('base64')}`;
+  const PNG = [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a];
+  const JPEG = [0xff, 0xd8, 0xff, 0xe0, 0x00, 0x10, 0x4a, 0x46];
+  // "RIFF????WEBP" — what the picker used to accept.
+  const WEBP = [0x52, 0x49, 0x46, 0x46, 0x00, 0x00, 0x00, 0x00];
+
+  ok(isEmbeddableSignatureImage(dataUrl('image/png', PNG)), 'a PNG is embeddable');
+  ok(isEmbeddableSignatureImage(dataUrl('image/jpeg', JPEG)), 'a JPEG is embeddable');
+  ok(!isEmbeddableSignatureImage(dataUrl('image/webp', WEBP)), 'a WebP is not');
+  ok(
+    !isEmbeddableSignatureImage(dataUrl('image/png', WEBP)),
+    'a WebP calling itself a PNG is not — the bytes decide, not the label'
+  );
+  ok(!isEmbeddableSignatureImage(''), 'an empty value is not an image');
+  ok(!isEmbeddableSignatureImage('https://example.invalid/sig.png'), 'a URL is not a data URL');
+  ok(!isEmbeddableSignatureImage('data:image/png,%89PNG'), 'a non-base64 data URL is refused');
+  ok(isEmbeddableSignatureImage(syntheticSignaturePng()), 'the fixture image is embeddable');
+
+  // The document definition refuses rather than handing pdfmake something it
+  // will silently never finish with.
+  assert.throws(
+    () =>
+      appearanceDocDefinition(
+        { x: 0, y: 0, width: 280, height: 95 },
+        { ...DEFAULT_SIGNATURE_APPEARANCE, image: dataUrl('image/webp', WEBP) }
+      ),
+    /PNG or a JPEG/,
+    'the appearance refuses an image pdfmake cannot embed'
+  );
+  checks++;
 }
 
 // ---- the widget contract ----

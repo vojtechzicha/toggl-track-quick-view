@@ -19,6 +19,9 @@ const ROBOTO = {
   bolditalics: 'Roboto-MediumItalic.ttf',
 };
 
+/** See renderPdfMake: a ceiling on a render that can otherwise never finish. */
+const RENDER_TIMEOUT_MS = 60_000;
+
 export type FontDecl = Record<string, Record<string, string>>;
 export type Vfs = Record<string, string>;
 
@@ -71,7 +74,18 @@ export async function renderPdfMake(
 
   const cfg = fontConfig(resolveBaseVfs(fonts), extra);
 
-  return new Promise<Blob>((resolve) => {
+  return new Promise<Blob>((resolve, reject) => {
+    // pdfmake's callback API has no error channel. An image it cannot decode
+    // rejects inside its own promise chain and the callback is simply never
+    // called, so the caller waits forever — an export button that spins for the
+    // rest of the session. Only user-supplied images can realistically trigger
+    // it (the signature scan, which is checked before it gets here), but a
+    // ceiling turns any residual case into a message. Everything this app
+    // renders takes well under a second.
+    const timer = setTimeout(() => {
+      reject(new Error('PDF rendering did not finish — an image in the document may be unusable.'));
+    }, RENDER_TIMEOUT_MS);
+
     // Everything is passed per call rather than assigned to pdfMake.vfs /
     // pdfMake.fonts. Those properties sit *last* in pdfmake's precedence chain
     // (`vfs || globalVfs || global.pdfMake.vfs`), and importing the vfs bundle
@@ -83,7 +97,10 @@ export async function renderPdfMake(
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     (pdfMake as any)
       .createPdf(def, {}, cfg.fonts, cfg.vfs)
-      .getBlob((blob: Blob) => resolve(blob));
+      .getBlob((blob: Blob) => {
+        clearTimeout(timer);
+        resolve(blob);
+      });
   });
 }
 
