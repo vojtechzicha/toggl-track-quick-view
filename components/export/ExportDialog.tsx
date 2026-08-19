@@ -10,6 +10,7 @@ import {
   type ExportPreset,
   PRESET_LABELS,
   resolvePreset,
+  clipRangeToStart,
   rangeFromInputs,
   toDateInput,
 } from '@/lib/export/range';
@@ -128,8 +129,11 @@ export default function ExportDialog({
   onClose,
 }: ExportDialogProps) {
   const [preset, setPreset] = useState<ExportPreset>('current-month');
+  // The workspace's first billable day; every preset is clipped to it, so a
+  // mid-month engagement start never exports a document claiming the full month.
+  const [startDate, setStartDate] = useState(fields.startDate);
   const initial = useMemo(
-    () => resolvePreset('current-month', nowMs, selectedWeekStart),
+    () => clipRangeToStart(resolvePreset('current-month', nowMs, selectedWeekStart), fields.startDate),
     // Seed once on mount; later preset changes update the inputs explicitly.
     // eslint-disable-next-line react-hooks/exhaustive-deps
     []
@@ -144,8 +148,14 @@ export default function ExportDialog({
   const [pdfDescs, setPdfDescs] = useState<'full' | 'short'>('full');
   const [name, setName] = useState(personName);
   // Seeded once from the workspace's remembered fields; written back on export
-  // (and, for the engagement note, as it is typed).
-  const [role, setRole] = useState(fields.role);
+  // (and, for the engagement note and start date, as they are typed).
+  // Like the engagement note, the role is per-language ("Integration
+  // architect" / "Integrační architekt") — the box shows the selected
+  // template's, so switching language never overwrites the other text.
+  const [roles, setRoles] = useState<Record<'en' | 'cs', string>>(() => ({
+    en: fields.role,
+    cs: fields.roleCs,
+  }));
   const [company, setCompany] = useState(fields.company);
   const [client, setClient] = useState(fields.client);
   const [approver, setApprover] = useState(fields.approver);
@@ -166,14 +176,26 @@ export default function ExportDialog({
   const [error, setError] = useState<string | null>(null);
   const [done, setDone] = useState<string | null>(null);
 
-  const applyPreset = (p: ExportPreset) => {
+  const applyPreset = (p: ExportPreset, start = startDate) => {
     setPreset(p);
     setDone(null);
     if (p === 'custom') return;
-    const r = resolvePreset(p, nowMs, selectedWeekStart);
+    const r = clipRangeToStart(resolvePreset(p, nowMs, selectedWeekStart), start);
     setFromStr(toDateInput(r.fromMs));
     setToStr(toDateInput(r.toMs - 1));
     if (!refEdited) setReference(defaultReference(r.fromMs));
+  };
+
+  const editStartDate = (v: string) => {
+    setStartDate(v);
+    setDone(null);
+    // Saved as typed (not on export): this is set up once when the workspace is
+    // created, quite possibly without exporting anything yet, and every later
+    // month export leans on it.
+    onFieldsChange({ ...fields, startDate: v });
+    // Re-resolve the current preset so the dates show the clip immediately; a
+    // hand-edited custom range stays the user's own.
+    if (preset !== 'custom') applyPreset(preset, v);
   };
 
   const editFrom = (v: string) => {
@@ -232,7 +254,9 @@ export default function ExportDialog({
         stripCodeParens,
         title,
         personName: name.trim(),
-        role: role.trim(),
+        // The template's own language, or the other one when it is empty — a
+        // role that reads the same in both only has to be typed once.
+        role: roles[tplLocale].trim() || roles[tplLocale === 'cs' ? 'en' : 'cs'].trim(),
         company: company.trim(),
         client: client.trim(),
         approver: approver.trim(),
@@ -246,7 +270,9 @@ export default function ExportDialog({
       // losing a paragraph to a failed export would be the expensive mistake.
       onFieldsChange({
         ...fields,
-        role: role.trim(),
+        role: roles.en.trim(),
+        roleCs: roles.cs.trim(),
+        startDate,
         company: company.trim(),
         client: client.trim(),
         approver: approver.trim(),
@@ -324,6 +350,24 @@ export default function ExportDialog({
         </div>
 
         <div className="field">
+          <label htmlFor="exp-start-date">Workspace start date (optional)</label>
+          <input
+            id="exp-start-date"
+            type="date"
+            value={startDate}
+            onChange={(e) => editStartDate(e.target.value)}
+          />
+          <p className="hint">
+            First billable day of this engagement. The week and month presets never reach
+            before it — a workspace that started mid-month exports, say, Aug 16–31 as its
+            first month instead of a document claiming the whole of August. Remembered with{' '}
+            {fieldsScope ? <strong>{fieldsScope}</strong> : 'this device'} as you type; leave
+            it empty when the engagement began on (or before) a clean month. Hand-edited
+            dates are yours — only the presets are clipped.
+          </p>
+        </div>
+
+        <div className="field">
           <label htmlFor="exp-format">Format</label>
           <select
             id="exp-format"
@@ -396,18 +440,26 @@ export default function ExportDialog({
 
         {templateFields.includes('role') && (
           <div className="field">
-            <label htmlFor="exp-role">Role</label>
+            <label htmlFor="exp-role">Role ({ENGAGEMENT_LABELS[tplLocale]})</label>
             <input
               id="exp-role"
               type="text"
-              value={role}
-              placeholder="e.g. your role on the project"
+              value={roles[tplLocale]}
+              placeholder={
+                roles[tplLocale === 'cs' ? 'en' : 'cs'].trim()
+                  ? `Empty = “${roles[tplLocale === 'cs' ? 'en' : 'cs'].trim()}”`
+                  : 'e.g. your role on the project'
+              }
               onChange={(e) => {
-                setRole(e.target.value);
+                const v = e.target.value;
+                setRoles((prev) => ({ ...prev, [tplLocale]: v }));
                 setDone(null);
               }}
             />
             <p className="hint">
+              Each template language keeps its own wording (Integration architect /
+              Integrační architekt); switching template shows the other one, and a language
+              left empty prints the other language&apos;s text.{' '}
               {fieldsScope ? (
                 <>
                   These details are remembered for the next export of{' '}

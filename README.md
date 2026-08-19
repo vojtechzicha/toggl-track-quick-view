@@ -96,7 +96,8 @@ See `docs/standalone/` for the full design and phase plan.
 
 Once the app is set up the way you want it — stored workspaces, targets,
 linked billing codes, timesheet options, the export dialog's identity fields
-(role, company, client, approver, rate, engagement notes — each workspace's
+(role in each template language, company, client, approver, rate, engagement
+notes, the engagement's start date — each workspace's
 own) — that setup can
 follow you to every device instead of living in one browser's `localStorage`.
 
@@ -447,9 +448,26 @@ settings — it's a secondary, tucked-away feature of the Settings panel.
 ### Export details are per workspace
 
 The details the **export dialog** remembers — company, client, role, approver,
-reference, hourly rate and the engagement note — are part of the workspace too,
+reference, hourly rate, the engagement note and the engagement's start date —
+are part of the workspace too,
 because they describe *who is being billed*: with two clients stored, one
 client's company or rate can never end up on the other's PDF.
+
+Two of them deserve a word of their own:
+
+- **Role, per template language.** Like the engagement note, the role prints in
+  the document's language ("Integration architect" on the EN report,
+  "Integrační architekt" on the CZ one), so each language keeps its own text —
+  the box in the dialog shows the selected template's. A language left empty
+  prints the other language's text, so a role that reads the same in both only
+  has to be typed once.
+- **Workspace start date.** The first billable day of the engagement. The
+  dialog's week and month presets are clipped to it, so an engagement that
+  started Aug 16 exports Aug 16–31 as its first month — the period on the
+  document (and the acceptance protocol's day list and *Start date* line) says
+  so too, instead of claiming the whole of August. Hand-edited custom dates are
+  never clipped, and once the engagement is past its first month the clip
+  simply stops mattering.
 
 - A workspace you **store now** starts from the details currently in use — that
   is the inheriting step.

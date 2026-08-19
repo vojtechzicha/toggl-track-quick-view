@@ -8,6 +8,10 @@
 //  - the sync payload carries the fields inside `settings` AND mirrors them at
 //    the top level, so a client from before the scoping still reads them;
 //  - a payload written by such a client (top level only) is applied, not lost.
+//
+// Plus the two per-workspace details added later: the role's Czech counterpart
+// is a field of its own, and the workspace start date clips a preset range so a
+// mid-month engagement start never exports a full-month document.
 
 import assert from 'node:assert/strict';
 import { registerHooks } from 'node:module';
@@ -48,6 +52,8 @@ const {
   readLegacyExportFields,
 } = await import('../lib/exportFields.ts');
 const { buildSyncPayload, applySyncPayload } = await import('../lib/sync/client.ts');
+const { clipRangeToStart, fromDateInput } = await import('../lib/export/range.ts');
+const { DAY_MS } = await import('../lib/timesheet/constants.ts');
 
 let checks = 0;
 const eq = (a: unknown, b: unknown, msg: string) => {
@@ -77,6 +83,47 @@ ok(
   exportFieldsEqual({ company: 'Acme' }, { company: 'Acme', client: '' }),
   'the same values compare equal however partial the shapes'
 );
+eq(
+  normalizeExportFields({ role: 'Integration architect', roleCs: 'Integrační architekt' }).roleCs,
+  'Integrační architekt',
+  'the Czech role is its own field'
+);
+eq(
+  normalizeExportFields({ role: 'Integration architect' }).roleCs,
+  '',
+  'a value stored before the split normalises with an empty Czech role'
+);
+eq(
+  normalizeExportFields({ startDate: '2026-08-16' }).startDate,
+  '2026-08-16',
+  'the start date travels with the fields'
+);
+ok(
+  !exportFieldsEqual({ role: 'X' }, { roleCs: 'X' }),
+  'the two languages of the role are not interchangeable'
+);
+
+// ---- clipping a preset range to the workspace start date ----
+const aug = { fromMs: fromDateInput('2026-08-01')!, toMs: fromDateInput('2026-09-01')! };
+eq(
+  clipRangeToStart(aug, '2026-08-16'),
+  { fromMs: fromDateInput('2026-08-16')!, toMs: aug.toMs },
+  'a month preset starts at a mid-month engagement start'
+);
+eq(clipRangeToStart(aug, ''), aug, 'no start date leaves the range alone');
+eq(clipRangeToStart(aug, '2026-05-01'), aug, 'a start before the range leaves it alone');
+eq(clipRangeToStart(aug, '2026-08-01'), aug, 'a start on the first day is a no-op');
+eq(
+  clipRangeToStart(aug, '2026-09-15'),
+  aug,
+  'a range wholly before the start is returned as-is (it exports nothing)'
+);
+eq(
+  clipRangeToStart(aug, '2026-08-31'),
+  { fromMs: aug.toMs - DAY_MS, toMs: aug.toMs },
+  'a start on the last day leaves that one day'
+);
+eq(clipRangeToStart(aug, 'not-a-date'), aug, 'a malformed start date is ignored');
 
 // ---- migration off the pre-workspace keys ----
 eq(readLegacyExportFields(), null, 'a device that never had the old keys migrates nothing');
@@ -86,6 +133,8 @@ const legacy = readLegacyExportFields();
 eq(legacy?.company, 'Acme', 'the old company key is read');
 eq(legacy?.engagementCs, 'Smlouva č. 1', 'the old Czech engagement key is read');
 eq(legacy?.role, '', 'keys that were never set read empty');
+eq(legacy?.roleCs, '', 'fields younger than the scoping migrate as empty');
+eq(legacy?.startDate, '', 'the start date has no pre-workspace key either');
 clearLegacyExportFields();
 eq(readLegacyExportFields(), null, 'the old keys are gone once migrated');
 

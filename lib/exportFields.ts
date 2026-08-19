@@ -37,10 +37,18 @@ const LEGACY_KEYS = {
  * carry July's reference into August.
  *
  * The engagement note has to be grammatical in the language it prints in, so
- * each template language keeps its own text rather than one being reused.
+ * each template language keeps its own text rather than one being reused. The
+ * role is translated the same way ("Integration architect" / "Integrační
+ * architekt"): `role` doubles as the English text and the pre-split stored
+ * value, `roleCs` is the Czech one, and the export dialog falls back to the
+ * other language when the printing template's own is empty — so a role that
+ * reads the same in both never has to be typed twice.
  */
 export interface ExportFieldValues {
+  /** Role as English templates print it — and the value stored before roleCs existed. */
   role: string;
+  /** Role as Czech templates print it; empty = fall back to `role`. */
+  roleCs: string;
   company: string;
   client: string;
   approver: string;
@@ -49,10 +57,19 @@ export interface ExportFieldValues {
   reference: string;
   engagementEn: string;
   engagementCs: string;
+  /**
+   * First billable day of the engagement, as the date input's `yyyy-mm-dd`
+   * (empty = the engagement is older than any range that will be exported).
+   * The export dialog clips its week/month presets to it, so a workspace that
+   * started Aug 16 exports Aug 16–31 as its first month — not a document
+   * claiming the whole of August.
+   */
+  startDate: string;
 }
 
 export const EMPTY_EXPORT_FIELDS: ExportFieldValues = {
   role: '',
+  roleCs: '',
   company: '',
   client: '',
   approver: '',
@@ -61,6 +78,7 @@ export const EMPTY_EXPORT_FIELDS: ExportFieldValues = {
   reference: '',
   engagementEn: '',
   engagementCs: '',
+  startDate: '',
 };
 
 /** Which engagement note a PDF template's language uses. */
@@ -79,6 +97,7 @@ export function normalizeExportFields(
   const str = (x: unknown): string => (typeof x === 'string' ? x : '');
   return {
     role: str(v.role),
+    roleCs: str(v.roleCs),
     company: str(v.company),
     client: str(v.client),
     approver: str(v.approver),
@@ -87,6 +106,7 @@ export function normalizeExportFields(
     reference: str(v.reference),
     engagementEn: str(v.engagementEn),
     engagementCs: str(v.engagementCs),
+    startDate: str(v.startDate),
   };
 }
 
@@ -120,6 +140,8 @@ export function readLegacyExportFields(): ExportFieldValues | null {
   };
   const values: ExportFieldValues = {
     role: read(LEGACY_KEYS.role),
+    // Fields younger than the workspace scoping never had a device-wide key.
+    roleCs: '',
     company: read(LEGACY_KEYS.company),
     client: read(LEGACY_KEYS.client),
     approver: read(LEGACY_KEYS.approver),
@@ -128,6 +150,7 @@ export function readLegacyExportFields(): ExportFieldValues | null {
     reference: read(LEGACY_KEYS.reference),
     engagementEn: read(LEGACY_KEYS.engagementEn),
     engagementCs: read(LEGACY_KEYS.engagementCs),
+    startDate: '',
   };
   return found ? values : null;
 }
