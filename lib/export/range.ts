@@ -108,6 +108,24 @@ export function fromDateInput(s: string): number | null {
 }
 
 /**
+ * Clip a preset-resolved range to the engagement's first billable day (the
+ * workspace's stored `startDate`, `yyyy-mm-dd`; empty = no start date). A month
+ * preset on a workspace that started Aug 16 then yields Aug 16–31 rather than a
+ * document claiming the whole of August. Only the *from* edge moves, and only
+ * forward. A range that lies entirely before the start date ("Last month" on an
+ * engagement that began this month) collapses to the empty [start, start) —
+ * never the original pre-engagement range, which would let a billing document
+ * pick up work from before the engagement. The dialog's date inputs reject the
+ * collapsed range, so such a preset cannot be exported. Callers apply this to
+ * preset resolutions only — a hand-edited custom range is the user's own to set.
+ */
+export function clipRangeToStart(range: DateRange, startDate: string): DateRange {
+  const startMs = startDate ? fromDateInput(startDate) : null;
+  if (startMs == null || startMs <= range.fromMs) return range;
+  return { fromMs: startMs, toMs: Math.max(startMs, range.toMs) };
+}
+
+/**
  * Range from the two date inputs (inclusive `from` day through inclusive `to` day).
  * Returns null when either is malformed or `to` precedes `from`.
  */
