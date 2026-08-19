@@ -2244,6 +2244,37 @@ body:has(.tracker-page) {
   border-color: var(--red);
 }
 
+/* Post-deploy refresh hint (see components/UpdateHint.tsx). Persistent until
+   refreshed or dismissed, so it gets real controls instead of click-anywhere. */
+.toast.update {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  cursor: default;
+  border-color: var(--accent);
+  max-width: min(92vw, 560px);
+}
+.toast.update .update-msg {
+  line-height: 1.4;
+}
+.toast.update .update-refresh {
+  flex: 0 0 auto;
+  padding: 7px 14px;
+}
+.toast.update .update-dismiss {
+  flex: 0 0 auto;
+  background: none;
+  border: none;
+  color: var(--muted);
+  font-size: 18px;
+  line-height: 1;
+  cursor: pointer;
+  padding: 4px;
+}
+.toast.update .update-dismiss:hover {
+  color: var(--text);
+}
+
 /* ----- Settings: workspace color swatch (standalone) ----- */
 .ws-color {
   flex: 0 0 auto;

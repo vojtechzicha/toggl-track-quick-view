@@ -1,6 +1,7 @@
 import type { Metadata, Viewport } from 'next';
 import './globals.css';
 import ServiceWorkerRegister from '@/components/ServiceWorkerRegister';
+import UpdateHint from '@/components/UpdateHint';
 
 export const metadata: Metadata = {
   applicationName: 'Toggl Quick View',
@@ -32,6 +33,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
       <body>
         {children}
         <ServiceWorkerRegister />
+        <UpdateHint />
       </body>
     </html>
   );

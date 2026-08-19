@@ -38,6 +38,12 @@ It fills the whole screen with no scrolling.
   token field in Settings (you only pick a project). A browser-entered token
   always takes precedence over the env var; the env var is the fallback used
   when no browser token is sent.
+- Long-lived tabs get a **post-deploy refresh hint**: every build bakes in a
+  build id, and each tab compares its own against `GET /api/version` whenever
+  it regains focus (plus a slow background interval). After a deploy, stale
+  tabs show a toast asking to refresh — important with settings sync, where a
+  tab running an old build wouldn't know newer settings keys and would drop
+  them from the synced document on its next save.
 
 ## Running locally
 
