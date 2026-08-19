@@ -635,6 +635,41 @@ The export dialog's **PDF template** picker chooses the layout of the PDF:
   (**schůzky**, **řešení tiketů**). The aggregation is presentational only —
   the day's **Hours and MD figures are identical** to the Full variant.
 
+### Digital signature
+
+The acceptance protocol's dashed box can be a **real signature field** rather
+than a space to print and sign. Pick **Sign the PDF** under *Digital signature*
+in the export dialog — the option only appears for templates that reserve an
+area for it — and the exported file carries a PAdES signature over the whole
+document, with the visible block sitting exactly inside the box.
+
+What you can set:
+
+- **Handwritten signature** — your own scan (PNG, JPEG or WebP), picked from
+  the file system. It never leaves the browser: it is embedded into the
+  signature block of the export and remembered with the **workspace**, like the
+  other export details, so you pick it once. Nothing of the sort ships with the
+  app and no signature image is in this repository — a signature image in a
+  public repo is a signature anyone can paste. A scan larger than ~256 kB is
+  used for the export at hand and not remembered, so it never bloats the synced
+  settings; trimming the PNG to the ink is worth the minute.
+- **Signature block layout** — the handwriting above the certificate details,
+  or beside them. The **preview** below shows the block at its printed size,
+  280 × 95 pt.
+
+The handwritten image is cosmetic. What makes the sheet *signed* is the
+certificate, so an export with signing switched off is exactly the document it
+has always been — the same bytes the template produced.
+
+**Right now the signature is made with a throwaway key** generated in the
+browser and discarded when the tab closes. It is cryptographically real: the
+file validates as `PAdES-BASELINE-B` and any viewer can check that the document
+has not been altered since signing. It is not *trusted* — no viewer will show a
+green banner for it, because the key chains to nothing. Signing with the
+qualified certificate on its hardware token is the next step; see
+[docs/pdf-signing-v2.md](docs/pdf-signing-v2.md) for the design and where it
+stands.
+
 ### Linked billing codes (subcontracting)
 
 Sometimes a project is billed **through** another client: you work for a prime
