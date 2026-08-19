@@ -24,7 +24,7 @@ import type { TokenBridge, TokenCertificate } from './bridge';
 import type { SignatureAppearance } from './types';
 
 export { prepareSignature, type PreparedSignature } from './prepare';
-export { renderAppearance, appearanceDocDefinition, formatSignedAt } from './appearance';
+export { renderAppearance, appearanceDocDefinition } from './appearance';
 export { buildCms, sha256, PADES_SIGNED_ATTRIBUTE_OIDS } from './cms';
 export { widgetRectToPdf, widgetRectFits, type PdfRect } from './widget';
 export {
@@ -41,6 +41,8 @@ export { PadesSigner } from './signer';
 export {
   DEFAULT_SIGNATURE_APPEARANCE,
   SIGNATURE_STRINGS,
+  STAMP_STYLE,
+  formatSignedAt,
   type SignatureAppearance,
   type SignatureLayout,
   type SignatureLocale,

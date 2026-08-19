@@ -1,6 +1,6 @@
 'use client';
 
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import type { SelectedProject } from '@/components/SettingsPanel';
 import type { TimesheetMode } from '@/components/SettingsPanel';
 import type { TimeEntry } from '@/lib/calc';
@@ -18,18 +18,31 @@ import { buildExportDoc } from '@/lib/export/model';
 import type { CodeMapping } from '@/lib/timesheet/mapping';
 import {
   type ExportFormat,
+  type SignRequest,
   FORMAT_LABELS,
   runExport,
 } from '@/lib/export';
 import { PDF_TEMPLATES, DEFAULT_TEMPLATE_ID } from '@/lib/export/pdf';
+import SignatureBlockPreview from './SignatureBlockPreview';
 import { ENGAGEMENT_PLACEHOLDERS, ENGAGEMENT_LABELS } from '@/lib/export/pdf/report';
+// Types and defaults only — the signing stage itself (pdf-lib, PKI.js,
+// @signpdf) is dynamically imported, and only once the user turns signing on.
+import {
+  DEFAULT_SIGNATURE_APPEARANCE,
+  type SignatureAppearance,
+  type SignatureLayout,
+} from '@/lib/export/pdf/sign/types';
 
 // Identity fields some PDF templates print (role / company / client / approver /
 // rate). Their values are user-entered and handed in by the page: they are
 // remembered with the workspace being billed (see lib/exportFields), and carried
 // to other devices by settings sync when the deployment has one. The app itself
 // ships no company names or rates.
-import { engagementKey, type ExportFieldValues } from '@/lib/exportFields';
+import {
+  engagementKey,
+  MAX_SIGNATURE_IMAGE_CHARS,
+  type ExportFieldValues,
+} from '@/lib/exportFields';
 
 /**
  * Default document reference for a range — the year and month it starts in.
@@ -45,6 +58,16 @@ const defaultReference = (fromMs: number): string => {
 const parseRate = (s: string): number | null => {
   const n = parseFloat(s.replace(/\s/g, '').replace(',', '.'));
   return Number.isFinite(n) && n > 0 ? n : null;
+};
+
+/**
+ * Recorded as the signature dictionary's /Reason, which is what a viewer's
+ * signature panel shows. Fixed rather than a field: this document has exactly
+ * one reason to be signed, and an empty or improvised one reads worse than none.
+ */
+const SIGN_REASON: Record<'en' | 'cs', string> = {
+  en: 'Approval of the timesheet',
+  cs: 'Schválení výkazu práce',
 };
 
 // The presets offered in the dropdown, in order. "custom" is added automatically
@@ -172,9 +195,115 @@ export default function ExportDialog({
   }));
   const [rateStr, setRateStr] = useState(fields.rate);
   const [currency, setCurrency] = useState(fields.currency);
+  // Digital signature (see lib/export/pdf/sign). Off by default and offered
+  // only by templates that reserve an area for the widget: an export nobody
+  // asked to sign has to come out exactly as it always did.
+  const [signing, setSigning] = useState(false);
+  const [signatureImage, setSignatureImage] = useState(fields.signatureImage);
+  const [signatureLayout, setSignatureLayout] = useState<SignatureLayout>(
+    fields.signatureLayout === 'image-left' ? 'image-left' : 'image-above'
+  );
+  const [signatureNote, setSignatureNote] = useState<string | null>(null);
+  const [signerCN, setSignerCN] = useState<string>('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [done, setDone] = useState<string | null>(null);
+
+  // Language the selected PDF template prints in — drives which engagement note
+  // is shown and stored.
+  const tplLocale =
+    (format === 'pdf' ? PDF_TEMPLATES.find((t) => t.id === templateId)?.locale : undefined) ?? 'en';
+  // Identity inputs (role / company) appear only when the chosen PDF template
+  // actually prints them.
+  const templateFields =
+    format === 'pdf' ? PDF_TEMPLATES.find((t) => t.id === templateId)?.fields ?? [] : [];
+  // Only a template that reserves a signature area can carry a widget; for the
+  // rest the signing section is not offered at all.
+  const signatureWidget =
+    format === 'pdf' ? PDF_TEMPLATES.find((t) => t.id === templateId)?.signatureWidget : undefined;
+
+  /**
+   * The signature block's design, as previewed and as signed. The date is
+   * filled in at the moment of signing so the printed date and the signature
+   * dictionary's /M agree; the preview uses the page's clock instead.
+   */
+  const appearance: SignatureAppearance = useMemo(
+    () => ({
+      ...DEFAULT_SIGNATURE_APPEARANCE,
+      image: signatureImage || null,
+      signerName: name.trim() || personName,
+      certificateCN: signerCN,
+      layout: signatureLayout,
+      locale: tplLocale,
+    }),
+    [signatureImage, name, personName, signerCN, signatureLayout, tplLocale]
+  );
+
+  // The bridge and its certificate, resolved once and reused: the throwaway
+  // bridge generates its key on first use, and preview and signature have to be
+  // the same key or the previewed CN is not the one that ends up in the file.
+  const signerRef = useRef<Pick<SignRequest, 'bridge' | 'certificate'> | null>(null);
+  const resolveSigner = async (): Promise<Pick<SignRequest, 'bridge' | 'certificate'>> => {
+    if (signerRef.current) return signerRef.current;
+    const { availableBridges } = await import('@/lib/export/pdf/sign/bridge');
+    for (const bridge of availableBridges()) {
+      if (!(await bridge.isAvailable())) continue;
+      const [certificate] = await bridge.listCertificates();
+      if (certificate) {
+        signerRef.current = { bridge, certificate };
+        return signerRef.current;
+      }
+    }
+    throw new Error('No signing bridge is available on this device.');
+  };
+
+  // Turning signing on is what pulls the signing stage into the page, and what
+  // makes the throwaway key exist. Its CN then shows in the preview.
+  useEffect(() => {
+    if (!signing || !signatureWidget) return;
+    let cancelled = false;
+    resolveSigner().then(
+      ({ bridge, certificate }) => {
+        if (cancelled) return;
+        setSignerCN(certificate.subjectCN);
+        setSignatureNote(`Signing with ${bridge.label}.`);
+      },
+      (e: unknown) => {
+        if (cancelled) return;
+        setSignerCN('');
+        setError(e instanceof Error ? e.message : 'Could not prepare a signing key.');
+        setSigning(false);
+      }
+    );
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [signing, signatureWidget]);
+
+  /** Read a picked scan into a data: URL — it never leaves the browser. */
+  const pickSignatureImage = async (file: File | null) => {
+    if (!file) return;
+    setDone(null);
+    if (!/^image\/(png|jpeg|webp)$/.test(file.type)) {
+      setError('Pick a PNG, JPEG or WebP image of your signature.');
+      return;
+    }
+    setError(null);
+    const dataUrl = await new Promise<string>((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(String(reader.result));
+      reader.onerror = () => reject(reader.error);
+      reader.readAsDataURL(file);
+    });
+    setSignatureImage(dataUrl);
+    setSignatureNote(
+      dataUrl.length > MAX_SIGNATURE_IMAGE_CHARS
+        ? 'This scan is too large to remember with the workspace — it will be used for ' +
+            'this export only. A trimmed PNG under ~190 kB is remembered.'
+        : null
+    );
+  };
 
   const applyPreset = (p: ExportPreset, start = startDate) => {
     setPreset(p);
@@ -283,15 +412,46 @@ export default function ExportDialog({
         reference: refEdited ? reference.trim() : '',
         engagementEn: engagements.en.trim(),
         engagementCs: engagements.cs.trim(),
+        // A scan too large to sync is used for this export and not stored —
+        // whatever was remembered before stays remembered.
+        signatureImage:
+          signatureImage.length <= MAX_SIGNATURE_IMAGE_CHARS
+            ? signatureImage
+            : fields.signatureImage,
+        signatureLayout,
       });
-      const ok = await runExport(doc, format, templateId);
+
+      // Signing is the last thing that happens and the only optional one: with
+      // it off, `runExport` downloads exactly the blob the template rendered.
+      let signRequest: SignRequest | null = null;
+      if (format === 'pdf' && signing && signatureWidget) {
+        const signer = await resolveSigner();
+        signRequest = {
+          ...signer,
+          appearance: {
+            ...appearance,
+            certificateCN: signer.certificate.subjectCN,
+            // One clock for the printed date and the /M entry.
+            signedAtMs: Date.now(),
+          },
+          reason: SIGN_REASON[tplLocale],
+        };
+      }
+
+      const ok = await runExport(doc, format, templateId, signRequest);
       if (!ok) {
         setError('No entries in this range — nothing to export.');
         return;
       }
-      setDone(`Exported as ${FORMAT_LABELS[format]}.`);
+      setDone(
+        signRequest
+          ? `Exported as ${FORMAT_LABELS[format]}, digitally signed.`
+          : `Exported as ${FORMAT_LABELS[format]}.`
+      );
     } catch (e) {
-      if (isAuthRequired(e)) {
+      if (e instanceof Error && e.name === 'TokenBridgeUnavailableError') {
+        setError(e.message);
+      } else if (isAuthRequired(e)) {
         setError('Session expired — return to the timesheet to sign in again, then retry.');
       } else if (isRateLimit(e)) {
         setError('Toggl rate limit reached — wait a moment, then try again.');
@@ -304,14 +464,6 @@ export default function ExportDialog({
   };
 
   const viewLabel = view === 'summary' ? 'Summary' : 'Individual';
-  // Language the selected PDF template prints in — drives which engagement note
-  // is shown and stored.
-  const tplLocale =
-    (format === 'pdf' ? PDF_TEMPLATES.find((t) => t.id === templateId)?.locale : undefined) ?? 'en';
-  // Identity inputs (role / company) appear only when the chosen PDF template
-  // actually prints them.
-  const templateFields =
-    format === 'pdf' ? PDF_TEMPLATES.find((t) => t.id === templateId)?.fields ?? [] : [];
 
   return (
     <div className="overlay">
@@ -617,6 +769,97 @@ export default function ExportDialog({
               />
             </div>
           </div>
+        )}
+
+        {signatureWidget && (
+          <div className="field">
+            <label htmlFor="exp-signing">Digital signature</label>
+            <select
+              id="exp-signing"
+              value={signing ? 'on' : 'off'}
+              onChange={(e) => {
+                setSigning(e.target.value === 'on');
+                setDone(null);
+              }}
+            >
+              <option value="off">Leave the signature box empty</option>
+              <option value="on">Sign the PDF</option>
+            </select>
+            <p className="hint">
+              The box on the last page becomes a real signature field. The handwritten image
+              is cosmetic — what makes the sheet signed is the certificate, so an export with
+              signing off stays exactly the document it has always been.
+            </p>
+          </div>
+        )}
+
+        {signatureWidget && signing && (
+          <>
+            <div className="field">
+              <label htmlFor="exp-signature-image">Handwritten signature</label>
+              <div className="sig-row">
+                <input
+                  id="exp-signature-image"
+                  type="file"
+                  accept="image/png,image/jpeg,image/webp"
+                  onChange={(e) => {
+                    void pickSignatureImage(e.target.files?.[0] ?? null);
+                    // Let the same file be picked again after a mistake.
+                    e.target.value = '';
+                  }}
+                />
+                {signatureImage && (
+                  <button
+                    type="button"
+                    className="btn"
+                    onClick={() => {
+                      setSignatureImage('');
+                      setSignatureNote(null);
+                    }}
+                  >
+                    Remove
+                  </button>
+                )}
+              </div>
+              <p className="hint">
+                Your own scan, on a transparent or white background. It stays in the browser:
+                it is embedded into the signature block of this export and remembered with{' '}
+                {fieldsScope ? <strong>{fieldsScope}</strong> : 'this device'} so you need not
+                pick it again. The app ships no signature image, and none is ever committed to
+                the repository.
+              </p>
+            </div>
+
+            <div className="field">
+              <label htmlFor="exp-signature-layout">Signature block layout</label>
+              <select
+                id="exp-signature-layout"
+                value={signatureLayout}
+                onChange={(e) => {
+                  setSignatureLayout(e.target.value as SignatureLayout);
+                  setDone(null);
+                }}
+              >
+                <option value="image-above">Signature above the details</option>
+                <option value="image-left">Signature beside the details</option>
+              </select>
+            </div>
+
+            <div className="field">
+              <label>Preview</label>
+              <div className="sig-preview-frame">
+                <SignatureBlockPreview
+                  rect={signatureWidget.rect}
+                  appearance={{ ...appearance, signedAtMs: nowMs }}
+                />
+              </div>
+              <p className="hint">
+                The signature block at its printed size, {Math.round(signatureWidget.rect.width)}
+                &nbsp;&times;&nbsp;{Math.round(signatureWidget.rect.height)}&nbsp;pt — it fills the
+                dashed box on the last page. {signatureNote}
+              </p>
+            </div>
+          </>
         )}
 
         {error && <div className="err-msg">{error}</div>}

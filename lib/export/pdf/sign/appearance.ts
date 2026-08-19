@@ -9,8 +9,9 @@
 //
 //  - the stamp inherits the export templates' fonts, colours and layout
 //    language, with no second toolchain to keep in step;
-//  - it is previewable in the export dialog before anything is signed, because
-//    a preview is just the same page rendered on its own;
+//  - the design is expressed as data and measurements (SignatureAppearance and
+//    STAMP_STYLE), which is what lets the export dialog draw the same block at
+//    the same printed size before anything is signed;
 //  - the design is data — see SignatureAppearance — so it stays configurable.
 //
 // The handwritten image arrives as a data: URL and is embedded only here. It is
@@ -19,31 +20,17 @@
 import type { Content, TDocumentDefinitions } from 'pdfmake/interfaces';
 import type { SignatureWidget } from '../templates';
 import { renderPdfMake } from '../index';
-import { SIGNATURE_STRINGS, type SignatureAppearance } from './types';
+import {
+  formatSignedAt,
+  SIGNATURE_STRINGS,
+  STAMP_STYLE,
+  type SignatureAppearance,
+} from './types';
 
-/** Inner padding of the stamp, in points. */
-const PAD = 5;
-/** Gap between the image column and the details column. */
-const GUTTER = 8;
-/** Share of the width the image column takes in the 'image-left' layout. */
-const IMAGE_COLUMN_RATIO = 0.42;
-
-const COLOR = {
-  text: '#1f2937',
-  muted: '#6b7280',
-  frame: '#9ca3af',
-};
-
-/** The stamp's date line — the same clock /M records, printed to the minute. */
-export function formatSignedAt(ms: number, locale: string): string {
-  return new Date(ms).toLocaleString(locale === 'cs' ? 'cs-CZ' : undefined, {
-    year: 'numeric',
-    month: 'short',
-    day: 'numeric',
-    hour: '2-digit',
-    minute: '2-digit',
-  });
-}
+// The measurements live in ./types.ts because the export dialog's preview draws
+// the same block from them at 1 pt = 1 px.
+const { pad: PAD, gutter: GUTTER, imageColumnRatio: IMAGE_COLUMN_RATIO } = STAMP_STYLE;
+const COLOR = STAMP_STYLE.color;
 
 /**
  * The stamp as a pdfmake document definition: one page, exactly the widget
@@ -78,7 +65,7 @@ export function appearanceDocDefinition(
   } else if (appearance.layout === 'image-above') {
     // `fit` scales the image down to the box and never up, so a large scan and
     // a small one both land inside the stamp.
-    const imageHeight = Math.max(18, innerHeight * 0.5);
+    const imageHeight = Math.max(18, innerHeight * STAMP_STYLE.imageRowRatio);
     body = {
       stack: [
         { image: appearance.image, fit: [innerWidth, imageHeight] },
@@ -123,18 +110,20 @@ export function appearanceDocDefinition(
     pageMargins: [PAD, PAD, PAD, PAD],
     content,
     styles: {
-      sigCaption: { fontSize: 6, color: COLOR.muted },
-      sigName: { fontSize: 9, bold: true, color: COLOR.text, margin: [0, 1, 0, 2] },
-      sigMeta: { fontSize: 5.5, color: COLOR.muted, margin: [0, 0.5, 0, 0] },
+      sigCaption: { fontSize: STAMP_STYLE.font.caption, color: COLOR.muted },
+      sigName: {
+        fontSize: STAMP_STYLE.font.name,
+        bold: true,
+        color: COLOR.text,
+        margin: [0, 1, 0, 2],
+      },
+      sigMeta: { fontSize: STAMP_STYLE.font.meta, color: COLOR.muted, margin: [0, 0.5, 0, 0] },
     },
-    defaultStyle: { fontSize: 6, color: COLOR.text },
+    defaultStyle: { fontSize: STAMP_STYLE.font.caption, color: COLOR.text },
   };
 }
 
-/**
- * The stamp as a standalone one-page PDF Blob — what the export dialog shows as
- * a preview, and what ./prepare.ts embeds as the widget's appearance.
- */
+/** The stamp as a standalone one-page PDF — what ./prepare.ts embeds. */
 export function renderAppearance(
   rect: SignatureWidget['rect'],
   appearance: SignatureAppearance

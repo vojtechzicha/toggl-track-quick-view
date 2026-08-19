@@ -57,14 +57,71 @@ export async function serialize(
   }
 }
 
+/**
+ * What the export dialog asks for when the user wants the PDF signed. Absent —
+ * which is the case for every other format, and for PDF with signing switched
+ * off — and the export runs exactly as it always has.
+ *
+ * The bridge and its certificate are chosen by the dialog rather than here:
+ * that is where the user picks them, where a missing bridge has to be reported
+ * before anything is generated, and where the certificate's CN is needed for
+ * the preview. The types are referenced inline so this module keeps naming them
+ * without importing the signing stage (and with it pdf-lib and PKI.js) into
+ * every bundle that touches an export.
+ */
+export interface SignRequest {
+  appearance: import('./pdf/sign/types').SignatureAppearance;
+  bridge: import('./pdf/sign/bridge').TokenBridge;
+  certificate: import('./pdf/sign/bridge').TokenCertificate;
+  reason?: string;
+  location?: string;
+}
+
+/**
+ * Sign a rendered PDF, or hand it back untouched when there is nothing to sign.
+ *
+ * The signing stage is imported here and only here in the export path, so it
+ * stays out of the bundle until an export actually asks for a signature — and
+ * an unsigned export returns the very blob `serialize` produced, byte for byte.
+ */
+async function maybeSign(
+  blob: Blob,
+  format: ExportFormat,
+  pdfTemplateId: string,
+  request: SignRequest | null
+): Promise<Blob> {
+  if (!request || format !== 'pdf') return blob;
+  const { getTemplate } = await import('./pdf/templates');
+  const widget = getTemplate(pdfTemplateId).signatureWidget;
+  // A template with no reserved area cannot carry a widget; exporting it
+  // unsigned beats putting one somewhere arbitrary.
+  if (!widget) return blob;
+
+  const { signPdf } = await import('./pdf/sign');
+  return signPdf(blob, {
+    widget,
+    appearance: request.appearance,
+    bridge: request.bridge,
+    certificate: request.certificate,
+    reason: request.reason,
+    location: request.location,
+  });
+}
+
 /** Serialize and download in one call. Returns false when there's nothing to export. */
 export async function runExport(
   doc: ExportDoc,
   format: ExportFormat,
-  pdfTemplateId: string
+  pdfTemplateId: string,
+  sign: SignRequest | null = null
 ): Promise<boolean> {
   if (isEmptyDoc(doc)) return false;
-  const blob = await serialize(doc, format, pdfTemplateId);
+  const blob = await maybeSign(
+    await serialize(doc, format, pdfTemplateId),
+    format,
+    pdfTemplateId,
+    sign
+  );
   downloadBlob(blob, exportFilename(doc, format));
   return true;
 }

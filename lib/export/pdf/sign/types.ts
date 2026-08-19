@@ -58,6 +58,40 @@ export const DEFAULT_SIGNATURE_APPEARANCE: SignatureAppearance = {
   locale: 'en',
 };
 
+/**
+ * The stamp's measurements, in points.
+ *
+ * Shared between the pdfmake definition that becomes the appearance and the
+ * export dialog's preview, which draws the same block at 1 pt = 1 px — so the
+ * preview is the design at its printed size rather than an impression of it.
+ * (The obvious alternative, showing the stamp PDF itself in an iframe, does not
+ * survive contact with the browsers' built-in PDF viewers: at 280x95pt they
+ * ignore `view=Fit` and render the page at a zoom of their own choosing.)
+ */
+export const STAMP_STYLE = {
+  /** Inner padding. */
+  pad: 5,
+  /** Gap between the image column and the details column. */
+  gutter: 8,
+  /** Share of the width the image takes in the 'image-left' layout. */
+  imageColumnRatio: 0.42,
+  /** Share of the height the image takes in the 'image-above' layout. */
+  imageRowRatio: 0.5,
+  font: { caption: 6, name: 9, meta: 5.5 },
+  color: { text: '#1f2937', muted: '#6b7280', frame: '#9ca3af' },
+} as const;
+
+/** The stamp's date line — the same clock /M records, printed to the minute. */
+export function formatSignedAt(ms: number, locale: string): string {
+  return new Date(ms).toLocaleString(locale === 'cs' ? 'cs-CZ' : undefined, {
+    year: 'numeric',
+    month: 'short',
+    day: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+  });
+}
+
 /** Fixed wording of the stamp, per locale. */
 export const SIGNATURE_STRINGS: Record<
   SignatureLocale,
