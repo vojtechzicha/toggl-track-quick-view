@@ -304,6 +304,52 @@ for (const id of ['report-en', 'report-cs'] as const) {
   );
 }
 
+// ---- an MD-rate engagement speaks in man-days everywhere ----
+
+// 18.75 h = 2.34375 MD; at 9 000/MD the total is the hourly fixture's
+// 21 093.75 again, so the amount patterns carry over unchanged.
+{
+  const cs = allText(build('report-cs', { rate: 9000, rateBasis: 'md' }));
+  ok(TOTAL_FEE_CS.test(cs), 'CZ MD-rate report prices the man-days correctly');
+  ok(cs.includes('/MD'), 'CZ MD-rate report quotes the rate per MD');
+  no(cs.includes('/h'), 'CZ MD-rate report never quotes a per-hour rate');
+  ok(cs.includes('sjednané sazby za MD'), 'CZ fees note speaks of the MD rate');
+  ok(cs.includes('při sjednané sazbě za MD'), 'CZ declaration speaks of the MD rate');
+  no(cs.includes('hodinové saz'), 'CZ MD-rate report never mentions an hourly rate');
+  ok(cs.includes('2,34 MD ×'), 'CZ fee breakdown multiplies man-days, not hours');
+
+  const en = allText(build('report-en', { rate: 9000, rateBasis: 'md' }));
+  ok(TOTAL_FEE_EN.test(en), 'EN MD-rate report prices the man-days correctly');
+  ok(en.includes('/MD'), 'EN MD-rate report quotes the rate per MD');
+  no(en.includes('/h'), 'EN MD-rate report never quotes a per-hour rate');
+  ok(en.includes('agreed MD rate'), 'EN fees note and declaration speak of the MD rate');
+  no(en.includes('hourly rate'), 'EN MD-rate report never mentions an hourly rate');
+  ok(en.includes('2.34 MD ×'), 'EN fee breakdown multiplies man-days, not hours');
+
+  // The hourly wording is untouched — and an absent basis still means hourly.
+  const hourly = allText(build('report-cs'));
+  ok(hourly.includes('/h'), 'an hourly report still quotes the rate per hour');
+  no(hourly.includes('/MD'), 'an hourly report never quotes a per-MD rate');
+  ok(hourly.includes('hodinové sazby'), 'the hourly fees note is unchanged');
+}
+
+// MD-basis fee columns must still sum to their printed totals.
+{
+  const def = build('report-cs', { rate: 9000, rateBasis: 'md' });
+  for (const header of ['PODÍL', 'KÓD PROJEKT']) {
+    const body = tableRows(def, header)[0];
+    const feeCol = texts(body[0]).length - 1;
+    const dataRows = body.slice(1, -1);
+    const totalRow = body[body.length - 1];
+    const sum = dataRows.reduce((s, r) => s + parseCs(texts(r[feeCol]).join('')), 0);
+    const total = parseCs(texts(totalRow[totalRow.length - 1]).join(''));
+    ok(
+      Math.abs(sum - total) < 1e-9,
+      `${header} MD-basis fee rows sum to the total (${sum} vs ${total})`
+    );
+  }
+}
+
 // ---- the reference is the user's, not a derived constant ----
 
 {

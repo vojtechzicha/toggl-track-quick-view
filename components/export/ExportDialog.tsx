@@ -23,6 +23,7 @@ import {
 } from '@/lib/export';
 import { PDF_TEMPLATES, DEFAULT_TEMPLATE_ID } from '@/lib/export/pdf';
 import { ENGAGEMENT_PLACEHOLDERS, ENGAGEMENT_LABELS } from '@/lib/export/pdf/report';
+import { HOURS_PER_MD } from '@/lib/export/pdf/money';
 
 // Identity fields some PDF templates print (role / company / client / approver /
 // rate). Their values are user-entered and handed in by the page: they are
@@ -41,7 +42,7 @@ const defaultReference = (fromMs: number): string => {
   return `TS-${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
 };
 
-/** "1125" / "1 125,50" → hourly rate number; empty or unparsable = no rate. */
+/** "1125" / "1 125,50" → rate number; empty or unparsable = no rate. */
 const parseRate = (s: string): number | null => {
   const n = parseFloat(s.replace(/\s/g, '').replace(',', '.'));
   return Number.isFinite(n) && n > 0 ? n : null;
@@ -171,6 +172,11 @@ export default function ExportDialog({
     cs: fields.engagementCs,
   }));
   const [rateStr, setRateStr] = useState(fields.rate);
+  // What the rate is quoted per. Stored as 'md' when the contract quotes a
+  // man-day rate; every other stored value (the pre-basis '' included) is hourly.
+  const [rateBasis, setRateBasis] = useState<'hourly' | 'md'>(
+    fields.rateBasis === 'md' ? 'md' : 'hourly'
+  );
   const [currency, setCurrency] = useState(fields.currency);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -263,6 +269,7 @@ export default function ExportDialog({
         reference: reference.trim() || defaultReference(range.fromMs),
         engagement: engagements[tplLocale].trim(),
         rate: parseRate(rateStr),
+        rateBasis,
         currency: currency.trim().toUpperCase(),
       });
       // Remember the identity fields for the next export of this workspace. The
@@ -277,6 +284,7 @@ export default function ExportDialog({
         client: client.trim(),
         approver: approver.trim(),
         rate: rateStr.trim(),
+        rateBasis,
         currency: currency.trim().toUpperCase(),
         // A derived reference is dropped rather than stored, so next month's
         // export starts from that month again.
@@ -587,36 +595,59 @@ export default function ExportDialog({
         )}
 
         {templateFields.includes('rate') && (
-          <div className="exp-dates">
+          <>
             <div className="field">
-              <label htmlFor="exp-rate">Hourly rate (optional)</label>
-              <input
-                id="exp-rate"
-                type="text"
-                inputMode="decimal"
-                value={rateStr}
-                placeholder="Empty = no fees in the report"
+              <label htmlFor="exp-rate-basis">Rate quoted per</label>
+              <select
+                id="exp-rate-basis"
+                value={rateBasis}
                 onChange={(e) => {
-                  setRateStr(e.target.value);
+                  setRateBasis(e.target.value as 'hourly' | 'md');
                   setDone(null);
                 }}
-              />
+              >
+                <option value="hourly">Hour (hourly rate)</option>
+                <option value="md">Man-day (MD rate, {HOURS_PER_MD} h = 1 MD)</option>
+              </select>
+              <p className="hint">
+                Pick the unit your contract quotes the rate in. The report&apos;s fee
+                tables and wording follow it — an MD engagement reads man-days × MD rate
+                throughout, never a recomputed hourly figure.
+              </p>
             </div>
-            <div className="field">
-              <label htmlFor="exp-currency">Currency</label>
-              <input
-                id="exp-currency"
-                type="text"
-                maxLength={3}
-                value={currency}
-                placeholder="CZK"
-                onChange={(e) => {
-                  setCurrency(e.target.value);
-                  setDone(null);
-                }}
-              />
+            <div className="exp-dates">
+              <div className="field">
+                <label htmlFor="exp-rate">
+                  {rateBasis === 'md' ? 'MD rate (optional)' : 'Hourly rate (optional)'}
+                </label>
+                <input
+                  id="exp-rate"
+                  type="text"
+                  inputMode="decimal"
+                  value={rateStr}
+                  placeholder="Empty = no fees in the report"
+                  onChange={(e) => {
+                    setRateStr(e.target.value);
+                    setDone(null);
+                  }}
+                />
+              </div>
+              <div className="field">
+                <label htmlFor="exp-currency">Currency</label>
+                <input
+                  id="exp-currency"
+                  type="text"
+                  maxLength={3}
+                  value={currency}
+                  placeholder="CZK"
+                  onChange={(e) => {
+                    setCurrency(e.target.value);
+                    setDone(null);
+                  }}
+                />
+              </div>
             </div>
-          </div>
+          </>
         )}
 
         {error && <div className="err-msg">{error}</div>}
