@@ -498,8 +498,13 @@ function buildReport(doc: ExportDoc, locale: ReportLocale): TDocumentDefinitions
   // since "h" and "MD" already are.
   const rateUnit = basis === 'md' ? '/MD' : '/h';
   const money = makeMoney(L.localeTag, doc.currency || 'CZK');
-  const fee = (secs: number) =>
-    (secs / 3600 / (basis === 'md' ? HOURS_PER_MD : 1)) * (rate ?? 0);
+  // An hourly engagement prices the recorded time. An MD engagement prices the
+  // *printed* two-decimal MD quantities instead: the client reads "2,34 MD ×
+  // 9 000/MD" next to an amount, and that multiplication must reproduce the
+  // amount — pricing the unrounded seconds would put 2.34375 MD of money next
+  // to a printed 2,34.
+  const hourlyFee = (secs: number) => (secs / 3600) * (rate ?? 0);
+  const mdFee = (md: number) => md * (rate ?? 0);
 
   const personName = clamp(doc.personName, MAX.person);
   const role = clamp(doc.role, MAX.role);
@@ -540,11 +545,23 @@ function buildReport(doc: ExportDoc, locale: ReportLocale): TDocumentDefinitions
   const projRows = [...byProject.entries()];
   const projMd = allocateMd(projRows.map(([, s]) => s));
   const projShare = allocateShares(projRows.map(([, s]) => s), totalSecs);
-  const projFees = rate != null ? allocate(projRows.map(([, s]) => fee(s)), money.dp) : null;
+  const projFees =
+    rate != null
+      ? allocate(
+          basis === 'md' ? projMd.rows.map(mdFee) : projRows.map(([, s]) => hourlyFee(s)),
+          money.dp
+        )
+      : null;
 
   const codeRows = [...byCode.entries()].sort((a, b) => b[1].secs - a[1].secs);
   const codeMd = allocateMd(codeRows.map(([, v]) => v.secs));
-  const codeFees = rate != null ? allocate(codeRows.map(([, v]) => fee(v.secs)), money.dp) : null;
+  const codeFees =
+    rate != null
+      ? allocate(
+          basis === 'md' ? codeMd.rows.map(mdFee) : codeRows.map(([, v]) => hourlyFee(v.secs)),
+          money.dp
+        )
+      : null;
 
   const totalMd = allocateMd([totalSecs]).total;
   const totalFee = projFees ? projFees.total : null;
