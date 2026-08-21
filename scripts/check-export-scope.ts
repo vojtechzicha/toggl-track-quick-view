@@ -102,6 +102,16 @@ ok(
   !exportFieldsEqual({ role: 'X' }, { roleCs: 'X' }),
   'the two languages of the role are not interchangeable'
 );
+eq(
+  normalizeExportFields({ rateBasis: 'md' }).rateBasis,
+  'md',
+  'the rate basis travels with the fields'
+);
+eq(
+  normalizeExportFields({ rate: '1125' }).rateBasis,
+  '',
+  'a rate stored before the basis existed normalises with an empty basis (hourly)'
+);
 
 // ---- clipping a preset range to the workspace start date ----
 const aug = { fromMs: fromDateInput('2026-08-01')!, toMs: fromDateInput('2026-09-01')! };

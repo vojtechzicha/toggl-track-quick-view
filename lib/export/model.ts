@@ -16,6 +16,13 @@ import { weeksInRange, type DateRange } from './range';
 
 export type ExportView = 'summary' | 'individual';
 
+/**
+ * What the agreed rate is quoted per: an hour of work, or a man-day (MD, the
+ * eight-hour day of lib/export/pdf/money). Contracts state one or the other,
+ * and the fee wording in the PDF report follows the contract's own unit.
+ */
+export type RateBasis = 'hourly' | 'md';
+
 export interface ExportOptions {
   view: ExportView;
   range: DateRange;
@@ -68,8 +75,10 @@ export interface ExportOptions {
    * wording around it belongs to the template. Empty = omitted.
    */
   engagement?: string;
-  /** Hourly rate for fee lines; null/omitted = a time-only document. */
+  /** Agreed rate for fee lines (per `rateBasis`); null/omitted = a time-only document. */
   rate?: number | null;
+  /** Unit the rate is quoted per; omitted = hourly. Meaningful only with a rate. */
+  rateBasis?: RateBasis;
   /** ISO 4217 code the rate is in (e.g. "CZK"); meaningful only with a rate. */
   currency?: string;
 }
@@ -86,8 +95,10 @@ export interface ExportMeta {
   reference: string;
   /** Engagement sentence for the basis-of-preparation block; empty = omitted. */
   engagement: string;
-  /** Hourly rate for fee lines; null = a time-only document. */
+  /** Agreed rate for fee lines (per `rateBasis`); null = a time-only document. */
   rate: number | null;
+  /** Unit the rate is quoted per — an hour, or a man-day. */
+  rateBasis: RateBasis;
   currency: string;
   fromMs: number;
   toMs: number; // exclusive
@@ -276,6 +287,7 @@ function buildSummaryDoc(o: ExportOptions): SummaryDoc {
     reference: o.reference ?? '',
     engagement: o.engagement ?? '',
     rate: o.rate ?? null,
+    rateBasis: o.rateBasis ?? 'hourly',
     currency: o.currency ?? '',
     fromMs: range.fromMs,
     toMs: range.toMs,
@@ -356,6 +368,7 @@ function buildIndividualDoc(o: ExportOptions): IndividualDoc {
     reference: o.reference ?? '',
     engagement: o.engagement ?? '',
     rate: o.rate ?? null,
+    rateBasis: o.rateBasis ?? 'hourly',
     currency: o.currency ?? '',
     fromMs: range.fromMs,
     toMs: range.toMs,

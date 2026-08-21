@@ -53,6 +53,11 @@ export interface ExportFieldValues {
   client: string;
   approver: string;
   rate: string;
+  /**
+   * What `rate` is quoted per: 'md' for a man-day rate, anything else (the
+   * pre-basis stored value included) reads as hourly.
+   */
+  rateBasis: string;
   currency: string;
   reference: string;
   engagementEn: string;
@@ -96,6 +101,7 @@ export const EMPTY_EXPORT_FIELDS: ExportFieldValues = {
   client: '',
   approver: '',
   rate: '',
+  rateBasis: '',
   currency: '',
   reference: '',
   engagementEn: '',
@@ -126,6 +132,7 @@ export function normalizeExportFields(
     client: str(v.client),
     approver: str(v.approver),
     rate: str(v.rate),
+    rateBasis: str(v.rateBasis),
     currency: str(v.currency),
     reference: str(v.reference),
     engagementEn: str(v.engagementEn),
@@ -172,6 +179,8 @@ export function readLegacyExportFields(): ExportFieldValues | null {
     client: read(LEGACY_KEYS.client),
     approver: read(LEGACY_KEYS.approver),
     rate: read(LEGACY_KEYS.rate),
+    // Younger than the workspace scoping — never had a device-wide key.
+    rateBasis: '',
     currency: read(LEGACY_KEYS.currency),
     reference: read(LEGACY_KEYS.reference),
     engagementEn: read(LEGACY_KEYS.engagementEn),

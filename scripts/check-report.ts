@@ -304,6 +304,71 @@ for (const id of ['report-en', 'report-cs'] as const) {
   );
 }
 
+// ---- an MD-rate engagement speaks in man-days everywhere ----
+
+// 18.75 h = 2.34375 MD, printed as 2.34 MD. An MD engagement prices the
+// *printed* quantity, so at 9 000/MD the total is 2.34 × 9 000 = 21 060.00 —
+// the "2,34 MD × 9 000/MD" line (and the summary tables' side-by-side MD and
+// fee columns) reproduce their own amounts. Pricing the unrounded man-days
+// would print 21 093.75 next to figures that multiply to 21 060.
+const MD_FEE_CS = /21 060,00/;
+const MD_FEE_EN = /21,060\.00/;
+{
+  const cs = allText(build('report-cs', { rate: 9000, rateBasis: 'md' }));
+  ok(MD_FEE_CS.test(cs), 'CZ MD-rate report prices the printed man-days');
+  no(TOTAL_FEE_CS.test(cs), 'CZ MD-rate report never prices the unrounded man-days');
+  ok(cs.includes('/MD'), 'CZ MD-rate report quotes the rate per MD');
+  no(cs.includes('/h'), 'CZ MD-rate report never quotes a per-hour rate');
+  ok(cs.includes('sjednané sazby za MD'), 'CZ fees note speaks of the MD rate');
+  ok(cs.includes('při sjednané sazbě za MD'), 'CZ declaration speaks of the MD rate');
+  no(cs.includes('hodinové saz'), 'CZ MD-rate report never mentions an hourly rate');
+  ok(cs.includes('2,34 MD ×'), 'CZ fee breakdown multiplies man-days, not hours');
+
+  const en = allText(build('report-en', { rate: 9000, rateBasis: 'md' }));
+  ok(MD_FEE_EN.test(en), 'EN MD-rate report prices the printed man-days');
+  no(TOTAL_FEE_EN.test(en), 'EN MD-rate report never prices the unrounded man-days');
+  ok(en.includes('/MD'), 'EN MD-rate report quotes the rate per MD');
+  no(en.includes('/h'), 'EN MD-rate report never quotes a per-hour rate');
+  ok(en.includes('agreed MD rate'), 'EN fees note and declaration speak of the MD rate');
+  no(en.includes('hourly rate'), 'EN MD-rate report never mentions an hourly rate');
+  ok(en.includes('2.34 MD ×'), 'EN fee breakdown multiplies man-days, not hours');
+
+  // The hourly wording is untouched — and an absent basis still means hourly.
+  const hourly = allText(build('report-cs'));
+  ok(hourly.includes('/h'), 'an hourly report still quotes the rate per hour');
+  no(hourly.includes('/MD'), 'an hourly report never quotes a per-MD rate');
+  ok(hourly.includes('hodinové sazby'), 'the hourly fees note is unchanged');
+}
+
+// MD-basis fee columns must still sum to their printed totals — and every
+// printed row must reproduce as printed MD × rate (to the allocated cent).
+{
+  const def = build('report-cs', { rate: 9000, rateBasis: 'md' });
+  for (const [header, mdCol] of [
+    ['PODÍL', 2],
+    ['KÓD PROJEKT', 3],
+  ] as const) {
+    const body = tableRows(def, header)[0];
+    const feeCol = texts(body[0]).length - 1;
+    const dataRows = body.slice(1, -1);
+    const totalRow = body[body.length - 1];
+    const sum = dataRows.reduce((s, r) => s + parseCs(texts(r[feeCol]).join('')), 0);
+    const total = parseCs(texts(totalRow[totalRow.length - 1]).join(''));
+    ok(
+      Math.abs(sum - total) < 1e-9,
+      `${header} MD-basis fee rows sum to the total (${sum} vs ${total})`
+    );
+    for (const r of dataRows) {
+      const md = parseCs(texts(r[mdCol]).join(''));
+      const feeShown = parseCs(texts(r[feeCol]).join(''));
+      ok(
+        Math.abs(md * 9000 - feeShown) < 0.011,
+        `${header}: printed ${md} MD × 9000 reproduces the printed fee ${feeShown}`
+      );
+    }
+  }
+}
+
 // ---- the reference is the user's, not a derived constant ----
 
 {

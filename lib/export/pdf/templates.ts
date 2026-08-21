@@ -43,7 +43,8 @@ export interface PdfTemplate {
   /**
    * Extra identity fields this template prints (beyond the person's name). The
    * export dialog shows an input for each — their values are user-entered, never
-   * shipped with the app. 'rate' renders as an hourly rate + currency pair.
+   * shipped with the app. 'rate' renders as a rate + currency pair with a
+   * switch for what the rate is quoted per (an hour, or a man-day).
    */
   fields?: Array<
     'role' | 'company' | 'client' | 'approver' | 'reference' | 'engagement' | 'rate'
