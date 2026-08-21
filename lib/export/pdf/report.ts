@@ -4,10 +4,13 @@
 // lives in the string tables below. Uses the embedded Fraunces / IBM Plex Mono
 // cuts (see reportFonts.ts) next to pdfmake's bundled Roboto.
 //
-// Money is optional: with an hourly rate in the export options the report carries
-// fee columns and an investment box; without one it stays a time-only document.
-// Amounts are allocated (never independently rounded) so every printed column
-// adds up to its printed total — see money.ts.
+// Money is optional: with a rate in the export options the report carries fee
+// columns and an investment box; without one it stays a time-only document. The
+// rate is quoted per hour or per man-day (doc.rateBasis), and every fee line
+// speaks in the contract's own unit — an MD-rate engagement reads "MD × rate",
+// never a back-computed hourly figure. Amounts are allocated (never
+// independently rounded) so every printed column adds up to its printed total —
+// see money.ts.
 //
 // Effort is quoted in hours and in man-days (MD), one MD being an eight-hour day.
 //
@@ -15,7 +18,7 @@
 // separators and currency all follow the template's own locale, not the browser's.
 
 import type { TDocumentDefinitions, Content, ContentTable, TableCell } from 'pdfmake/interfaces';
-import type { ExportDoc } from '../model';
+import type { ExportDoc, RateBasis } from '../model';
 import { DAY_MS } from '@/lib/timesheet/constants';
 import type { PdfTemplate } from './templates';
 import { allocate, allocateMd, allocateShares, makeMoney, HOURS_PER_MD } from './money';
@@ -116,7 +119,8 @@ interface Strings {
   signoffPlain: string;
   feesForPeriod: string;
   feesTotal: string;
-  feesNote: string;
+  /** How fees follow from the records — phrased in the rate's own unit. */
+  feesNote: (basis: RateBasis) => string;
   preparedBy: string;
   approvedBy: string;
   signatureHint: string;
@@ -142,6 +146,7 @@ interface Strings {
     hours: string;
     md: string;
     fees: string | null;
+    basis: RateBasis;
   }) => string;
 }
 
@@ -195,9 +200,12 @@ const EN: Strings = {
   signoffPlain: 'Confirmation & sign-off',
   feesForPeriod: 'Fees for the period',
   feesTotal: 'Total (excl. VAT)',
-  feesNote:
-    'All recorded time is chargeable. Fees follow from the recorded hours at the agreed ' +
-    'hourly rate and exclude expenses and VAT.',
+  feesNote: (basis) =>
+    basis === 'md'
+      ? 'All recorded time is chargeable. Fees follow from the recorded man-days at the ' +
+        'agreed MD rate and exclude expenses and VAT.'
+      : 'All recorded time is chargeable. Fees follow from the recorded hours at the agreed ' +
+        'hourly rate and exclude expenses and VAT.',
   preparedBy: 'Prepared by',
   approvedBy: 'Approved by',
   signatureHint: 'Signature or digital signature',
@@ -220,11 +228,15 @@ const EN: Strings = {
       `${codePart}${projPart}.${feePart} All recorded time is chargeable to the engagement.`
     );
   },
-  declaration: ({ client, ref, range, hours, md, fees }) =>
+  declaration: ({ client, ref, range, hours, md, fees, basis }) =>
     `I confirm that the time recorded in this report is a true and accurate record of ` +
     `the services delivered to ${client} under reference ${ref} for the period ${range}. ` +
     `The total submitted for approval is ${hours} hours (${md} MD)` +
-    (fees ? `, with fees of ${fees} excluding VAT.` : `.`),
+    (fees
+      ? basis === 'md'
+        ? `, with fees of ${fees} at the agreed MD rate, excluding VAT.`
+        : `, with fees of ${fees} at the agreed hourly rate, excluding VAT.`
+      : `.`),
 };
 
 const CS: Strings = {
@@ -278,9 +290,12 @@ const CS: Strings = {
   signoffPlain: 'Potvrzení a schválení',
   feesForPeriod: 'Fakturace za období',
   feesTotal: 'Celkem bez DPH',
-  feesNote:
-    'Celý vykázaný čas je fakturovatelný. Částky vycházejí z vykázaných hodin a sjednané ' +
-    'hodinové sazby; nezahrnují DPH ani náklady účtované zvlášť.',
+  feesNote: (basis) =>
+    basis === 'md'
+      ? 'Celý vykázaný čas je fakturovatelný. Částky vycházejí z vykázaných člověkodnů a ' +
+        'sjednané sazby za MD; nezahrnují DPH ani náklady účtované zvlášť.'
+      : 'Celý vykázaný čas je fakturovatelný. Částky vycházejí z vykázaných hodin a sjednané ' +
+        'hodinové sazby; nezahrnují DPH ani náklady účtované zvlášť.',
   // Both gendered endings, as a Czech form that either person may sign.
   preparedBy: 'Zpracoval(a)',
   approvedBy: 'Schválil(a)',
@@ -308,11 +323,15 @@ const CS: Strings = {
       `${feePart} Celý vykázaný čas je fakturovatelný.`
     );
   },
-  declaration: ({ client, ref, range, hours, md, fees }) =>
+  declaration: ({ client, ref, range, hours, md, fees, basis }) =>
     `Potvrzuji, že údaje v tomto výkazu odpovídají skutečně odvedené práci pro klienta ` +
     `${client} pod referencí ${ref} za období ${range}. Ke schválení předkládám ` +
     `${hours} h, tedy ${md} MD` +
-    (fees ? `, což při sjednané sazbě odpovídá ceně ${fees} bez DPH.` : `.`),
+    (fees
+      ? basis === 'md'
+        ? `, což při sjednané sazbě za MD odpovídá ceně ${fees} bez DPH.`
+        : `, což při sjednané hodinové sazbě odpovídá ceně ${fees} bez DPH.`
+      : `.`),
 };
 
 // ---- locale formatting ----
@@ -474,8 +493,18 @@ function buildReport(doc: ExportDoc, locale: ReportLocale): TDocumentDefinitions
   const lines = collectLines(doc);
   const hasTimes = doc.view === 'individual' && lines.some((l) => l.startMs != null);
   const rate = doc.rate;
+  const basis: RateBasis = doc.rateBasis === 'md' ? 'md' : 'hourly';
+  // The printed unit suffix ("450/h" / "9 000/MD") — the same in both locales,
+  // since "h" and "MD" already are.
+  const rateUnit = basis === 'md' ? '/MD' : '/h';
   const money = makeMoney(L.localeTag, doc.currency || 'CZK');
-  const fee = (secs: number) => (secs / 3600) * (rate ?? 0);
+  // An hourly engagement prices the recorded time. An MD engagement prices the
+  // *printed* two-decimal MD quantities instead: the client reads "2,34 MD ×
+  // 9 000/MD" next to an amount, and that multiplication must reproduce the
+  // amount — pricing the unrounded seconds would put 2.34375 MD of money next
+  // to a printed 2,34.
+  const hourlyFee = (secs: number) => (secs / 3600) * (rate ?? 0);
+  const mdFee = (md: number) => md * (rate ?? 0);
 
   const personName = clamp(doc.personName, MAX.person);
   const role = clamp(doc.role, MAX.role);
@@ -516,11 +545,23 @@ function buildReport(doc: ExportDoc, locale: ReportLocale): TDocumentDefinitions
   const projRows = [...byProject.entries()];
   const projMd = allocateMd(projRows.map(([, s]) => s));
   const projShare = allocateShares(projRows.map(([, s]) => s), totalSecs);
-  const projFees = rate != null ? allocate(projRows.map(([, s]) => fee(s)), money.dp) : null;
+  const projFees =
+    rate != null
+      ? allocate(
+          basis === 'md' ? projMd.rows.map(mdFee) : projRows.map(([, s]) => hourlyFee(s)),
+          money.dp
+        )
+      : null;
 
   const codeRows = [...byCode.entries()].sort((a, b) => b[1].secs - a[1].secs);
   const codeMd = allocateMd(codeRows.map(([, v]) => v.secs));
-  const codeFees = rate != null ? allocate(codeRows.map(([, v]) => fee(v.secs)), money.dp) : null;
+  const codeFees =
+    rate != null
+      ? allocate(
+          basis === 'md' ? codeMd.rows.map(mdFee) : codeRows.map(([, v]) => hourlyFee(v.secs)),
+          money.dp
+        )
+      : null;
 
   const totalMd = allocateMd([totalSecs]).total;
   const totalFee = projFees ? projFees.total : null;
@@ -707,7 +748,7 @@ function buildReport(doc: ExportDoc, locale: ReportLocale): TDocumentDefinitions
           { text: pctStr(projShare[i]), style: 'tdMuted', alignment: 'right' },
           ...(rate != null && projFees
             ? [
-                { text: `${money.rate(rate)}/h`, style: 'tdMuted', alignment: 'right' as const },
+                { text: `${money.rate(rate)}${rateUnit}`, style: 'tdMuted', alignment: 'right' as const },
                 { text: money.amount(projFees.rows[i]), style: 'tdNum', alignment: 'right' as const },
               ]
             : []),
@@ -861,7 +902,11 @@ function buildReport(doc: ExportDoc, locale: ReportLocale): TDocumentDefinitions
                 ...projRows.map(([name, secs], i): TableCell[] => [
                   dot(
                     name,
-                    `${clamp(name || doc.title, MAX.project)} · ${h(secs)} h × ${money.rate(rate)}/h`,
+                    // The breakdown line speaks in the rate's own unit: hours
+                    // for an hourly engagement, allocated MD for an MD one.
+                    basis === 'md'
+                      ? `${clamp(name || doc.title, MAX.project)} · ${mdNum(projMd.rows[i], L.localeTag)} MD × ${money.rate(rate)}/MD`
+                      : `${clamp(name || doc.title, MAX.project)} · ${h(secs)} h × ${money.rate(rate)}/h`,
                     'td'
                   ),
                   { text: money.amount(projFees.rows[i]), style: 'tdNum', alignment: 'right' },
@@ -887,7 +932,7 @@ function buildReport(doc: ExportDoc, locale: ReportLocale): TDocumentDefinitions
               paddingRight: () => 12,
             },
           },
-          { text: L.feesNote, style: 'smallMuted', margin: [0, 8, 0, 0] },
+          { text: L.feesNote(basis), style: 'smallMuted', margin: [0, 8, 0, 0] },
         ]
       : [];
 
@@ -933,6 +978,7 @@ function buildReport(doc: ExportDoc, locale: ReportLocale): TDocumentDefinitions
         hours: h(totalSecs),
         md: mdNum(totalMd, L.localeTag),
         fees: totalFee != null ? money.amount(totalFee) : null,
+        basis,
       }),
       style: 'declare',
       margin: [0, rate != null ? 22 : 4, 0, 0],
@@ -1063,8 +1109,8 @@ export const reportTemplates: PdfTemplate[] = [
     name: 'Timesheet Report (EN)',
     description:
       'A multi-page report in English: cover, summary with totals by project and billing ' +
-      'code (hours and MD), a day-by-day log, and a sign-off page. Add an hourly rate to ' +
-      'include fees.',
+      'code (hours and MD), a day-by-day log, and a sign-off page. Add an hourly or MD ' +
+      'rate to include fees.',
     fields: ['role', 'client', 'approver', 'reference', 'engagement', 'rate'],
     locale: 'en',
     fontset: 'report',
@@ -1076,7 +1122,7 @@ export const reportTemplates: PdfTemplate[] = [
     description:
       'Vícestránkový výkaz v češtině: titulní strana, souhrn podle projektů a účtovacích ' +
       'kódů (hodiny i MD), denní rozpis a strana pro schválení. Po zadání hodinové sazby ' +
-      'doplní i cenu.',
+      'nebo sazby za MD doplní i cenu.',
     fields: ['role', 'client', 'approver', 'reference', 'engagement', 'rate'],
     locale: 'cs',
     fontset: 'report',
