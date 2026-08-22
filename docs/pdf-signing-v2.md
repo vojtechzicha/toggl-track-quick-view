@@ -1,9 +1,11 @@
 # PDF export v2 — qualified digital signing
 
-Status: **phases 1–2 implemented** (2026-08-19); hardware ordered (I.CA Premium USB
-with the A7 device) and phase 3 waits for it. Vendor/product facts below were validated
-2026-08-19 (some directly from downloaded binaries); re-verify versions and prices if
-significant time has passed.
+Status: **phases 1–2 implemented** (2026-08-19); **phase 3's app side implemented**
+(2026-08-22) and blocked on two things. The I.CA Premium USB has arrived, SecureStore
+works and the card enumerates cleanly — but it **carries no certificate yet**, and
+**Fortify crashes on macOS 26** (see the smoke test). Nothing has been signed with the
+token. Vendor/product facts below were validated 2026-08-19 (some directly from
+downloaded binaries); re-verify versions and prices if significant time has passed.
 
 The design below is as approved. Where the implementation turned out to need something
 the design did not anticipate, it is marked **Implementation note** — those are the
@@ -31,7 +33,7 @@ so signing stays client-side and needs a local bridge.
 | Certification agency | **I.CA** — TWINS certificate (qualified signature + commercial auth), 545 CZK/yr renewal, done online from SecureStore while the cert is valid. |
 | Hardware (QSCD) | **I.CA Premium USB** (2 067 CZK incl. VAT, **ordered**): breakable Starcos 3.7 chip card + **A7 USB-C device** (requested in the order note; default shipped is A6 — any ACS CCID reader likely works, but only A7 is marketed for macOS). |
 | Middleware | **I.CA SecureStore for macOS 8.3.1.0** (website still says 8.1; the installer ships 8.3.1.0, built 2026-06-12). Installs the PKCS#11 library at `/usr/local/lib/pkcs11/libICASecureStorePkcs11.dylib` — verified from the binary: **universal x86_64 + arm64**, supports Starcos 3.0/3.5/3.7. |
-| Browser bridge | **Fortify v2.1.0** (native arm64 `.pkg` from [`PeculiarVentures/fortify-releases`](https://github.com/PeculiarVentures/fortify-releases); the original repo is archived). Web side: `@peculiar/fortify-webcomponents` (still actively published). Accessed through a **`TokenBridge` interface** so a DIY localhost helper can replace it without app changes (see Fallbacks). |
+| Browser bridge | ~~Fortify v2.1.0~~ — **abandoned 2026-08-22**, it does not run on macOS 26 (see the smoke test). Replaced per "Fortify is out": I.CA's own PKIServiceHost on localhost now, a DIY helper or an I.CA licence for production. The `FortifyBridge` implementation and its `@peculiar/fortify-client-core` dependency stay in the tree for now — they cost nothing while unavailable, and are the reference for what a bridge has to do. |
 | Signature assembly | **@signpdf 3.3.0** (placeholder + CMS embedding, `ETSI.CAdES.detached`) + **@cantoo/pdf-lib 2.9.1** (maintained pdf-lib fork: incremental save built for signing, `drawSvg`, `embedPage`) + **PKI.js 3.4.0** (CMS SignedData, RFC 3161 client) + **@peculiar/asn1-ess** (`SigningCertificateV2`). All free/open source. |
 | Visible appearance | **Stamp-PDF pattern** — the signature block is designed with pdfmake itself and embedded as the widget's appearance XObject (details below). |
 | Timestamps | Ship **B-B** first. Add **B-T** later via a free TSA (freetsa.org, DigiCert, Czech `tsa.cesnet.cz`) through a stateless Next.js proxy route (public TSAs don't do CORS). Qualified PostSignum stamps (~2.5 CZK each, TSA100 pack) only if a *qualified* timestamp is ever legally needed — addable without redesign. |
@@ -43,7 +45,11 @@ Running costs: token + annual certificate only; all software is free. First year
 
 Fortify's desktop app is dormant (last release 3/2025) and loading third-party PKCS#11
 modules via `~/.fortify/config.json` (card ATR + dylib path) is its historically flaky
-part — hence the smoke test below and the `TokenBridge` seam.
+part — hence the smoke test below and the `TokenBridge` seam. **This ordering is
+superseded.** The smoke test found worse than flaky — on macOS 26 Fortify is killed by
+code signing before it can be configured at all — and investigating the fallbacks changed
+their ranking. Read "Fortify is out — what replaces it" instead; the list below is kept
+for the reasoning behind each candidate.
 
 1. **DIY localhost helper** — small notarized native app (Node + `pkcs11js`, or Go/Swift)
    loading the SecureStore dylib and exposing `listCertificates()` / `signDigest()` over
@@ -58,21 +64,179 @@ part — hence the smoke test below and the `TokenBridge` seam.
 3. **I.CA RemoteSign** — server-side QES via API + mobile-app confirmation; no local
    hardware. Pricing unpublished.
 
-## Smoke test — run when the token arrives, before writing bridge code
+## Smoke test — run 2026-08-22: hardware good, Fortify broken
 
-1. Install SecureStore and `Fortify_*_arm64.pkg`; plug in the token; confirm SecureStore
-   sees the card and certificates.
-2. Read the card's ATR (`opensc-tool --atr`, or Fortify's log on unknown-card insert).
-3. Add the card to `~/.fortify/config.json`
-   (`cards: [{ name, atr, libraries: ["/usr/local/lib/pkcs11/libICASecureStorePkcs11.dylib"] }]`),
-   restart Fortify.
-4. On Fortify's demo tools page (tools.fortifyapp.com), approve pairing and check the
-   qualified certificate is listed and signs test data after PIN entry.
-5. Verify raw RSA signing over an arbitrary digest works (some token profiles restrict
-   mechanisms; Firefox/Adobe use the same PKCS#11 path, so this should pass).
+The token arrived and the hardware half of the stack checks out completely. **Fortify
+2.1.0 does not survive on macOS 26.6.2**, which is the blocker.
 
-Steps 4–5 failing with "token seen, certs not listed" is Fortify's known failure mode —
-switch to fallback 1 rather than debugging it.
+### What works
+
+| | |
+|---|---|
+| Reader | **ACS ACR40T ICC Reader** — the A7 USB-C device was shipped as requested, not the A6. |
+| ATR | `3bda96ff81b1fe451f0780584943412056342e30ef`; historical bytes decode to ASCII `XICA V4.0`. Not in Fortify's `card.json` (v1.1.23, 85 cards, no I.CA entry), so a custom card entry is needed exactly as the design assumed. |
+| Token | `ICA Starcos 3.74`, Giesecke & Devrient, serial `9203070300022806`, *PIN initialized*. |
+| Middleware | SecureStore's PKCS#11 module works **standalone**: `pkcs11-tool --module /usr/local/lib/pkcs11/libICASecureStorePkcs11.dylib -T/-O/-M` enumerates the slot, its objects and its mechanisms. Nothing about the card or the middleware is in doubt. |
+
+Two findings from that enumeration worth keeping:
+
+- **The card holds only I.CA's *Test* CA certificates** (Test EU Qualified CA1/CA2/CA-SK,
+  Test Qualified CA, Test Public CA) and no end-entity certificate — consistent with a
+  card that has not been through certificate issuance yet. Note "Test": a production
+  certificate will arrive with the production hierarchy, and a signature chaining to
+  these would never be trusted by anything.
+- **There is no `CKM_SHA256_RSA_PKCS`.** The token offers `RSA-PKCS` (raw sign),
+  `RSA-PKCS-PSS`, and the SHA digests separately. So the DigestInfo has to be formed
+  above the token and signed with raw `CKM_RSA_PKCS`. `webcrypto-local` does take that
+  path for `RSASSA-PKCS1-v1_5`, so the bridge contract is unaffected — but it is the
+  first thing to check if a signature comes out malformed rather than absent.
+
+`opensc` (for `opensc-tool` / `pkcs11-tool`) comes from Homebrew and is worth having
+installed: it is the only way to ask the card anything without going through Fortify,
+which is what separated "the hardware is fine" from "the app is broken" here.
+
+### What does not work: Fortify crashes
+
+`FortifyApp` — the server half of the bundle — is killed by macOS a minute or so after
+launch:
+
+```
+exception:   EXC_BAD_ACCESS / SIGKILL (Code Signature Invalid)
+termination: CODESIGNING, "Invalid Page"
+faulting frames: dyld … dlopen_from → JustInTimeLoader::makeJustInTimeLoaderDisk
+```
+
+It extracts its native addons (`pkcs11.node`, `pcsclite.node`) into a temp directory and
+`dlopen`s them from there, and the binary itself is **ad-hoc signed with no Team ID and
+no entitlements** (`codesign -dv` → `flags=0x2(adhoc)`, `TeamIdentifier=not set`). One
+crash report per launch.
+
+The symptom that reaches the app is that `https://127.0.0.1:31337` accepts connections
+for a few seconds after launch and then refuses them — which reads like "Fortify is not
+installed" to `FortifyBridge.isAvailable()`, correctly but unhelpfully. Before it dies it
+gets far enough to log `Started` on `127.0.0.1:31337` (confirming the probe address in
+`sign/fortify.ts` is right), start PCSC, initialise the reader, read the card's ATR, and
+register **`MacOS Crypto`** as a provider — so the keychain-backed test path does exist
+in principle.
+
+Diagnosing this needs `"logging": true` in `~/.fortify/config.json` (off by default);
+crash reports are in `~/Library/Logs/DiagnosticReports/FortifyApp-*.ips`.
+
+### Where that leaves the choice
+
+The design ranked the fallbacks assuming Fortify's *custom-card configuration* was the
+flaky part. It never got that far: the app does not stay up long enough to configure. Its
+newest release is 2025-03 and the project is dormant, so waiting for a fix is not a plan
+— Fortify is out. What replaces it is the next section.
+
+## Fortify is out — what replaces it (2026-08-22)
+
+Fortify was going to be uninstalled after the crash above, so the bridge needs a
+different implementation. Two candidates, both investigated rather than assumed.
+
+### Option A — I.CA's own component (PKIServiceHost + ICAClientSign)
+
+I.CA ships the thing Fortify was standing in for, free, from
+[ica.cz/ke-stazeni](https://www.ica.cz/ke-stazeni). What was actually verified, by
+unpacking `icapkiservicehost_mac_0.zip` and reading the published client library at
+`ca.ica.cz/pub/ICAPKIService/`:
+
+| | |
+|---|---|
+| Shape | Native messaging host (`/Library/I.CA/ICAPKIService/ICAPKIServiceHost`, **v3.1.3.0**) + a browser extension. The page calls `chrome.runtime.connect(extensionId)`; the extension relays to the host over stdio. No localhost socket at all — a different mechanism from Fortify's. |
+| Signing | `ICAClientSign.js` exposes `signPades`, `signCadesDetached`, `signCmsDetached`, `signXml`, plus `certificateEnumerateStore` / `certificateLoadUserKeyStore*` for discovery and `pdfOptions*` for a visible block. PAdES B-B and B-T. |
+| Code signing | **Properly signed** — `TeamIdentifier=NQV3834JPK`, hardened runtime. Not Fortify's ad-hoc build, so not Fortify's crash. |
+| Architecture | **x86_64 only** (Feb 2024 build), so Rosetta on Apple silicon. Works today; a liability whenever Rosetta goes. |
+| Cost | The download is free, and `ICAClientSign` is statically linked into the host — the *capability* costs nothing. |
+
+**The blocker is the whitelist, and it is in two places.** The extension's manifest
+(v2.2.1.0) restricts `externally_connectable.matches`, and the host's manifest restricts
+`allowed_origins` to eleven fixed extension IDs. So neither "just use it from our domain"
+nor "ship our own extension against their host" works. The extension's list reads as
+I.CA's integrator roster:
+
+```
+"*://localhost/*", "*://*.localhost/*",
+https://*.csob.cz/*, https://*.csob.sk/*, *://*.ica.cz/*, *://*.moneta.cz/*,
+*://*.tatra.cz/*, *://*.sukl.cz/*, *://*.servis.justice.cz/*,
+https://*.narodni-ca.gov.cz/*, *://*.circularo.com/*, *://*.digisign.org/*,
+*://*.proebiz.com/*, *://*.eon.com/*, *://*.tsk-praha.cz/*, …
+```
+
+**`localhost` is on it, for any port and either scheme.** That single line is the whole
+reason this option is worth having: `pnpm dev` on `http://localhost:3000` can drive the
+card today, with the public extension and the free host, and no conversation with anyone.
+`track.zicha.dev` cannot, and getting it added means licensing (podpora@ica.cz; the
+`?extensionOwner=CSOB` parameter on their test pages shows it is a per-integrator,
+per-branded-extension product).
+
+**It also needs a seam we do not have.** `TokenBridge.signDigest()` asks for a signature
+over bytes we chose — our SignedAttributes. I.CA's lowest useful primitive is
+`signCadesDetached(content)`, which builds the CMS itself. So Option A is not a
+`TokenBridge` implementation; it slots in one level higher:
+
+```ts
+interface DetachedCmsSigner { sign(content: Uint8Array): Promise<Uint8Array> }
+```
+
+with `CmsFromTokenBridge` (today's path: sha256 → buildCms → bridge) and `IcaClientSign`
+(delegate the whole CMS) as its two implementations, and `PadesSigner` taking one. That
+keeps `prepare.ts`, `appearance.ts`, `widget.ts` and the whole stamp-PDF design intact —
+the visible block stays ours, which `signPades` would not allow. The open question is
+whether I.CA's detached CAdES-B-B carries PAdES-conformant signed attributes (no signed
+signing-time); the CAdES baseline forbids it too, so it probably does, but the DSS
+validator has to say so before this is called done.
+
+### Option B — the DIY localhost helper (fallback 1, now specified)
+
+Everything the helper needs to talk to is already proven working from `pkcs11-tool`, so
+the unknowns are packaging, not cryptography.
+
+- **Language: Go**, with `github.com/miekg/pkcs11`. A single static binary, no runtime to
+  bundle — which is exactly what killed Fortify, whose Node addons were extracted to a
+  temp directory and `dlopen`ed from there.
+- **Transport: plain HTTP on `127.0.0.1`**, fixed port. Chrome, Edge and Firefox exempt
+  loopback from mixed-content blocking, so an `https://track.zicha.dev` page can call it;
+  Chrome asks once via its Local Network Access prompt. Safari cannot, so signing is
+  Chrome/Edge/Firefox only — acceptable, and already the case for every option here.
+- **API is `TokenBridge` verbatim**, which is the point of having the seam:
+  `GET /v1/status` → `isAvailable()`; `GET /v1/certificates` → `listCertificates()`;
+  `POST /v1/sign {certificateId, data, hash}` → `signDigest()`; `GET /v1/chain/:id` →
+  `certificateChain()`.
+- **PKCS#11 specifics, already known**: module
+  `/usr/local/lib/pkcs11/libICASecureStorePkcs11.dylib`; token `ICA Starcos 3.74`;
+  PIN 6–8 digits; and **no `CKM_SHA256_RSA_PKCS`**, so the helper builds the DigestInfo
+  itself and signs with raw `CKM_RSA_PKCS`.
+- **Security is the design, not a footnote.** A daemon that signs arbitrary bytes with a
+  QES key is a liability if any page can reach it. Three layers: an `Origin` allowlist
+  (browser-set, so page script cannot forge it); a first-use pairing approval per origin,
+  shown as a matching code in the helper and on the page, exactly as Fortify does; and
+  **`C_Login` per signature**, so every signature costs a PIN typed into the helper's own
+  window, never into the browser. The PIN prompt is the consent.
+- **Packaging is the real cost**, and Fortify's corpse says what to get right: Developer
+  ID signature, notarization, stapling, hardened runtime — plus
+  `com.apple.security.cs.disable-library-validation`, which is required to `dlopen`
+  SecureStore's module and is precisely the entitlement Fortify did not have. Needs an
+  Apple Developer account.
+- **Rough effort**: 1–2 days for PKCS#11 + HTTP, 1–2 for pairing and the confirmation UI,
+  1 for signing and distribution. Call it a week, and none of it touches the app.
+
+### Decision (2026-08-22): neither — build our own
+
+Option A was taken as far as it goes and then rejected: `localhost` is whitelisted but
+`track.zicha.dev` is not, and a custom extension cannot borrow I.CA's helper either,
+because that helper's `allowed_origins` pins eleven extension IDs. Owning the extension
+means owning the native side, which is Option B with a better transport than a localhost
+port. **The plan is `sign-bridge-plan.md`**; the reasoning below is what led there and is
+kept for that.
+
+~~**Take Option A on localhost now, and decide about production later.**~~ It costs nothing,
+needs no build, and the certificate is not here yet anyway — so the next milestone
+(a real qualified signature that validates green) is reachable the day the certificate
+arrives, without committing to a week of native development first. Only *deployment* is
+blocked, and the answer to that is a question with three answers — licence the domain
+from I.CA, build the helper, or accept that signing happens on the machine that has the
+card — none of which has to be answered before we know signing works at all.
 
 ## Architecture
 
@@ -107,6 +271,53 @@ the bridge in the middle. The interface keeps the name `signDigest`, but its arg
 the SignedAttributes and the bridge hashes them itself — matching WebCrypto's
 `subtle.sign`, Fortify's remote crypto, and PKCS#11's `CKM_SHA256_RSA_PKCS`, none of
 which take a bare digest.
+
+**Implementation note — the client library, and why not the webcomponents.** The design
+named `@peculiar/fortify-webcomponents`. What the bridge actually needs is that package's
+dependency, **`@peculiar/fortify-client-core`** — the headless client. The webcomponents
+package is the same API wrapped in Stencil custom elements that render a certificate
+picker of their own; here the picker is the export dialog, which already has the app's
+form styling and has to show things Fortify's component knows nothing about (which
+template, which handwritten scan). Taking the core alone skips Stencil entirely.
+
+Its shape maps onto `TokenBridge` almost exactly: `start()` / `challenge()` / `login()`
+for pairing, `getProviders()` + `getCertificatesByProviderId()` for discovery, and
+`getProviderById()` → `certStorage.findPrivateKey()` → `subtle.sign()` for signing. Three
+things needed deciding on top of it:
+
+- **`isAvailable()` must not download the client.** It runs on every bridge the moment
+  signing is switched on, and constructing a `FortifyAPI` pulls in protobuf.js and the
+  socket implementation — a megabyte or so to discover Fortify is not installed. So the
+  bridge probes `https://127.0.0.1:31337/.well-known/webcrypto-socket` with a plain
+  fetch and imports nothing until there is something to talk to. That duplicates the
+  library's own `FORTIFY_URL`, and `check:signature` asserts the two still agree —
+  drift there would not look like a bug, it would look like Fortify simply never being
+  offered.
+- **Listing is a deliberate act.** `getCertificatesByProviderId()` logs in to each
+  provider (it has to, to enumerate private keys), which means a card PIN prompt. A PIN
+  prompt nobody asked for is indistinguishable from a bug, so `TokenBridge` gained
+  `interactive`, and the dialog offers a *Connect and list certificates* button for a
+  bridge that has it rather than listing on switch-on. The throwaway bridge, which asks
+  nobody anything, still lists immediately.
+- **The chain is fetched for one certificate, not all of them.** `getChain()` is a round
+  trip per certificate, and Fortify's macOS keychain provider can list dozens. So
+  `TokenCertificate.chain` comes back empty from the hardware bridge and `signPdf()`
+  calls the new optional `certificateChain()` for the one being signed with.
+  `getChain()` returns the path *including* the leaf while `buildCms` ships
+  `[signerCert, ...chain]`, so the leaf is filtered back out.
+
+**Implementation note — the certificate is chosen, never assumed.** Phase 2's dialog took
+the first certificate the first available bridge offered, which is correct when a bridge
+holds exactly one. A TWINS card holds **two**, issued to the same person: the qualified
+signature certificate and the commercial authentication one. Signing an acceptance sheet
+with the second produces a file that verifies cryptographically, shows a signature panel,
+and is not a QES — a failure with no visible symptom. So `TokenCertificate` carries
+`qualified` (from the client's `X509Schema.isQualified()`, i.e. the certificate's own
+qcStatements and policies) and `forSignature` (key usage includes nonRepudiation), the
+picker preselects the certificate that is both, and the dialog says out loud when the
+chosen one is neither. Both flags are *claims read off the certificate*: false is
+reliable, true is an expectation, and the verdict still belongs to a validator checking
+the Trust List. That is the right way round for warning someone before they sign.
 
 **Implementation note — one copy of pdf-lib.** `@signpdf/placeholder-pdf-lib` does
 `require('pdf-lib')` while this code imports `@cantoo/pdf-lib`. Two things follow.
@@ -295,15 +506,23 @@ key.
    self-signed throwaway key via WebCrypto; `PAdES-BASELINE-B` per the DSS validator (see
    the results above). `TokenBridge` is defined and has its WebCrypto implementation;
    signing is offered from the ExportDialog behind a switch that is off by default.
-3. **Bridge wiring** — the Fortify implementation (`FortifyBridge` is a stub that reports
-   itself unavailable), cert discovery UI in ExportDialog, sign via token. Requires the
-   smoke-tested token. Result validates green. What phase 3 has to fill in:
-   `@peculiar/fortify-webcomponents`' provider list behind `listCertificates()` and its
-   `crypto.subtle.sign()` behind `signDigest()` — the seam is already the only thing the
-   pipeline talks to.
+3. **Bridge wiring** — ⏳ **written against Fortify, which is dead; being rebuilt.**
+   See `sign-bridge-plan.md` — the seam survives, the implementation behind it does not.
+   The state below describes what exists in the tree today.
+
+   **⏳ written, unproven, and blocked.** `FortifyBridge` is
+   implemented against `@peculiar/fortify-client-core` (`lib/export/pdf/sign/fortify.ts`),
+   the certificate picker is in the export dialog, and the pieces that hold still without
+   hardware are in `check:signature`: the probe address, the DN parsing behind the
+   printed CN, and the chain fetch. **Nothing has been signed with the token.** Two
+   independent blockers, in this order: Fortify does not stay running on macOS 26, so no
+   bridge of any kind can be exercised; and the card has no end-entity certificate, so
+   nothing qualified can be signed even once one does. The app-side work does not change
+   under either — including a switch to fallback 1, which is a new `TokenBridge`
+   implementation and nothing else.
 4. **(Later) B-T timestamp** — TSA proxy route + unsigned attribute embedding.
 
-Only phase 3 waits on delivery.
+Phase 3's remaining half waits on the certificate.
 
 ## Legal notes
 
