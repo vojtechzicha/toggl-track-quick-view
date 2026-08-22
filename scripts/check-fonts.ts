@@ -148,6 +148,84 @@ for (const [file, b64] of Object.entries(identityVfs)) {
   );
 }
 
+// ---- character coverage ----
+//
+// pdfmake has no per-glyph fallback: any code point an embedded cut lacks
+// renders as tofu wherever user-controlled text (project names, descriptions,
+// clients) reaches the page. The cuts are generated with the typeface's full
+// character map, and this asserts it stays that way across regenerations —
+// a Latin-only subset once shipped and would have mangled e.g. a project
+// named "Миграция".
+
+/** Code points mapped by a TrueType font — a minimal cmap reader (formats 4 and 12). */
+function cmapCodepoints(font: Buffer): Set<number> {
+  const numTables = font.readUInt16BE(4);
+  let cmapOff = -1;
+  for (let i = 0; i < numTables; i++) {
+    const rec = 12 + i * 16;
+    if (font.toString('latin1', rec, rec + 4) === 'cmap') {
+      cmapOff = font.readUInt32BE(rec + 8);
+      break;
+    }
+  }
+  assert.ok(cmapOff >= 0, 'font has a cmap table');
+  const nSub = font.readUInt16BE(cmapOff + 2);
+  const out = new Set<number>();
+  for (let i = 0; i < nSub; i++) {
+    const rec = cmapOff + 4 + i * 8;
+    const platform = font.readUInt16BE(rec);
+    const encoding = font.readUInt16BE(rec + 2);
+    // Unicode subtables only: platform 0, or Microsoft BMP/full (3,1) / (3,10).
+    if (!(platform === 0 || (platform === 3 && (encoding === 1 || encoding === 10)))) continue;
+    const sub = cmapOff + font.readUInt32BE(rec + 4);
+    const format = font.readUInt16BE(sub);
+    if (format === 4) {
+      const segX2 = font.readUInt16BE(sub + 6);
+      const ends = sub + 14;
+      const starts = ends + segX2 + 2;
+      for (let s = 0; s < segX2; s += 2) {
+        const end = font.readUInt16BE(ends + s);
+        const start = font.readUInt16BE(starts + s);
+        if (start === 0xffff) continue;
+        for (let c = start; c <= end; c++) out.add(c);
+      }
+    } else if (format === 12) {
+      const nGroups = font.readUInt32BE(sub + 12);
+      for (let g = 0; g < nGroups; g++) {
+        const grp = sub + 16 + g * 12;
+        const start = font.readUInt32BE(grp);
+        const end = font.readUInt32BE(grp + 4);
+        for (let c = start; c <= end; c++) out.add(c);
+      }
+    }
+  }
+  return out;
+}
+
+// One representative per script/block the templates can meet in user text.
+const COVERAGE: Array<[string, string]> = [
+  ['ř', 'Czech diacritics (Latin Ext-A)'],
+  ['ě', 'Czech diacritics (Latin Ext-A)'],
+  ['ị', 'Vietnamese (Latin Ext Additional)'],
+  ['Ж', 'Cyrillic uppercase'],
+  ['я', 'Cyrillic lowercase'],
+  ['λ', 'Greek'],
+  ['€', 'currency symbols'],
+  ['№', 'letterlike symbols'],
+  ['→', 'arrows'],
+  ['≤', 'math operators'],
+  ['„', 'Czech quotation marks'],
+  ['–', 'en dash'],
+];
+
+for (const [file, b64] of Object.entries(identityVfs)) {
+  const cps = cmapCodepoints(Buffer.from(b64, 'base64'));
+  ok(cps.size >= 800, `${file} keeps the full character map (${cps.size} code points)`);
+  for (const [ch, what] of COVERAGE) {
+    ok(cps.has(ch.codePointAt(0) as number), `${file} covers "${ch}" — ${what}`);
+  }
+}
+
 // ---- the production regression itself ----
 //
 // Renders through the real toPDF against a pdfmake stub that reproduces both the
