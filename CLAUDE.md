@@ -42,10 +42,11 @@ Full guide in `docs/ENVIRONMENT.md`.
   fails the PR's own preview deployment when the Vercel side is forgotten.
 - Preview has **no committed template** — Vercel holds it and the `-preview`
   item mirrors it. Mark a preview-only variable `appliesTo: ['preview']`.
-- `APP_PASSWORD` in the `-prod` item is currently the placeholder `replaceMe`:
-  the live value is Sensitive in Vercel and cannot be read back. `validateEnv`
-  rejects that exact string, so `env:pull:prod` yields a deliberately unusable
-  `.env.prod` until a human pastes the real one in.
+- A Sensitive variable in Vercel can never be read back, so 1Password is where
+  a secret is KEPT and Vercel only where it runs. When a value is missing, the
+  convention is a field holding the literal `replaceMe` — a blank custom field
+  is invisible in the 1Password UI, and `validateEnv` rejects `replaceMe`, so
+  the gap is loud rather than silently shipped.
 
 ### The combinations that matter
 
@@ -147,8 +148,9 @@ Vercel, GitHub integration, previews per PR.
   events and re-aliases the domain on every successful Preview deployment
   ("last preview wins"); production is ignored. The fixed host exists because
   the password-gate session (`localStorage` `tqv.auth.v1`) and the PWA are both
-  per-ORIGIN — a fresh `*-<hash>.vercel.app` per deployment loses both. Needs
-  the `VERCEL_TOKEN` repo secret.
+  per-ORIGIN — a fresh `*-<hash>.vercel.app` per deployment loses both. The
+  `VERCEL_TOKEN` repo secret comes from `Development/vercel-zicha-dev-ci`,
+  which zicha-travel's equivalent workflow shares.
 - **Post-deploy refresh hint**: every build bakes a deterministic build id (git
   commit via `VERCEL_GIT_COMMIT_SHA`, `computeBuildId()` in `next.config.js`)
   into the client bundle AND the server routes; long-lived tabs compare theirs

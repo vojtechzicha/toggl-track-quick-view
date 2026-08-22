@@ -194,8 +194,9 @@ The item carries the project and the environment, as `<repo>-dev`,
 ```
 Development
 ├── toggl-track-quick-view-dev       1 field
-├── toggl-track-quick-view-preview   5 fields
+├── toggl-track-quick-view-preview   6 fields
 ├── toggl-track-quick-view-prod      3 fields
+├── vercel-zicha-dev-ci              1 field   (team-wide, not per-project)
 └── …-dev / …-preview / …-prod for every other project
 ```
 
@@ -235,15 +236,21 @@ value is yours to invent.
 | --- | --- |
 | `TOGGL_API_TOKEN` | https://track.toggl.com/profile, bottom of the page. Regenerating it there invalidates the old one immediately. |
 | `MONGODB_URI` | MongoDB Atlas, the `timetrack-quick-view` cluster, Connect > Drivers. Atlas shows the password only when the user is created. |
-| `APP_PASSWORD` | Chosen, not issued. **Currently the placeholder `replaceMe`** — see below. |
+| `APP_PASSWORD` | Chosen, not issued. Recovered by hand — see below. |
 
-`APP_PASSWORD` is marked Sensitive in Vercel, which means neither the CLI nor
-the dashboard can ever read it back, and it was not recorded anywhere else. The
-field exists holding `replaceMe` so it is visible in the 1Password UI and
-`pnpm env:pull:prod` resolves; `validateEnv` rejects that exact string, so it
-cannot be mistaken for a real value. Paste the live password over it when you
-have it to hand, or rotate: set a new one in Vercel and 1Password together and
-redeploy, at the cost of every device being asked for it once more.
+`APP_PASSWORD` is marked Sensitive in Vercel, so neither the CLI nor the
+dashboard can ever read it back. When this item was created the live value
+existed nowhere else, and it was recovered by hand afterwards. That gap is the
+normal case for a Sensitive variable, not an accident — Vercel is where a secret
+RUNS, never where it is kept.
+
+The convention for such a gap: create the field holding the literal
+`replaceMe`. A blank custom field does not show up in the 1Password UI at all,
+so it would be invisible rather than obviously unfinished, and `op inject`
+would fail outright. `validateEnv` rejects that exact string, so a
+`replaceMe` that nobody got round to replacing can never be mistaken for a real
+value — `pnpm env:pull:prod` produces a deliberately unusable `.env.prod` until
+someone pastes the real one in.
 
 `MONGODB_DB` is **not** in this item, because it is not set in Vercel either.
 Production therefore uses the `toggl-quick-view` default from
@@ -282,6 +289,44 @@ code default — there is no row to delete.
 If you would rather have real isolation than a guarded convention, give preview
 its own database user scoped to `timetrack-quick-view`, or its own cluster, and
 put that connection string in this item instead. Nothing else has to change.
+
+### Item vercel-zicha-dev-ci
+
+The odd one out: it carries no application configuration, and it is **not
+scoped to this repository**. `VERCEL_TOKEN` is a Vercel access token for the
+`zicha-dev` team, used by GitHub Actions to re-alias preview domains — this
+project's `beta.track.zicha.dev` and zicha-travel's `preview.zicha.travel`,
+from the one item.
+
+Hence the name. The `<repo>-<env>` convention says the item names what it
+configures, and this configures a team, not an app environment. One shared
+token also means one thing to rotate.
+
+| Field | Where the value comes from |
+| --- | --- |
+| `VERCEL_TOKEN` | vercel.com → Account Settings → Tokens, scoped to the `zicha-dev` team, no expiration. Shown once at creation. |
+
+It lives in 1Password rather than only in GitHub for the usual reason: GitHub
+Actions secrets are write-only, so a token that exists only there cannot be
+copied to a second repository, audited, or recovered. Push it to a repo with:
+
+```bash
+op read "op://Development/vercel-zicha-dev-ci/VERCEL_TOKEN" \
+  | gh secret set VERCEL_TOKEN -R vojtechzicha/<repo>
+```
+
+Two traps, both of which have already bitten:
+
+- `op read` can fail (an unanswered biometric prompt times out), and a naive
+  pipe then feeds `gh` an EMPTY value, overwriting a working secret with
+  nothing. Read into a variable and check its length before setting.
+- `gh secret set` with no value argument reads **stdin**. With no terminal
+  attached — inside an editor's shell, a script, an agent — there is no prompt
+  and no error: it silently stores an empty string. The workflow's own
+  `VERCEL_TOKEN` guard is what surfaces that.
+
+Neither failure is visible from GitHub, because secrets cannot be read back.
+The only real confirmation is a workflow run that succeeds.
 
 ## Adding a variable
 
@@ -348,10 +393,11 @@ Deliberately absent:
 | `pnpm env:pull` writes nothing | Not signed in. Run `op signin`. |
 | `op: command not found` | The install directory is not on `PATH`. Add it and restart the terminal. |
 | A template change never takes effect | A leftover `.env.local` overrides the generated `.env`. `pnpm env:check` prints a note when one exists — delete it. The Vercel CLI recreates it on `vercel link` and `vercel env pull`. |
-| A variable is set but the service rejects it | Its value may be the literal `[SENSITIVE]` copied out of `vercel env pull`, or `replaceMe` from the prod item. `pnpm env:check` catches both. |
+| A variable is set but the service rejects it | Its value may be the literal `[SENSITIVE]` copied out of `vercel env pull`, or an unreplaced `replaceMe`. `pnpm env:check` catches both. |
 | The app says it is misconfigured | `MONGODB_URI` without `APP_PASSWORD`. Set one, or unset the other. |
 | Settings sync is missing from the UI | Sync needs both `MONGODB_URI` and `APP_PASSWORD`. In Toggl mode it also needs `APP_MODE=toggl`, or the app switches to standalone instead of syncing. |
 | The dashboard shows an empty store instead of Toggl data | `APP_MODE=toggl` is missing while `MONGODB_URI` is set — standalone mode. |
 | Toggl starts answering 429 | The hourly budget is per account and local dev shares it with production. Raise `TOGGL_CACHE_INTERVAL` in `.env`. |
 | The "Refresh interval" picker vanished from Settings | Expected whenever `TOGGL_CACHE_INTERVAL` is set: the shared server cache drives the cadence for everyone. |
 | `pnpm dev` fails to start the database | `docker compose` is not available, or port 27018 is taken. `docker compose ps` and `pnpm db` on their own show the real error. |
+| The preview domain stops following deployments | The `VERCEL_TOKEN` repo secret is missing, empty or revoked. Check the newest `Alias preview domain` run; re-push it from `vercel-zicha-dev-ci` as above. |
