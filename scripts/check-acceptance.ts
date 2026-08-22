@@ -69,68 +69,70 @@ function day(dateMs: number, specs: RowSpec[]) {
     hours: H(r.h),
     code: r.code,
     billingCode: r.code,
-    project: 'J&T Banka',
+    project: 'Acme Banka',
     warn: false,
     desc: r.desc,
   }));
   return { dateMs, label: '', total: rows.reduce((s, r) => s + r.hours, 0), rows };
 }
 
-// Mirrors the real July 2026 data the variant was specified against.
+// Mirrors the SHAPE of the data the variant was specified against —
+// clients, codes, tickets, names and systems are invented: actual
+// timesheet texts are confidential and never enter the repository.
 const DAYS = [
   // 7/7 — a meetings tag whose entries carry no "Meeting | " prefix.
   day(D(2026, 7, 7), [
-    { code: 'J-CLD-249 (Cloud - schůzky)', desc: 'Cloud: stand-up', h: 0.4 },
-    { code: 'J-CLD-899 (AVD pentesty)', desc: 'příprava scénářů pro AVD penetrační test', h: 3.2 },
-    { code: 'J-CLD-249 (Cloud - schůzky)', desc: '1:1 Michaela/Vojta', h: 0.8 },
-    { code: 'J-MDS-1', desc: 'PMDP-81 studium dodaných podkladů', h: 1.0 },
+    { code: 'X-CLD-249 (Cloud - schůzky)', desc: 'Cloud: stand-up', h: 0.4 },
+    { code: 'X-CLD-899 (VDI pentesty)', desc: 'příprava scénářů pro VDI penetrační test', h: 3.2 },
+    { code: 'X-CLD-249 (Cloud - schůzky)', desc: '1:1 Alena/Petr', h: 0.8 },
+    { code: 'X-MDS-1', desc: 'DOC-81 studium dodaných podkladů', h: 1.0 },
   ]),
   // 9/7 — near-duplicate descriptions: the longer is the shorter plus a tail
   // (with the shared last word typo-truncated), so they merge into one.
   day(D(2026, 7, 9), [
-    { code: 'J-CLD-900 (Assety fáze 2)', desc: 'Assets - WSO2 napojení a finální architektura', h: 3.6 },
-    { code: 'J-CLD-919 (AI reporting)', desc: 'AI projekt - příprava podkladů', h: 0.6 },
+    { code: 'X-CLD-900 (Moduly fáze 2)', desc: 'Modul - API napojení a finální architektura', h: 3.6 },
+    { code: 'X-CLD-919 (BI reporting)', desc: 'BI projekt - příprava podkladů', h: 0.6 },
     {
-      code: 'J-CLD-900 (Assety fáze 2)',
-      desc: 'Assets - WSO2 napojení a finální architektur, předávka na jiného architekta',
+      code: 'X-CLD-900 (Moduly fáze 2)',
+      desc: 'Modul - API napojení a finální architektur, předávka na jiného architekta',
       h: 5.0,
     },
   ]),
   // 14/7 — the typo day ("poklady" → "podklady" in both variants).
   day(D(2026, 7, 14), [
-    { code: 'J-CLD-900 (Assety fáze 2)', desc: 'úprava zápisu a poklady pro OBE, meeting s OBE', h: 6.2 },
-    { code: 'J-CRM', desc: 'Meeting | Trans. projekty - sladění (cloud)', h: 1.0 },
+    { code: 'X-CLD-900 (Moduly fáze 2)', desc: 'úprava zápisu a poklady pro OPS, meeting s OPS', h: 6.2 },
+    { code: 'X-CRM', desc: 'Meeting | Interní projekty - sladění (cloud)', h: 1.0 },
   ]),
   // 15/7 — the spec's worked example.
   day(D(2026, 7, 15), [
-    { code: 'J-CLD-450 (Cloud - sběrný ticket)', desc: 'finalizace Cloud konceptu', h: 2.4 },
+    { code: 'X-CLD-450 (Cloud - sběrný ticket)', desc: 'finalizace Cloud konceptu', h: 2.4 },
     {
-      code: 'J-CLD-900 (Assety fáze 2)',
-      desc: 'Assets - PSD2 koncept a zajištění syncu s bezpečností',
+      code: 'X-CLD-900 (Moduly fáze 2)',
+      desc: 'Modul - API koncept a zajištění syncu s bezpečností',
       h: 2.8,
     },
-    { code: 'ITSD-214020', desc: 'vygenerování a předání klíče', h: 1.2 },
-    { code: 'ITSD-211968', desc: 'vygenerování a předání klíče', h: 0.6 },
-    { code: 'J-CLD-919 (AI reporting)', desc: 'finalizace AI reporting konceptu', h: 0.8 },
+    { code: 'TCK-104020', desc: 'vygenerování a předání výstupu', h: 1.2 },
+    { code: 'TCK-101968', desc: 'vygenerování a předání výstupu', h: 0.6 },
+    { code: 'X-CLD-919 (BI reporting)', desc: 'finalizace BI reporting konceptu', h: 0.8 },
   ]),
   // 16/7 — a ticket description declaring more tickets behind it.
   day(D(2026, 7, 16), [
-    { code: 'J-CLD-919 (AI reporting)', desc: 'finalizace AI reporting konceptu', h: 0.6 },
+    { code: 'X-CLD-919 (BI reporting)', desc: 'finalizace BI reporting konceptu', h: 0.6 },
     {
-      code: 'ITSD-212604',
-      desc: 'vygenerování a předání klíče (+ řešení 7 obdobných ticketů)',
+      code: 'TCK-102604',
+      desc: 'vygenerování a předání výstupu (+ řešení 7 obdobných ticketů)',
       h: 2.6,
     },
-    { code: 'J-CLD-450 (Cloud - sběrný ticket)', desc: 'finalizace Cloud konceptu', h: 3.2 },
+    { code: 'X-CLD-450 (Cloud - sběrný ticket)', desc: 'finalizace Cloud konceptu', h: 3.2 },
   ]),
 ];
 
 const baseDoc = {
   view: 'individual' as const,
-  title: 'J&T Banka',
+  title: 'Acme Banka',
   personName: 'Vojtěch Zicha',
   role: 'Solutions Architect',
-  company: 'Deloitte',
+  company: 'Example s.r.o.',
   client: '',
   approver: '',
   reference: '',
@@ -231,13 +233,13 @@ const compactRows = dayRows(compactDef);
 {
   eq(
     rowFor(compactRows, '15 Jul')[TASK],
-    'J-CLD-900, J-CLD-450, ITSD-214020, J-CLD-919, ITSD-211968 – ' +
-      'Assets - PSD2 koncept a zajištění syncu s bezpečností + finalizace Cloud konceptu',
+    'X-CLD-900, X-CLD-450, TCK-104020, X-CLD-919, TCK-101968 – ' +
+      'Modul - API koncept a zajištění syncu s bezpečností + finalizace Cloud konceptu',
     '15/7 renders exactly per the compact spec: all codes by hours, one description'
   );
   const full = rowFor(fullRows, '15 Jul')[TASK];
   ok(
-    full.includes('J-CLD-450 (Cloud - sběrný ticket) - finalizace Cloud konceptu'),
+    full.includes('X-CLD-450 (Cloud - sběrný ticket) - finalizace Cloud konceptu'),
     'the Full variant still lists rows verbatim'
   );
   eq(rowFor(compactRows, '15 Jul')[HOURS], '7.80', 'the aggregation never changes the day total');
@@ -252,35 +254,35 @@ const compactRows = dayRows(compactDef);
 {
   eq(
     rowFor(compactRows, '16 Jul')[TASK],
-    'J-CLD-450, ITSD-212604 a další, J-CLD-919 – finalizace Cloud konceptu',
+    'X-CLD-450, TCK-102604 a další, X-CLD-919 – finalizace Cloud konceptu',
     '"+ řešení 7 obdobných ticketů" appends "a další" to the ticket code'
   );
   // A directly-tagged support row (no ticket-code fallback) still lists the
   // ticket ids as codes; a ticket-only day says "řešení tiketů".
   const tagged = compactDayText([
-    { code: '.J-Support', desc: '[ITSD-1] oprava; [ITSD-2] konfigurace', seconds: H(1.4) },
+    { code: '.X-Support', desc: '[TCK-1] oprava; [TCK-2] konfigurace', seconds: H(1.4) },
   ]);
-  eq(tagged, 'ITSD-1, ITSD-2 – řešení tiketů', 'a ".J-Support" tag lists tickets from the text');
+  eq(tagged, 'TCK-1, TCK-2 – řešení tiketů', 'a ".X-Support" tag lists tickets from the text');
   // A multi-project export prefixes the printed code with the project — the
   // unprefixed billingCode must still classify the row as a ticket (its
   // boilerplate description must not feed the day description).
   const multi = compactDayText([
     {
-      code: 'J&T Banka: ITSD-214020',
-      billingCode: 'ITSD-214020',
-      desc: 'vygenerování a předání klíče',
+      code: 'Acme Banka: TCK-104020',
+      billingCode: 'TCK-104020',
+      desc: 'vygenerování a předání výstupu',
       seconds: H(1.2),
     },
     {
-      code: 'J&T Banka: J-CLD-900 (Assety fáze 2)',
-      billingCode: 'J-CLD-900 (Assety fáze 2)',
-      desc: 'Assets - koncept',
+      code: 'Acme Banka: X-CLD-900 (Moduly fáze 2)',
+      billingCode: 'X-CLD-900 (Moduly fáze 2)',
+      desc: 'Modul - koncept',
       seconds: H(2.0),
     },
   ]);
   eq(
     multi,
-    'J&T Banka: J-CLD-900, J&T Banka: ITSD-214020 – Assets - koncept',
+    'Acme Banka: X-CLD-900, Acme Banka: TCK-104020 – Modul - koncept',
     'a "Project: " prefix neither breaks the ticket classification nor leaves the printed code'
   );
 }
@@ -291,7 +293,7 @@ const compactRows = dayRows(compactDef);
   const t = rowFor(compactRows, '7 Jul')[TASK];
   eq(
     t,
-    'J-CLD-899, J-CLD-249, J-MDS-1 – příprava scénářů pro AVD penetrační test',
+    'X-CLD-899, X-CLD-249, X-MDS-1 – příprava scénářů pro VDI penetrační test',
     'a meetings tag stays in the code list; the day description is the main project work'
   );
   for (const name of ['stand-up', '1:1', 'retro']) {
@@ -303,24 +305,24 @@ const compactRows = dayRows(compactDef);
   );
   // A meetings-only day still says something.
   eq(
-    compactDayText([{ code: 'J-CLD-249 (Cloud - schůzky)', desc: 'stand-up', seconds: H(1.0) }]),
-    'J-CLD-249 – schůzky',
+    compactDayText([{ code: 'X-CLD-249 (Cloud - schůzky)', desc: 'stand-up', seconds: H(1.0) }]),
+    'X-CLD-249 – schůzky',
     'a meetings-only day reads "schůzky"'
   );
   // …as does a day of only meetings and tickets.
   eq(
     compactDayText([
-      { code: 'J-CLD-249 (Cloud - schůzky)', desc: 'stand-up', seconds: H(1.0) },
-      { code: 'ITSD-1', desc: 'oprava', seconds: H(0.5) },
+      { code: 'X-CLD-249 (Cloud - schůzky)', desc: 'stand-up', seconds: H(1.0) },
+      { code: 'TCK-1', desc: 'oprava', seconds: H(0.5) },
     ]),
-    'J-CLD-249, ITSD-1 – schůzky a řešení tiketů',
+    'X-CLD-249, TCK-1 – schůzky a řešení tiketů',
     'a meetings-and-tickets day reads "schůzky a řešení tiketů"'
   );
   // Non-meeting tags merely lose the "Meeting | " prefix.
   const crm = compactDayText([
-    { code: 'J-CRM', desc: 'Meeting | Trans. projekty - sladění (cloud)', seconds: H(1.0) },
+    { code: 'X-CRM', desc: 'Meeting | Interní projekty - sladění (cloud)', seconds: H(1.0) },
   ]);
-  eq(crm, 'J-CRM – Trans. projekty - sladění (cloud)', 'the "Meeting | " prefix is stripped');
+  eq(crm, 'X-CRM – Interní projekty - sladění (cloud)', 'the "Meeting | " prefix is stripped');
   no(rowFor(compactRows, '14 Jul')[TASK].includes('Meeting |'), 'no prefix survives in Compact');
 }
 
@@ -332,7 +334,7 @@ const compactRows = dayRows(compactDef);
     ['Compact', compactRows],
   ] as const) {
     const t = rowFor(rows, '14 Jul')[TASK];
-    ok(t.includes('podklady pro OBE'), `${name} fixes "poklady" → "podklady"`);
+    ok(t.includes('podklady pro OPS'), `${name} fixes "poklady" → "podklady"`);
     no(/\bpoklady\b/.test(t), `${name} carries no bare "poklady"`);
   }
   eq(fixDescTypos('Fnalizace a defnice podkladů'), 'Finalizace a definice podkladů',
@@ -400,7 +402,7 @@ const compactRows = dayRows(compactDef);
 {
   eq(
     rowFor(compactRows, '9 Jul')[TASK],
-    'J-CLD-900, J-CLD-919 – Assets - WSO2 napojení a finální architektura',
+    'X-CLD-900, X-CLD-919 – Modul - API napojení a finální architektura',
     'a description that is another plus a tail merges into the shorter, pooling hours'
   );
   // A true word-prefix merges too.
@@ -411,12 +413,12 @@ const compactRows = dayRows(compactDef);
   eq(prefix, 'J-TEST-1 – finalizace konceptu', 'a word-prefix description absorbs the longer');
   // But a differing word inside the shared span is a different activity.
   const distinct = compactDayText([
-    { code: 'J-TEST-1', desc: 'Assets - workshop příprava', seconds: H(2.0) },
-    { code: 'J-TEST-1', desc: 'Assets - workshop zápis', seconds: H(1.8) },
+    { code: 'J-TEST-1', desc: 'Modul - workshop příprava', seconds: H(2.0) },
+    { code: 'J-TEST-1', desc: 'Modul - workshop zápis', seconds: H(1.8) },
   ]);
   eq(
     distinct,
-    'J-TEST-1 – Assets - workshop příprava + Assets - workshop zápis',
+    'J-TEST-1 – Modul - workshop příprava + Modul - workshop zápis',
     'descriptions differing in a full word never merge'
   );
 }
@@ -446,7 +448,7 @@ const compactRows = dayRows(compactDef);
   const mk = (label: string, cells: number[], dayDescs: string[]) => ({
     label,
     billingCode: label,
-    project: 'J&T Banka',
+    project: 'Acme Banka',
     warn: false,
     cells,
     desc: dayDescs.filter(Boolean).join('; '),
@@ -454,8 +456,8 @@ const compactRows = dayRows(compactDef);
     total: cells.reduce((s, v) => s + v, 0),
   });
   const rows = [
-    mk('J-CLD-249 (Cloud - schůzky)', [H(0.6), H(1.2)], ['Cloud: stand-up', 'Cloud: stand-up; 1:1']),
-    mk('J-CLD-900 (Assety fáze 2)', [H(6.4), 0], ['Assets - koncept', '']),
+    mk('X-CLD-249 (Cloud - schůzky)', [H(0.6), H(1.2)], ['Cloud: stand-up', 'Cloud: stand-up; 1:1']),
+    mk('X-CLD-900 (Moduly fáze 2)', [H(6.4), 0], ['Modul - koncept', '']),
   ];
   const doc = {
     ...baseDoc,
@@ -478,10 +480,10 @@ const compactRows = dayRows(compactDef);
   const rows6 = dayRows(getTemplate('acceptance-protocol-compact').build(summaryDoc));
   eq(
     rowFor(rows6, '6 Jul')[TASK],
-    'J-CLD-900, J-CLD-249 – Assets - koncept',
+    'X-CLD-900, X-CLD-249 – Modul - koncept',
     'a summary-view export aggregates by row label per day'
   );
-  eq(rowFor(rows6, '7 Jul')[TASK], 'J-CLD-249 – schůzky', 'per-day cells stay per-day');
+  eq(rowFor(rows6, '7 Jul')[TASK], 'X-CLD-249 – schůzky', 'per-day cells stay per-day');
 }
 
 // ---- nothing may leak ----

@@ -52,23 +52,23 @@ export function fixDescTypos(text: string): string {
 // ---- classification ----
 
 // A ticket-shaped billing code — one alphabetic token, a hyphen, a number
-// ("ITSD-214020"). Cannot match structured project codes ("J-CLD-900",
-// "J-MDS-1") or letters-only ones ("J-CRM"). These codes come from the
-// support-ticket fallback (an untagged entry titled "[ITSD-…] …"); their
+// ("TCK-104020"). Cannot match structured project codes ("X-CLD-900",
+// "X-MDS-1") or letters-only ones ("X-CRM"). These codes come from the
+// support-ticket fallback (an untagged entry titled "[TCK-…] …"); their
 // descriptions are boilerplate the day description ignores.
 const TICKET_CODE_RE = /^[A-Za-z]+-\d+$/;
 
-/** A support-tagged row (".J-Support" exported directly, without the fallback). */
+/** A support-tagged row (".X-Support" exported directly, without the fallback). */
 const SUPPORT_TAG_RE = /support/i;
 
-// A tag named after meetings (e.g. "J-CLD-249 (Cloud - schůzky)"): its
+// A tag named after meetings (e.g. "X-CLD-249 (Cloud - schůzky)"): its
 // descriptions never feed the day description — individual meeting names carry
 // no information the approver needs. Keyed off the tag NAME, not a "Meeting | "
 // description prefix: ad-hoc meetings (stand-ups, 1:1s) are often logged
 // without the prefix, and the tag is what actually declares "this is meetings".
 const MEETINGS_TAG_RE = /sch[uů]zk/i;
 
-/** Ticket ids mentioned inside a description ("ITSD-214020"). */
+/** Ticket ids mentioned inside a description ("TCK-104020"). */
 const TICKET_IN_TEXT_RE = /\b[A-Z][A-Z0-9]+-\d+\b/g;
 
 // "… (+ řešení 7 obdobných tiketů)" — the description says more tickets hide
