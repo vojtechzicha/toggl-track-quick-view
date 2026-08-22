@@ -1,5 +1,12 @@
 // PDF generation entry point. pdfmake and its bundled fonts are lazy-loaded so the
 // (sizeable) library only reaches the browser when an export actually runs.
+//
+// Known generator limitation — accessibility: pdfmake emits UNTAGGED PDF.
+// The documents carry real text (selectable, searchable), embedded genuine
+// font cuts, and title/author/subject metadata, but no PDF/UA structure tags
+// or explicit reading order, and no /Lang entry. Producing tagged output
+// would require a different generator; if a client demands PDF/UA, state this
+// limitation rather than implying compliance.
 
 import type { ExportDoc } from '../model';
 import { getTemplate } from './templates';

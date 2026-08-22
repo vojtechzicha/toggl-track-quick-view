@@ -12,7 +12,6 @@ import {
   type ExportDoc,
   type SummaryDoc,
   type IndividualDoc,
-  periodLabel,
   secsToHoursLabel,
 } from '../model';
 import { reportTemplates } from './report';
@@ -62,6 +61,28 @@ export interface PdfTemplate {
 
 const hoursOrDash = (seconds: number): string => (seconds > 0 ? secsToHoursLabel(seconds) : '—');
 
+// Fixed en-GB date conventions, matching the EN report — the model's labels
+// follow the device locale, which must not leak into the document.
+const MONTHS_EN = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+const DAYS_EN = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+
+const fmtDayEn = (ms: number): string => {
+  const d = new Date(ms);
+  return `${d.getDate()} ${MONTHS_EN[d.getMonth()]}`;
+};
+
+/** "1 Jul – 31 Jul 2026" — the same range form the EN report prints. */
+function fmtRangeEn(fromMs: number, toMs: number): string {
+  const last = toMs - 1; // toMs is exclusive
+  return `${fmtDayEn(fromMs)} – ${fmtDayEn(last)} ${new Date(last).getFullYear()}`;
+}
+
+/** "Tue 07 Jul" — the EN report's day-header form, without the year. */
+function fmtDayHeadEn(ms: number): string {
+  const d = new Date(ms);
+  return `${DAYS_EN[d.getDay()]} ${String(d.getDate()).padStart(2, '0')} ${MONTHS_EN[d.getMonth()]}`;
+}
+
 /**
  * Document masthead: principal double rule with the page's one oxide
  * termination, the document title, and the person's name in signature form.
@@ -71,14 +92,16 @@ function masthead(doc: ExportDoc): Content[] {
     principalRule(198, true, [0, 0, 0, 10]),
     {
       columns: [
-        { text: doc.title || 'Timesheet', style: 'vzDocTitle' },
+        // The document type leads the title, so a continuation reader — or a
+        // client filing several PDFs — sees what the document is at once.
+        { text: doc.title ? `Timesheet · ${doc.title}` : 'Timesheet', style: 'vzDocTitle' },
         signature(doc.personName, { style: 'vzSignature', alignment: 'right', margin: [0, 6, 0, 0] }),
       ],
     },
     {
       stack: [
         { text: 'Period', style: 'vzMetaK' },
-        { text: periodLabel(doc.fromMs, doc.toMs), style: 'vzMetaV', margin: [0, 1, 0, 0] },
+        { text: fmtRangeEn(doc.fromMs, doc.toMs), style: 'vzMetaV', margin: [0, 1, 0, 0] },
       ],
       margin: [0, 8, 0, 6],
     },
@@ -105,7 +128,8 @@ function grandTotal(label: string, seconds: number): Content {
 function summaryContent(doc: SummaryDoc): Content[] {
   const content: Content[] = [];
   for (const week of doc.weeks) {
-    content.push({ text: week.label, style: 'weekHead' });
+    const weekLabel = `${fmtDayEn(week.dayDates[0])} – ${fmtDayEn(week.dayDates[week.dayDates.length - 1])}`;
+    content.push({ text: weekLabel, style: 'weekHead' });
 
     const head: TableCell[] = [
       { text: 'Billing tag', style: 'vzTh' },
@@ -147,7 +171,7 @@ function individualContent(doc: IndividualDoc): Content[] {
   for (const day of doc.days) {
     content.push({
       columns: [
-        { text: day.label, style: 'dayHead' },
+        { text: fmtDayHeadEn(day.dateMs), style: 'dayHead' },
         { text: secsToHoursLabel(day.total), style: 'dayHead', alignment: 'right' },
       ],
     });
@@ -192,18 +216,38 @@ function buildStandard(doc: ExportDoc): TDocumentDefinitions {
     day: 'numeric',
   });
 
+  const title = doc.title ? `Timesheet · ${doc.title}` : 'Timesheet';
+  const period = fmtRangeEn(doc.fromMs, doc.toMs);
+
   return {
     // Summary grids are wide, so they print landscape; the individual list is portrait.
     pageOrientation: landscape ? 'landscape' : 'portrait',
     pageSize: 'A4',
     pageMargins: A4_MARGINS,
-    info: { title: `Timesheet — ${doc.title || ''}`.trim() },
+    info: {
+      title: `Timesheet — ${doc.title || ''}`.trim(),
+      author: doc.personName || undefined,
+      subject: 'Timesheet',
+    },
+    // Continuation pages repeat the document context and authorship — a
+    // separated page 2 should still say whose sheet it is and for what period.
+    header: (currentPage: number): Content =>
+      currentPage === 1
+        ? { text: '' }
+        : {
+            margin: [62, 26, 62, 0],
+            columns: [
+              { text: `${title} — ${period}`, style: 'vzContHead' },
+              signature(doc.personName, { style: 'vzContHead', alignment: 'right' }),
+            ],
+          },
     content,
     styles: {
       ...identityBaseStyles,
       weekHead: { fontSize: 9.5, bold: true, color: VZ.ink, margin: [0, 12, 0, 5] },
       dayHead: { fontSize: 9.5, bold: true, color: VZ.ink, margin: [0, 10, 0, 4] },
       vzTotal: { fontSize: 8.5, bold: true, color: VZ.ink },
+      vzContHead: { fontSize: 7.5, color: VZ.secondary },
       vzGrandValue: {
         fontSize: 10,
         bold: true,

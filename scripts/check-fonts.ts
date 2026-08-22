@@ -226,6 +226,78 @@ for (const [file, b64] of Object.entries(identityVfs)) {
   }
 }
 
+// ---- genuine weights ----
+//
+// The visible bold hierarchy must come from real SemiBold/Bold outlines, not a
+// Regular file mapped under several names. Each cut must carry the weight
+// class of the weight it is declared as, and a name table that says so — a PDF
+// inspector reading the embedded fonts should see the genuine cut.
+
+function sfntTable(font: Buffer, tag: string): number {
+  const numTables = font.readUInt16BE(4);
+  for (let i = 0; i < numTables; i++) {
+    const rec = 12 + i * 16;
+    if (font.toString('latin1', rec, rec + 4) === tag) return font.readUInt32BE(rec + 8);
+  }
+  return -1;
+}
+
+/** OS/2 usWeightClass — 400 regular, 500 medium, 600 semibold, 700 bold. */
+function weightClass(font: Buffer): number {
+  const os2 = sfntTable(font, 'OS/2');
+  assert.ok(os2 >= 0, 'font has an OS/2 table');
+  return font.readUInt16BE(os2 + 4);
+}
+
+/** The full font name (name ID 4) from a Unicode/Microsoft name record. */
+function fullName(font: Buffer): string {
+  const nameOff = sfntTable(font, 'name');
+  assert.ok(nameOff >= 0, 'font has a name table');
+  const count = font.readUInt16BE(nameOff + 2);
+  const strings = nameOff + font.readUInt16BE(nameOff + 4);
+  for (let i = 0; i < count; i++) {
+    const rec = nameOff + 6 + i * 12;
+    const platform = font.readUInt16BE(rec);
+    const nameId = font.readUInt16BE(rec + 6);
+    if (nameId !== 4 || !(platform === 0 || platform === 3)) continue;
+    const len = font.readUInt16BE(rec + 8);
+    const off = strings + font.readUInt16BE(rec + 10);
+    // Unicode name strings are UTF-16BE.
+    let out = '';
+    for (let b = 0; b < len; b += 2) out += String.fromCharCode(font.readUInt16BE(off + b));
+    return out;
+  }
+  return '';
+}
+
+const EXPECTED_CUTS: Record<string, { weight: number; name: string }> = {
+  'IBMPlexSans-Regular.ttf': { weight: 400, name: 'IBM Plex Sans Regular' },
+  'IBMPlexSans-Medium.ttf': { weight: 500, name: 'IBM Plex Sans Medium' },
+  'IBMPlexSans-SemiBold.ttf': { weight: 600, name: 'IBM Plex Sans SemiBold' },
+  'IBMPlexSans-Bold.ttf': { weight: 700, name: 'IBM Plex Sans Bold' },
+  'IBMPlexSans-Italic.ttf': { weight: 400, name: 'IBM Plex Sans Italic' },
+};
+eqKeys: {
+  const have = Object.keys(identityVfs).sort();
+  const want = Object.keys(EXPECTED_CUTS).sort();
+  ok(
+    have.length === want.length && have.every((f, i) => f === want[i]),
+    `the identity VFS ships exactly the expected cuts (${have.join(', ')})`
+  );
+  break eqKeys;
+}
+for (const [file, expect] of Object.entries(EXPECTED_CUTS)) {
+  const buf = Buffer.from(identityVfs[file], 'base64');
+  ok(
+    weightClass(buf) === expect.weight,
+    `${file} is genuinely weight ${expect.weight} (got ${weightClass(buf)})`
+  );
+  ok(
+    fullName(buf) === expect.name,
+    `${file} identifies itself as "${expect.name}" (got "${fullName(buf)}")`
+  );
+}
+
 // ---- the production regression itself ----
 //
 // Renders through the real toPDF against a pdfmake stub that reproduces both the

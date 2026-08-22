@@ -46,7 +46,7 @@ const CW = CW_PORTRAIT;
 // an unbounded string either overflows a fixed column or, in the day log, grows
 // a table row taller than the page it cannot be broken across.
 const MAX = {
-  client: 160, // cover title; also shrinks (see coverTitleSize)
+  client: 160, // the cover's client line (wraps rather than truncates further)
   person: 90,
   role: 70,
   approver: 90,
@@ -68,7 +68,6 @@ function clamp(s: string | null | undefined, max: number): string {
 
 interface Strings {
   localeTag: string;
-  docType: string;
   docTitle: string;
   confidential: string;
   metaClient: string;
@@ -147,7 +146,6 @@ interface Strings {
 
 const EN: Strings = {
   localeTag: 'en-GB',
-  docType: 'Professional services · Timesheet report',
   docTitle: 'Timesheet report',
   confidential: 'Confidential',
   metaClient: 'Client',
@@ -236,7 +234,6 @@ const EN: Strings = {
 
 const CS: Strings = {
   localeTag: 'cs-CZ',
-  docType: 'Výkaz poskytnutých služeb',
   docTitle: 'Výkaz práce',
   confidential: 'Důvěrné',
   metaClient: 'Klient',
@@ -449,7 +446,7 @@ function collectLines(doc: ExportDoc): Line[] {
 
 /** Section label: sentence case, SemiBold — typography, not decoration. */
 function sectionH(text: string): Content {
-  return { text, style: 'sectionH', margin: [0, 16, 0, 6] };
+  return { text, style: 'sectionH', margin: [0, 13, 0, 5] };
 }
 
 /** Page heading: 16 pt SemiBold title, small Secondary note right, full rule under. */
@@ -468,6 +465,13 @@ function phead(title: string, note: string): Content[] {
 // The identity table layout: full rules around the head and the closing total
 // row, hairline rows between, Surface head fill, no vertical lines.
 const rowTableLayout = ruledTableLayout({ totalRow: true });
+
+// The summary tables add a real gutter before every column after the first,
+// so a wide name column never runs visually into the figures beside it.
+const summaryTableLayout = {
+  ...rowTableLayout,
+  paddingLeft: (i: number) => (i === 0 ? 4 : 12),
+};
 
 // ---- the builder ----
 
@@ -549,11 +553,6 @@ function buildReport(doc: ExportDoc, locale: ReportLocale): TDocumentDefinitions
 
   // -- cover --
 
-  // A client name is never truncated away — it is who the document is for — so
-  // the type shrinks to fit instead (22 pt is the cover-title size of the spec).
-  const coverTitleSize =
-    client.length > 96 ? 13 : client.length > 58 ? 16 : client.length > 32 ? 19 : 22;
-
   const projectsLabel = (() => {
     const names = projectNames.map((p) => clamp(p, MAX.project));
     if (names.length === 0) return clamp(doc.title, MAX.project);
@@ -562,69 +561,74 @@ function buildReport(doc: ExportDoc, locale: ReportLocale): TDocumentDefinitions
     return `${shown} ${L.andMore(names.length - MAX.projectsOnCover)}`;
   })();
 
+  // The client-and-project line beneath the title. When the project label
+  // merely repeats the client (a single-project export falling back to the
+  // document title), the client stands alone.
+  const clientLine =
+    projectsLabel && projectsLabel.toLowerCase() !== client.toLowerCase()
+      ? `${client} · ${projectsLabel}`
+      : client;
+
   const metaPair = (label: string, value: Content): Content => ({
     stack: [{ text: label, style: 'metaK' }, value],
   });
 
+  // The cover follows the invoice's authorship logic: the issuer's signature
+  // is the masthead, the document type is the title, and the client, project,
+  // period and reference are the recipient information beneath it. The
+  // signature signs once, at the top — no second wordmark lower down.
   const cover: Content[] = [
+    // The cover's principal double rule — the page's one oxide termination
+    // (80 mm) — with the signature masthead beneath it (letterhead grammar).
+    principalRule(227, true, [0, 0, 0, 12]),
     {
       columns: [
-        { text: L.docType, style: 'coverDocType' },
-        // Confidentiality marker, top right (report grammar of the spec, §20).
-        { text: L.confidential, style: 'coverDocType', alignment: 'right' },
+        signature(personName, { style: 'coverMasthead' }),
+        // Confidentiality marker, top right — present but subordinate.
+        { text: L.confidential, style: 'coverConf', alignment: 'right', margin: [0, 7, 0, 0] },
       ],
     },
-    // The cover's principal double rule — the page's one oxide termination
-    // (80 mm), opening the upper third.
-    principalRule(227, true, [0, 148, 0, 0]),
-    { text: client, style: 'coverTitle', fontSize: coverTitleSize, margin: [0, 18, 0, 0] },
-    { text: `${L.docTitle} · ${range}`, style: 'coverSub', margin: [0, 8, 0, 0] },
+    ...(role ? [{ text: role, style: 'coverSignRole', margin: [0, 3, 0, 0] } as Content] : []),
+    { text: L.docTitle, style: 'coverTitle', margin: [0, 148, 0, 0] },
+    { text: clientLine, style: 'coverClient', margin: [0, 12, 0, 0] },
+    { text: `${range} · ${ref}`, style: 'coverSub', margin: [0, 6, 0, 0] },
     {
-      // Pinned to the foot of the cover. Sits at 596 (not lower) so a wrapped
-      // client, project or reference value still clears the bottom margin.
-      absolutePosition: { x: 62, y: 596 },
-      stack: [
-        {
-          table: {
-            widths: [CW / 2 - 14, CW / 2 - 14],
-            body: [
-              [
-                metaPair(L.metaClient, { text: client, style: 'metaV' }),
-                metaPair(L.metaProjects, { text: projectsLabel, style: 'metaV' }),
-              ],
-              [
-                metaPair(L.metaRef, { text: ref, style: 'metaV' }),
-                metaPair(L.metaPreparedBy, { text: personName, style: 'metaV' }),
-              ],
-              [
-                metaPair(L.metaEffort, {
-                  text: `${h(totalSecs)} h · ${mdNum(totalMd, L.localeTag)} MD · ${nDays} ${L.daysWord(nDays)}`,
+      // Pinned to the foot of the cover. Sits at 640 (not lower) so a wrapped
+      // value still clears the bottom margin.
+      absolutePosition: { x: 62, y: 640 },
+      table: {
+        widths: [CW / 2 - 14, CW / 2 - 14],
+        body: [
+          [
+            metaPair(L.metaEffort, {
+              text: `${h(totalSecs)} h · ${mdNum(totalMd, L.localeTag)} MD · ${nDays} ${L.daysWord(nDays)}`,
+              style: 'metaV',
+            }),
+            totalFee != null
+              ? metaPair(L.metaFees, { text: money.amount(totalFee), style: 'metaV' })
+              : metaPair(L.metaIssued, {
+                  text: fmtDate(generatedAt, locale, true),
                   style: 'metaV',
                 }),
-                totalFee != null
-                  ? metaPair(L.metaFees, { text: money.amount(totalFee), style: 'metaV' })
-                  : metaPair(L.metaIssued, {
-                      text: fmtDate(generatedAt, locale, true),
-                      style: 'metaV',
-                    }),
-              ],
-            ],
-          },
-          // Hairline-separated metadata rows — no box, no fills.
-          layout: {
-            hLineWidth: (i: number) => (i === 1 || i === 2 ? 0.3 : 0),
-            hLineColor: () => VZ.rule,
-            vLineWidth: () => 0,
-            paddingTop: () => 8,
-            paddingBottom: () => 8,
-            paddingLeft: (i: number) => (i === 1 ? 14 : 0),
-            paddingRight: (i: number) => (i === 0 ? 14 : 0),
-          },
-        },
-        // The signature — the one place on the cover where the name signs.
-        signature(personName, { style: 'coverSign', margin: [0, 22, 0, 0] }),
-        ...(role ? [{ text: role, style: 'coverSignRole', margin: [0, 2, 0, 0] } as Content] : []),
-      ],
+          ],
+          [
+            metaPair(L.metaPreparedBy, { text: personName, style: 'metaV' }),
+            totalFee != null
+              ? metaPair(L.metaIssued, { text: fmtDate(generatedAt, locale, true), style: 'metaV' })
+              : { text: '' },
+          ],
+        ],
+      },
+      // Hairline-separated metadata rows — no box, no fills.
+      layout: {
+        hLineWidth: (i: number) => (i === 1 ? 0.3 : 0),
+        hLineColor: () => VZ.rule,
+        vLineWidth: () => 0,
+        paddingTop: () => 8,
+        paddingBottom: () => 8,
+        paddingLeft: (i: number) => (i === 1 ? 14 : 0),
+        paddingRight: (i: number) => (i === 0 ? 14 : 0),
+      },
     },
     { text: '', pageBreak: 'after' },
   ];
@@ -660,8 +664,8 @@ function buildReport(doc: ExportDoc, locale: ReportLocale): TDocumentDefinitions
       hLineColor: () => VZ.ink,
       vLineWidth: () => 0,
       fillColor: () => VZ.surface,
-      paddingTop: () => 9,
-      paddingBottom: () => 9,
+      paddingTop: () => 8,
+      paddingBottom: () => 8,
       paddingLeft: () => 10,
       paddingRight: () => 10,
     },
@@ -712,13 +716,13 @@ function buildReport(doc: ExportDoc, locale: ReportLocale): TDocumentDefinitions
         ],
       ],
     },
-    layout: rowTableLayout,
+    layout: summaryTableLayout,
   };
 
   const codeTable: Content = {
     table: {
       headerRows: 1,
-      widths: rate != null ? [88, '*', 42, 40, 86] : [88, '*', 52, 48],
+      widths: rate != null ? [150, '*', 46, 40, 86] : [150, '*', 56, 48],
       body: [
         [
           { text: L.thCode, style: 'th' },
@@ -747,7 +751,7 @@ function buildReport(doc: ExportDoc, locale: ReportLocale): TDocumentDefinitions
         ],
       ],
     },
-    layout: rowTableLayout,
+    layout: summaryTableLayout,
   };
 
   const summaryPage: Content[] = [
@@ -770,7 +774,7 @@ function buildReport(doc: ExportDoc, locale: ReportLocale): TDocumentDefinitions
     ...(projectNames.length > 0 ? [sectionH(L.byProject), projTable] : []),
     sectionH(L.byCode),
     codeTable,
-    { text: L.mdNote, style: 'smallMuted', margin: [0, 8, 0, 0] },
+    { text: L.mdNote, style: 'smallMuted', margin: [0, 6, 0, 0] },
     { text: '', pageBreak: 'after' },
   ];
 
@@ -966,7 +970,11 @@ function buildReport(doc: ExportDoc, locale: ReportLocale): TDocumentDefinitions
     pageOrientation: 'portrait',
     pageSize: 'A4',
     pageMargins: A4_MARGINS,
-    info: { title: `${L.docTitle} — ${client}`.trim() },
+    info: {
+      title: `${L.docTitle} — ${client}`.trim(),
+      author: personName || undefined,
+      subject: L.docTitle,
+    },
     content: [...cover, ...summaryPage, ...detailPage, ...signoffPage],
     footer: (currentPage: number, pageCount: number): Content =>
       currentPage === 1
@@ -987,11 +995,12 @@ function buildReport(doc: ExportDoc, locale: ReportLocale): TDocumentDefinitions
           },
     styles: {
       ...identityBaseStyles,
-      coverDocType: { font: F.medium, fontSize: 7.5, color: VZ.secondary },
-      coverTitle: { fontSize: 22, bold: true, color: VZ.ink, lineHeight: 1.1 },
-      coverSub: { fontSize: 11, color: VZ.secondary },
-      coverSign: { fontSize: 12, bold: true, color: VZ.ink },
+      coverMasthead: { fontSize: 16, bold: true, color: VZ.ink },
+      coverConf: { font: F.medium, fontSize: 7.5, color: VZ.secondary },
       coverSignRole: { fontSize: 7.5, color: VZ.secondary },
+      coverTitle: { fontSize: 22, bold: true, color: VZ.ink, lineHeight: 1.1 },
+      coverClient: { fontSize: 11, bold: true, color: VZ.ink, lineHeight: 1.3 },
+      coverSub: { fontSize: 9.5, color: VZ.secondary },
       metaK: { font: F.medium, fontSize: 7, color: VZ.secondary },
       metaV: { fontSize: 8.5, bold: true, color: VZ.ink, margin: [0, 3, 0, 0] },
       pheadTitle: { fontSize: 16, bold: true, color: VZ.ink },

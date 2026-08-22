@@ -230,17 +230,17 @@ const compactRows = dayRows(compactDef);
 
 {
   eq(
-    rowFor(compactRows, '15/7')[TASK],
+    rowFor(compactRows, '15 Jul')[TASK],
     'J-CLD-900, J-CLD-450, ITSD-214020, J-CLD-919, ITSD-211968 – ' +
       'Assets - PSD2 koncept a zajištění syncu s bezpečností + finalizace Cloud konceptu',
     '15/7 renders exactly per the compact spec: all codes by hours, one description'
   );
-  const full = rowFor(fullRows, '15/7')[TASK];
+  const full = rowFor(fullRows, '15 Jul')[TASK];
   ok(
     full.includes('J-CLD-450 (Cloud - sběrný ticket) - finalizace Cloud konceptu'),
     'the Full variant still lists rows verbatim'
   );
-  eq(rowFor(compactRows, '15/7')[HOURS], '7.80', 'the aggregation never changes the day total');
+  eq(rowFor(compactRows, '15 Jul')[HOURS], '7.80', 'the aggregation never changes the day total');
   // No per-entry or per-group times survive anywhere in the compact cells.
   for (const r of compactRows) {
     no(/\(\d+(\.\d+)? h\)/.test(r[TASK]), `no "(X.X h)" times in a compact cell (${r[3]})`);
@@ -251,7 +251,7 @@ const compactRows = dayRows(compactDef);
 
 {
   eq(
-    rowFor(compactRows, '16/7')[TASK],
+    rowFor(compactRows, '16 Jul')[TASK],
     'J-CLD-450, ITSD-212604 a další, J-CLD-919 – finalizace Cloud konceptu',
     '"+ řešení 7 obdobných ticketů" appends "a další" to the ticket code'
   );
@@ -288,7 +288,7 @@ const compactRows = dayRows(compactDef);
 // ---- meetings ----
 
 {
-  const t = rowFor(compactRows, '7/7')[TASK];
+  const t = rowFor(compactRows, '7 Jul')[TASK];
   eq(
     t,
     'J-CLD-899, J-CLD-249, J-MDS-1 – příprava scénářů pro AVD penetrační test',
@@ -298,7 +298,7 @@ const compactRows = dayRows(compactDef);
     no(t.includes(name), `no individual meeting name ("${name}") leaks into Compact`);
   }
   ok(
-    rowFor(fullRows, '7/7')[TASK].includes('Cloud: stand-up'),
+    rowFor(fullRows, '7 Jul')[TASK].includes('Cloud: stand-up'),
     'the Full variant keeps the meeting names'
   );
   // A meetings-only day still says something.
@@ -321,7 +321,7 @@ const compactRows = dayRows(compactDef);
     { code: 'J-CRM', desc: 'Meeting | Trans. projekty - sladění (cloud)', seconds: H(1.0) },
   ]);
   eq(crm, 'J-CRM – Trans. projekty - sladění (cloud)', 'the "Meeting | " prefix is stripped');
-  no(rowFor(compactRows, '14/7')[TASK].includes('Meeting |'), 'no prefix survives in Compact');
+  no(rowFor(compactRows, '14 Jul')[TASK].includes('Meeting |'), 'no prefix survives in Compact');
 }
 
 // ---- text hygiene, in both variants ----
@@ -331,7 +331,7 @@ const compactRows = dayRows(compactDef);
     ['Full', fullRows],
     ['Compact', compactRows],
   ] as const) {
-    const t = rowFor(rows, '14/7')[TASK];
+    const t = rowFor(rows, '14 Jul')[TASK];
     ok(t.includes('podklady pro OBE'), `${name} fixes "poklady" → "podklady"`);
     no(/\bpoklady\b/.test(t), `${name} carries no bare "poklady"`);
   }
@@ -399,7 +399,7 @@ const compactRows = dayRows(compactDef);
 
 {
   eq(
-    rowFor(compactRows, '9/7')[TASK],
+    rowFor(compactRows, '9 Jul')[TASK],
     'J-CLD-900, J-CLD-919 – Assets - WSO2 napojení a finální architektura',
     'a description that is another plus a tail merges into the shorter, pooling hours'
   );
@@ -477,11 +477,11 @@ const compactRows = dayRows(compactDef);
   const { days: _days, ...summaryDoc } = doc as any;
   const rows6 = dayRows(getTemplate('acceptance-protocol-compact').build(summaryDoc));
   eq(
-    rowFor(rows6, '6/7')[TASK],
+    rowFor(rows6, '6 Jul')[TASK],
     'J-CLD-900, J-CLD-249 – Assets - koncept',
     'a summary-view export aggregates by row label per day'
   );
-  eq(rowFor(rows6, '7/7')[TASK], 'J-CLD-249 – schůzky', 'per-day cells stay per-day');
+  eq(rowFor(rows6, '7 Jul')[TASK], 'J-CLD-249 – schůzky', 'per-day cells stay per-day');
 }
 
 // ---- nothing may leak ----

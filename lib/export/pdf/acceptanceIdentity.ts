@@ -14,8 +14,6 @@ import {
   acceptanceDays,
   calendarDays,
   mdColumn,
-  fmtDayMonth,
-  fmtFullDate,
   isoWeek,
   secsToHoursNumLabel,
 } from './acceptanceData';
@@ -31,6 +29,15 @@ import {
   identityBaseStyles,
   identityDefaultStyle,
 } from './identity';
+
+// Unambiguous en-GB dates ("15 Jul", "1 Aug 2026") — the numeric d/m forms of
+// the original sheet read as either d/m or m/d outside the Czech context.
+const MONTHS_EN = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+const fmtDayEn = (ms: number): string => {
+  const d = new Date(ms);
+  return `${d.getDate()} ${MONTHS_EN[d.getMonth()]}`;
+};
+const fmtFullEn = (ms: number): string => `${fmtDayEn(ms)} ${new Date(ms).getFullYear()}`;
 
 export function buildAcceptanceIdentity(
   doc: ExportDoc,
@@ -58,8 +65,8 @@ export function buildAcceptanceIdentity(
         infoRow('Name', doc.personName),
         infoRow('Role', doc.role),
         infoRow('Company', doc.company),
-        infoRow('Start date', fmtFullDate(doc.fromMs)),
-        infoRow('End date', fmtFullDate(lastDayMs)),
+        infoRow('Start date', fmtFullEn(doc.fromMs)),
+        infoRow('End date', fmtFullEn(lastDayMs)),
         infoRow('MDs', md.total, true),
       ],
     },
@@ -98,7 +105,7 @@ export function buildAcceptanceIdentity(
       { text: String(d.getFullYear()), style: td, alignment: 'center' },
       { text: String(d.getMonth() + 1), style: td, alignment: 'center' },
       { text: String(isoWeek(ms)), style: td, alignment: 'center' },
-      { text: fmtDayMonth(ms), style: td, alignment: 'right' },
+      { text: fmtDayEn(ms), style: td, alignment: 'right' },
       { text: doc.company, style: td },
       { text: agg?.tasks.join('; ') ?? '', style: td },
       { text: secsToHoursNumLabel(secs), style: td, alignment: 'right' },
@@ -109,18 +116,50 @@ export function buildAcceptanceIdentity(
   const dayTable: Content = {
     table: {
       headerRows: 1,
-      widths: ['auto', 'auto', 'auto', 'auto', 'auto', '*', 'auto', 'auto'],
+      // A fixed Date column: an 'auto' column may be squeezed by long task
+      // text and wrap "15 Aug" mid-date.
+      widths: ['auto', 'auto', 'auto', 38, 'auto', '*', 'auto', 'auto'],
       body,
     },
     layout: ruledTableLayout(),
   };
 
-  // Reserved area for the (digital) signature — a labelled dashed box with room
-  // for a signature widget's name/date stamp, never a printed name.
+  // The approval block: what is being approved (period, hours, man-days),
+  // then a labelled dashed box with room for a digital-signature widget's
+  // name/date stamp — never a printed name. Structured on purpose, so that
+  // when pagination pushes it to its own page, that page still reads as an
+  // intentional approval page rather than a stray box.
+  const totalSecs = dayList.reduce((sum, ms) => sum + (byDay.get(ms)?.seconds ?? 0), 0);
+  const approvalRow = (label: string, value: string): TableCell[] => [
+    { text: label, style: 'vzMetaK', margin: [0, 1, 0, 0] },
+    { text: value, style: 'vzMetaV' },
+  ];
   const signatureBlock: Content = {
     unbreakable: true,
     margin: [0, 20, 0, 0],
     stack: [
+      { text: 'Approval', style: 'acceptApprovalH' },
+      {
+        table: {
+          widths: [90, 190],
+          body: [
+            approvalRow('Period', `${fmtFullEn(doc.fromMs)} – ${fmtFullEn(lastDayMs)}`),
+            approvalRow('Hours', secsToHoursNumLabel(totalSecs)),
+            approvalRow('MDs', md.total),
+          ],
+        },
+        layout: {
+          hLineWidth: (i: number, node: { table: { body: unknown[] } }) =>
+            i === 0 || i === node.table.body.length ? 0 : 0.3,
+          hLineColor: () => VZ.rule,
+          vLineWidth: () => 0,
+          paddingTop: () => 2.5,
+          paddingBottom: () => 2.5,
+          paddingLeft: () => 0,
+          paddingRight: () => 6,
+        },
+        margin: [0, 6, 0, 10],
+      },
       { text: 'Approved by (digital signature):', style: 'acceptSigLabel' },
       {
         canvas: [
@@ -128,15 +167,16 @@ export function buildAcceptanceIdentity(
             type: 'rect',
             x: 0,
             y: 0,
-            w: 280,
-            h: 95,
+            w: 240,
+            h: 64,
             lineWidth: 0.5,
             lineColor: VZ.secondary,
             dash: { length: 3, space: 3 },
           },
         ],
-        margin: [0, 6, 0, 0],
+        margin: [0, 5, 0, 0],
       },
+      { text: 'Date · ____ / ____ / ________', style: 'acceptSigLabel', margin: [0, 8, 0, 0] },
     ],
   };
 
@@ -150,7 +190,11 @@ export function buildAcceptanceIdentity(
     pageOrientation: 'portrait',
     pageSize: 'A4',
     pageMargins: A4_MARGINS,
-    info: { title: `Timesheet Acceptance Protocol — ${doc.title || ''}`.trim() },
+    info: {
+      title: `Timesheet Acceptance Protocol — ${doc.title || ''}`.trim(),
+      author: doc.personName || undefined,
+      subject: 'Timesheet Acceptance Protocol',
+    },
     content: [
       principalRule(198, true, [0, 0, 0, 10]),
       {
@@ -170,6 +214,7 @@ export function buildAcceptanceIdentity(
       acceptTdEmpty: { fontSize: 8, color: VZ.secondary },
       acceptMdTotal: { fontSize: 8.5, bold: true, color: VZ.oxide },
       acceptSigLabel: { fontSize: 7.5, color: VZ.secondary },
+      acceptApprovalH: { fontSize: 9.5, bold: true, color: VZ.ink },
     },
     defaultStyle: identityDefaultStyle,
     footer: identityFooter(CW_PORTRAIT, `Generated ${gen} · 1 MD = ${HOURS_PER_MD} h`),
