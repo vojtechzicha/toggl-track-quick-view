@@ -1,0 +1,29 @@
+# Local MongoDB for `pnpm dev` / `pnpm db`.
+#
+# The app reaches this at mongodb://localhost:27018 — the literal MONGODB_URI in
+# .env.tpl. Port 27018 rather than Mongo's default 27017 so a MongoDB you may
+# already run on this machine keeps working, and so nothing here can be mistaken
+# for it.
+#
+# No authentication on purpose: the container is bound to localhost and holds
+# only throwaway data. The point of a local database is that it CANNOT be the
+# production one, so there is no credential worth protecting here.
+#
+# Replica sets are not needed. The app uses no transactions and no change
+# streams — its one concurrency guarantee (at most one running timer) is a
+# partial unique index, which a standalone mongod enforces just as well.
+services:
+  mongo:
+    image: mongo:8
+    ports:
+      - '27018:27017'
+    volumes:
+      - mongodata:/data/db
+    healthcheck:
+      test: ['CMD', 'mongosh', '--quiet', '--eval', "db.adminCommand('ping')"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  mongodata:
