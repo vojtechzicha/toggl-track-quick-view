@@ -5,9 +5,14 @@
 # already run on this machine keeps working, and so nothing here can be mistaken
 # for it.
 #
-# No authentication on purpose: the container is bound to localhost and holds
-# only throwaway data. The point of a local database is that it CANNOT be the
-# production one, so there is no credential worth protecting here.
+# No authentication on purpose: the container holds only throwaway data, and the
+# point of a local database is that it CANNOT be the production one, so there is
+# no credential worth protecting here.
+#
+# That only holds while nothing else can reach it, hence the explicit 127.0.0.1
+# in the port mapping. Compose's short form ("27018:27017") binds 0.0.0.0, which
+# would publish an unauthenticated MongoDB on every interface — a laptop on a
+# cafe or office network would be serving it to that network.
 #
 # Replica sets are not needed. The app uses no transactions and no change
 # streams — its one concurrency guarantee (at most one running timer) is a
@@ -16,7 +21,7 @@ services:
   mongo:
     image: mongo:8
     ports:
-      - '27018:27017'
+      - '127.0.0.1:27018:27017'
     volumes:
       - mongodata:/data/db
     healthcheck:

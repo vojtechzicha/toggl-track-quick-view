@@ -20,12 +20,17 @@ Config is **generated from committed templates**, never copied between machines.
 Full guide in `docs/ENVIRONMENT.md`.
 
 - `scripts/env-spec.mjs` is the single source of truth: every variable the code
-  reads, its description, which environments require it, format checks, and the
+  reads, its description, format checks, and the
   **cross-variable rules**, which are the point of the file. This app has no
   variable it cannot start without — with an empty environment it runs as a
   bring-your-own-token dashboard — so what needs guarding is combinations, not
   individual values. Plain `.mjs`, not a `lib/*.ts`, because `pnpm env:check`
   must run under bare Node in the Vercel build before anything is compiled.
+- `DEPLOYMENT_TOPOLOGY` in that file is the one place that encodes OUR
+  deployment rather than the app: which variables track.zicha.dev and its
+  previews must have. Nothing in it is an application requirement — an empty
+  environment is a supported mode — so a fork empties it and every requirement
+  relaxes, while format and contradiction checks stay.
 - `.env.tpl` → `.env` (local) and `.env.prod.tpl` → `.env.prod` (production
   reference) via `pnpm env:pull` / `env:pull:prod`, which run `op inject`
   against 1Password vault `Development`, items `toggl-track-quick-view-dev`,

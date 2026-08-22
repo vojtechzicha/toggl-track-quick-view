@@ -32,8 +32,17 @@ production secrets into a third committed template would mean maintaining the
 same secret in two places.
 
 A variable can therefore belong to any of the three, which is what `appliesTo`
-in `scripts/env-spec.mjs` records, alongside `requiredIn` for the environments
-where its absence is a build failure rather than a choice.
+in `scripts/env-spec.mjs` records.
+
+Which variables are *required* is a separate question, and a different kind of
+statement. Nothing here is required by the application — every variable is
+optional to the code, and an empty environment is a supported mode. What
+`DEPLOYMENT_TOPOLOGY` records is the shape `track.zicha.dev` and its previews
+actually run, so that shape cannot change by accident: losing `APP_MODE` would
+turn the live dashboard into an empty standalone store and still deploy green.
+A fork with a different shape empties that object and every requirement relaxes,
+while the format checks and contradiction rules — which follow from the code
+rather than from anyone's topology — still apply.
 
 ## What the variables actually decide
 

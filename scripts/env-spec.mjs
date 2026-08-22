@@ -21,7 +21,7 @@
  * @property {string} name
  * @property {'server' | 'public'} scope     `public` is inlined into the browser bundle at build time.
  * @property {boolean} [required]            Required in every environment it applies to.
- * @property {EnvEnvironment[]} [requiredIn]  Required only in these environments.
+ *   (Environment-specific requirements live in DEPLOYMENT_TOPOLOGY below.)
  * @property {EnvEnvironment[]} [appliesTo]  Defaults to ALL of dev, prod and preview.
  * @property {string} description
  * @property {(value: string) => string | null} [check] Returns a problem, or null when fine.
@@ -50,13 +50,41 @@ const mustBeCacheInterval = (value) => {
   return n > 0 ? null : 'must be greater than 0 (a non-positive value silently disables the cache instead)';
 };
 
+/**
+ * Which variables THIS repository's own deployments must have, per environment.
+ *
+ * Nothing here is a requirement of the APPLICATION. Every variable below is
+ * optional to the code, and an empty environment is a supported mode: the app
+ * then runs as a bring-your-own-token dashboard, which is what README.md
+ * documents for a one-click Vercel deploy. These entries describe the shape
+ * track.zicha.dev and its previews actually run — Toggl as the source, MongoDB
+ * behind it for settings sync, the whole thing behind a password — so that
+ * shape cannot change by accident. Losing APP_MODE would convert the live
+ * dashboard to an empty standalone store and still deploy green.
+ *
+ * A FORK running its own instance almost certainly has a different shape.
+ * Empty this object and every requirement relaxes to optional; the format
+ * checks and the cross-variable rules below still apply, because those follow
+ * from the code rather than from anyone's topology.
+ */
+export const DEPLOYMENT_TOPOLOGY = {
+  // Both deployments carry MONGODB_URI, so both need the override that keeps
+  // Toggl as the source rather than flipping to standalone.
+  APP_MODE: ['prod', 'preview'],
+  TOGGL_API_TOKEN: ['prod', 'preview'],
+  APP_PASSWORD: ['prod', 'preview'],
+  MONGODB_URI: ['prod', 'preview'],
+  // Preview shares production's connection string, so the database name is the
+  // only thing keeping a branch out of the live synced setup.
+  MONGODB_DB: ['preview'],
+}
+
 /** @type {EnvVarSpec[]} */
 export const ENV_SPEC = [
   // -- Track source -----------------------------------------------------------
   {
     name: 'APP_MODE',
     scope: 'server',
-    requiredIn: ['prod'],
     description:
       'The literal "toggl" keeps Toggl as the track source even when MONGODB_URI is set, so the database serves settings sync only. Without it, MONGODB_URI flips the whole app to standalone mode — a different product against a different data store.',
     check: (value) =>
@@ -69,7 +97,6 @@ export const ENV_SPEC = [
   {
     name: 'TOGGL_API_TOKEN',
     scope: 'server',
-    requiredIn: ['prod', 'preview'],
     description:
       'Toggl Track API token from https://track.toggl.com/profile. Setting it makes the deployment server-managed: the browser never holds a token and the token field disappears from Settings. Ignored in standalone mode.',
     check: (value) => {
@@ -89,7 +116,6 @@ export const ENV_SPEC = [
   {
     name: 'MONGODB_URI',
     scope: 'server',
-    requiredIn: ['prod'],
     description:
       'MongoDB connection string. On its own it switches the app to standalone mode; together with APP_MODE=toggl it backs cross-device settings sync instead. Either way it needs APP_PASSWORD, because both write.',
     check: mustBeMongoUri,
@@ -97,7 +123,6 @@ export const ENV_SPEC = [
   {
     name: 'MONGODB_DB',
     scope: 'server',
-    requiredIn: ['preview'],
     description:
       'Database name inside the cluster. Defaults to "toggl-quick-view" in lib/store/mongo.ts. Note the code ALWAYS passes an explicit name, so any database in the connection string path is ignored — this variable is the only thing that changes it. Required on PREVIEW because preview shares production\'s connection string: the database name is the only thing keeping a branch deployment out of the live synced setup.',
     check: mustBeDbName,
@@ -107,7 +132,6 @@ export const ENV_SPEC = [
   {
     name: 'APP_PASSWORD',
     scope: 'server',
-    requiredIn: ['prod', 'preview'],
     description:
       'Password gate for the whole dashboard. Required whenever MONGODB_URI is set (those routes write), and strongly wanted whenever TOGGL_API_TOKEN is, since otherwise anyone with the URL reads your time entries.',
     check: (value) =>
@@ -138,7 +162,7 @@ const DEFAULT_APPLIES_TO = ['dev', 'prod', 'preview'];
 const appliesTo = (spec, environment) => (spec.appliesTo ?? DEFAULT_APPLIES_TO).includes(environment);
 
 const isRequired = (spec, environment) =>
-  spec.required === true || (spec.requiredIn ?? []).includes(environment);
+  spec.required === true || (DEPLOYMENT_TOPOLOGY[spec.name] ?? []).includes(environment);
 
 /** Variable names that belong in the template for the given environment. */
 export function envVarNames(environment) {

@@ -90,6 +90,13 @@ on every deployment. That matters because the password-gate session and the
 installed PWA are both tied to the origin — a per-deployment URL would ask for
 the preview password every time. It needs a `VERCEL_TOKEN` repository secret.
 
+If you are deploying your **own** instance, note that `DEPLOYMENT_TOPOLOGY` in
+`scripts/env-spec.mjs` lists what *this* repository's deployments must have —
+Toggl source, MongoDB sync, password gate. None of it is required by the app.
+Empty that object and every variable goes back to optional, including the
+zero-configuration bring-your-own-token deploy described above; the format
+checks and contradiction rules still apply, since those follow from the code.
+
 The build runs `pnpm env:check` before `next build` (the `vercel-build` script),
 so a variable the code needs but the Vercel project lacks fails the deployment
 rather than shipping a half-configured app. It also flags the combinations that
