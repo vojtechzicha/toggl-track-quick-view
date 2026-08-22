@@ -158,3 +158,6 @@ signature.png
 signature-*.png
 *.signature.png
 /signatures/
+
+# macOS leaves these in every directory it has been looked at.
+.DS_Store
