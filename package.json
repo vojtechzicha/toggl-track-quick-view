@@ -4,10 +4,17 @@
   "private": true,
   "description": "A single-screen quick view for tracking a work day (configurable weekly target) on one or more Toggl Track projects.",
   "scripts": {
-    "dev": "next dev",
+    "dev": "WAS_RUNNING=$(docker compose ps -q mongo 2>/dev/null); docker compose up -d mongo && trap '[ -z \"$WAS_RUNNING\" ] && docker compose down' EXIT && next dev",
+    "devsafe": "rm -rf .next && next dev",
     "build": "next build",
+    "vercel-build": "node scripts/check-env.mjs && next build",
     "start": "next start",
     "lint": "next lint",
+    "db": "docker compose up -d mongo",
+    "db:stop": "docker compose down",
+    "env:pull": "op inject -i .env.tpl -o .env -f",
+    "env:pull:prod": "op inject -i .env.prod.tpl -o .env.prod -f",
+    "env:check": "node scripts/check-env.mjs",
     "check:money": "node scripts/check-money.ts",
     "check:report": "node scripts/check-report.ts",
     "check:acceptance": "node scripts/check-acceptance.ts",
@@ -31,5 +38,9 @@
     "@types/react": "^19.0.0",
     "@types/react-dom": "^19.0.0",
     "typescript": "^5.7.0"
+  },
+  "engines": {
+    "node": ">=20.12",
+    "pnpm": ">=10"
   }
 }

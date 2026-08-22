@@ -48,14 +48,32 @@ It fills the whole screen with no scrolling.
 ## Running locally
 
 ```bash
-npm install
-npm run dev      # http://localhost:3000
+pnpm install
+pnpm env:pull    # generates .env from .env.tpl via 1Password
+pnpm env:check   # says what is missing or contradictory
+pnpm dev         # starts MongoDB, then http://localhost:3000
 ```
 
-Then open Settings (⚙), paste your API token from
-[track.toggl.com/profile](https://track.toggl.com/profile) (bottom of the page),
-click **Connect**, pick your project, and optionally enable **Short Friday** or
+`pnpm dev` brings the local MongoDB up (`docker compose`, port 27018) before
+starting Next, and leaves it as it found it — Ctrl-C stops the container only
+if `pnpm dev` was what started it. `pnpm db` / `pnpm db:stop` run it on its own
+for a longer session.
+
+**Without 1Password**, skip `env:pull` and `cp .env.tpl .env` instead. Exactly
+one line in it is a placeholder — `TOGGL_API_TOKEN` — and blanking it is a
+valid choice: the app then asks for a token in Settings. Everything else in the
+template is already a working literal.
+
+Out of the box this is the plain Toggl dashboard — no password, no database.
+Open Settings (⚙), pick your project, and optionally enable **Short Friday** or
 adjust **Hours worked per week** (40h by default) for a part-time commitment.
+
+To work on **settings sync** or **standalone mode**, uncomment the block at the
+bottom of `.env.tpl` and set `APP_PASSWORD`; both together, since those routes
+write and refuse to without a gate.
+
+Full walkthrough of every variable, the 1Password layout and the Vercel
+environments: **[docs/ENVIRONMENT.md](docs/ENVIRONMENT.md)**.
 
 ## Deploying to Vercel
 
@@ -65,6 +83,26 @@ adjust **Hours worked per week** (40h by default) for a part-time commitment.
    entering the token in the UI. Otherwise the token stays in your browser.
 3. (Optional) Set `APP_PASSWORD` to put the whole dashboard behind a password —
    see below.
+
+Preview deployments are reachable at a stable **beta.track.zicha.dev**, which
+`.github/workflows/preview-alias.yml` re-points at the newest successful preview
+on every deployment. That matters because the password-gate session and the
+installed PWA are both tied to the origin — a per-deployment URL would ask for
+the preview password every time. It needs a `VERCEL_TOKEN` repository secret.
+
+If you are deploying your **own** instance, note that `DEPLOYMENT_TOPOLOGY` in
+`scripts/env-spec.mjs` lists what *this* repository's deployments must have —
+Toggl source, MongoDB sync, password gate. None of it is required by the app.
+Empty that object and every variable goes back to optional, including the
+zero-configuration bring-your-own-token deploy described above; the format
+checks and contradiction rules still apply, since those follow from the code.
+
+The build runs `pnpm env:check` before `next build` (the `vercel-build` script),
+so a variable the code needs but the Vercel project lacks fails the deployment
+rather than shipping a half-configured app. It also flags the combinations that
+quietly change what the deployment *is* — most importantly `MONGODB_URI`
+without `APP_MODE=toggl`, which switches a Toggl dashboard to standalone mode.
+See [docs/ENVIRONMENT.md](docs/ENVIRONMENT.md).
 
 ## Standalone mode (no Toggl)
 

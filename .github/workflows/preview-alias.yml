@@ -1,0 +1,50 @@
+# Points beta.track.zicha.dev at the newest successful PREVIEW deployment,
+# whatever branch it came from ("last preview wins"). Vercel's GitHub
+# integration emits a deployment_status event for every deployment; this reacts
+# to the successful Preview ones and re-aliases the domain.
+#
+# The fixed host is not just convenience. Two things this app keeps are
+# per-ORIGIN, so a fresh *-<hash>.vercel.app URL per deployment loses them both:
+#
+#   - the password-gate session (localStorage `tqv.auth.v1`, lib/source/auth.ts).
+#     Preview is gated, so without a stable origin you re-enter the preview
+#     password on every single deployment instead of once a week.
+#   - the PWA. app/manifest.ts declares a standalone app with start_url '/';
+#     an installed preview only stays installed while the origin holds still.
+#
+# Production deployments are ignored — this never touches track.zicha.dev.
+#
+# Requires the VERCEL_TOKEN repo secret (a Vercel access token with access to
+# the zicha-dev team). Without it the step fails; nothing else is affected.
+name: Alias preview domain
+
+on:
+  deployment_status:
+
+permissions: {}
+
+# Two deployments finishing close together would otherwise race, and the loser
+# could alias the domain last. Newest run wins; the older one is cancelled.
+concurrency:
+  group: preview-alias
+  cancel-in-progress: true
+
+jobs:
+  alias:
+    if: >-
+      github.event.deployment_status.state == 'success' &&
+      startsWith(github.event.deployment.environment, 'Preview')
+    runs-on: ubuntu-latest
+    steps:
+      - name: Alias beta.track.zicha.dev to this deployment
+        env:
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+          URL: ${{ github.event.deployment_status.environment_url || github.event.deployment_status.target_url }}
+        run: |
+          if [ -z "$VERCEL_TOKEN" ]; then
+            echo "::error::VERCEL_TOKEN secret is not set — cannot alias the preview domain."
+            exit 1
+          fi
+          echo "Aliasing $URL → beta.track.zicha.dev"
+          npx --yes vercel@latest alias set "$URL" beta.track.zicha.dev \
+            --token "$VERCEL_TOKEN" --scope zicha-dev
