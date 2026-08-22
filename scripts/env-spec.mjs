@@ -38,6 +38,18 @@ const mustBeDbName = (value) => {
   return Buffer.byteLength(value) <= 63 ? null : 'must be at most 63 bytes';
 };
 
+// Git remote for the PDF template pack (scripts/sync-pack.mjs). Only two forms
+// can work: https, which a token can authenticate, and ssh, which cannot be
+// authenticated inside a Vercel build at all.
+const mustBeGitRemote = (value) => {
+  if (/\s/.test(value)) return 'must not contain whitespace';
+  if (/^https:\/\/\S+\/\S+/.test(value)) return null;
+  if (/^(ssh:\/\/)?[^@\s]+@[^:\s]+[:/]\S+/.test(value)) return null;
+  return 'must be a git remote — https://host/owner/repo.git, or git@host:owner/repo.git';
+};
+
+const isSshRemote = (value) => !value.startsWith('https://');
+
 /** Mirrors cacheIntervalSec() in lib/serverCache.ts. */
 const BOOLISH = /^(1|true|on|yes)$/i;
 
@@ -77,6 +89,12 @@ export const DEPLOYMENT_TOPOLOGY = {
   // Preview shares production's connection string, so the database name is the
   // only thing keeping a branch out of the live synced setup.
   MONGODB_DB: ['preview'],
+  // The documents this deployment actually produces come from the private
+  // template pack. Without it the export dialog still works — it just offers
+  // the app's own generic Timesheet and nothing that has ever been filed with
+  // a client, which is the kind of loss that deploys green.
+  PDF_TEMPLATE_PACK_REPO: ['prod', 'preview'],
+  PDF_TEMPLATE_PACK_TOKEN: ['prod', 'preview'],
 }
 
 /** @type {EnvVarSpec[]} */
@@ -138,6 +156,31 @@ export const ENV_SPEC = [
       value.length >= 8
         ? null
         : 'should be at least 8 characters — it is the only thing between the public internet and your time entries',
+  },
+
+  // -- PDF template pack (build time only) ------------------------------------
+  {
+    name: 'PDF_TEMPLATE_PACK_REPO',
+    scope: 'server',
+    description:
+      'Git remote of an optional PDF template pack, checked out into pdf-templates/ before the build by scripts/sync-pack.mjs. Left empty, the app offers only the templates it ships. Read at BUILD time, never at runtime — changing it needs a redeploy. Use the https form in a deployment (a Vercel build has no ssh key); ssh is for a laptop.',
+    check: mustBeGitRemote,
+  },
+  {
+    name: 'PDF_TEMPLATE_PACK_REF',
+    scope: 'server',
+    description:
+      'Branch, tag or commit of the template pack to build against. Defaults to "main". Pin it to a commit when a pack change should not be able to alter the next deployment of this app on its own.',
+    check: (value) =>
+      /\s/.test(value) ? 'must not contain whitespace' : null,
+  },
+  {
+    name: 'PDF_TEMPLATE_PACK_TOKEN',
+    scope: 'server',
+    description:
+      'Token that can read PDF_TEMPLATE_PACK_REPO over https — a GitHub fine-grained PAT with Contents: Read on that one repository is enough. Only needed for a PRIVATE pack, and only where the checkout has no other credentials (i.e. every deployment).',
+    check: (value) =>
+      /\s/.test(value) ? 'must not contain whitespace (a stray newline from a copy-paste is the usual cause)' : null,
   },
 ];
 
@@ -308,6 +351,37 @@ export function validateEnv(env, environment = 'dev') {
         `TOGGL_CACHE_INTERVAL is ${seconds}s, which is ${Math.round(3600 / seconds)} upstream requests/hour — over Toggl's Free-plan budget of 30. Use 120 or more.`
       );
     }
+  }
+
+  // -- PDF template pack --
+  // Mirrors scripts/sync-pack.mjs, which is the thing that acts on these.
+
+  const packRepo = present(env, 'PDF_TEMPLATE_PACK_REPO');
+  const packRef = present(env, 'PDF_TEMPLATE_PACK_REF');
+  const packToken = present(env, 'PDF_TEMPLATE_PACK_TOKEN');
+
+  if (packRepo && environment !== 'dev' && isSshRemote(packRepo)) {
+    // Not a preference: a Vercel build has no ssh key and no agent, so the
+    // fetch cannot succeed. sync-pack.mjs would fail the build a minute later.
+    errors.push(
+      'PDF_TEMPLATE_PACK_REPO is an ssh remote, which no deployment can fetch — there is no ssh key in a build. Use the https form and set PDF_TEMPLATE_PACK_TOKEN.'
+    );
+  } else if (packRepo && !packToken && !isSshRemote(packRepo)) {
+    warnings.push(
+      'PDF_TEMPLATE_PACK_REPO is an https remote with no PDF_TEMPLATE_PACK_TOKEN. Fine for a public pack; a private one fails the checkout, and with it the build.'
+    );
+  }
+
+  if (packToken && !packRepo) {
+    warnings.push(
+      'PDF_TEMPLATE_PACK_TOKEN is set but PDF_TEMPLATE_PACK_REPO is not, so nothing is checked out and the token is inert.'
+    );
+  }
+
+  if (packRef && !packRepo) {
+    warnings.push(
+      `PDF_TEMPLATE_PACK_REF is "${packRef}" but PDF_TEMPLATE_PACK_REPO is not set, so there is no pack for it to pin.`
+    );
   }
 
   // TOGGL_API_TOKEN is read only by the Toggl proxy, which standalone mode

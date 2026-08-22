@@ -74,3 +74,20 @@ APP_PASSWORD=
 #
 # The connection string is a literal, and local. That is deliberate: the default
 # must never be able to reach production.
+
+# -- PDF template pack --------------------------------------------------------
+# The private repository holding the engagement-specific PDF layouts, checked
+# out into pdf-templates/ by scripts/sync-pack.mjs before `pnpm dev` and
+# `pnpm build`. Blank it and the app offers only the generic Timesheet template
+# it ships — which is what a plain clone gets, and a supported way to work.
+#
+# SSH here, https in the deployments: your own key already has access, so no
+# token is needed locally. Offline, the checkout already on disk is kept and the
+# dev server starts anyway.
+
+PDF_TEMPLATE_PACK_REPO=git@github.com:vojtechzicha/toggl-track-quick-view-pdf-templates.git
+
+# Branch, tag or commit. Blank means "main", which is what you want locally —
+# pin it only to reproduce a specific build.
+
+PDF_TEMPLATE_PACK_REF=

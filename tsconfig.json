@@ -17,7 +17,13 @@
     "jsx": "preserve",
     "incremental": true,
     "plugins": [{ "name": "next" }],
-    "paths": { "@/*": ["./*"] }
+    // "@pdf-template-pack" is the optional template pack (lib/export/pdf/pack.ts):
+    // the first candidate that exists wins, so a clone without one still type
+    // checks. next.config.js resolves the same pair for the bundler.
+    "paths": {
+      "@/*": ["./*"],
+      "@pdf-template-pack": ["./pdf-templates/index.ts", "./lib/export/pdf/emptyPack.ts"]
+    }
   },
   "include": ["next-env.d.ts", "**/*.ts", "**/*.tsx", ".next/types/**/*.ts"],
   "exclude": ["node_modules"]

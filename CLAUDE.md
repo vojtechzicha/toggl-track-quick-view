@@ -14,6 +14,11 @@ Other docs: `docs/ENVIRONMENT.md` (configuration, in full),
 `docs/pdf-signing-v2.md`, `docs/standalone/phase-*.md` (how standalone mode was
 built).
 
+**The engagement-specific PDF templates are NOT in this repository.** They live
+in the private `toggl-track-quick-view-pdf-templates` and are checked out into
+`pdf-templates/` at build time — see "PDF templates" below before touching
+anything under `lib/export/pdf/`.
+
 ## Environment configuration
 
 Config is **generated from committed templates**, never copied between machines.
@@ -116,6 +121,7 @@ explicit name, so the path is ignored. Production data is in `toggl-quick-view`.
 pnpm env:pull         # Regenerate .env from .env.tpl
 pnpm env:pull:prod    # Write .env.prod from .env.prod.tpl (live prod secrets)
 pnpm env:check        # Validate against scripts/env-spec.mjs
+pnpm pack:sync        # Check the private PDF template pack out into pdf-templates/
 
 # Local development (auto-starts/stops Docker MongoDB)
 pnpm dev              # Start MongoDB + Next dev server (DB stops on Ctrl+C)
@@ -126,12 +132,12 @@ pnpm db:stop          # Stop MongoDB
 # Checks — pure, no network, no database. Run these before proposing a change.
 pnpm check            # All of the below (~126k assertions, seconds)
 pnpm check:money      # Money/allocation arithmetic
-pnpm check:report     # Report content
-pnpm check:acceptance # Acceptance content
 pnpm check:codes      # Billing-code handling
 pnpm check:windows    # Start-window / DST boundaries (reassigns process.env.TZ)
 pnpm check:export     # Export scope
-pnpm check:fonts      # Font / pdfmake VFS
+pnpm check:templates  # PDF template registry invariants (app + pack)
+pnpm check:fonts      # Font / pdfmake VFS, for whatever templates are registered
+pnpm check:pack       # The template pack's own checks, if one is checked out
 
 pnpm build            # next build
 pnpm lint             # next lint
@@ -140,6 +146,42 @@ pnpm lint             # next lint
 **Note:** run `pnpm db` first and `pnpm dev` detects the existing container and
 leaves it running when you Ctrl+C. If `pnpm dev` started it, Ctrl+C takes it
 down.
+
+## PDF templates
+
+`lib/export/pdf/` is a registry, not a set of layouts. A template is one
+`PdfTemplate` (`lib/export/pdf/types.ts`) declaring its name, the identity
+fields the export dialog should collect for it, its language, its fonts, and a
+`build(doc)` that returns a pdfmake document definition. Nothing else in the
+pipeline is template-aware, and the export dialog is driven entirely off those
+declarations — it names no template. README.md → "Adding a PDF template" is the
+guide.
+
+This repository ships **one** template, the generic `timesheet`. Everything
+engagement-specific — the Standard sheet, the four acceptance protocols, the
+EN/CZ report, the visual identity and its embedded IBM Plex cuts — lives in the
+private **`toggl-track-quick-view-pdf-templates`**, along with its own content
+checks.
+
+- `scripts/sync-pack.mjs` checks that repository out into `pdf-templates/`
+  (gitignored) before `next dev` and `next build`, driven by
+  `PDF_TEMPLATE_PACK_REPO` / `_REF` / `_TOKEN`. Local `.env.tpl` uses the ssh
+  remote; the deployments use https plus a fine-grained PAT, because a Vercel
+  build has no ssh key (`env:check` errors on an ssh remote outside dev).
+- Resolution goes through the `@pdf-template-pack` alias, which points at
+  `pdf-templates/index.ts` when it exists and `lib/export/pdf/emptyPack.ts`
+  when it does not. The pair is spelled out in THREE places that must agree:
+  `next.config.js` (the bundler), `tsconfig.json` `paths` (tsc and the editor),
+  and `scripts/resolve-hooks.mjs` (the check scripts).
+- **A clone with no pack is a supported, complete app** — that is the whole
+  point of the split, and both states are worth building before proposing a
+  change. A configured pack that cannot be fetched FAILS the build instead:
+  shipping without it would be a green deploy that had lost every layout in use.
+- Not a submodule, deliberately: `.gitmodules` would make every clone and fork
+  of this public repo try to fetch a private repository.
+- Editing a pack template means committing in `pdf-templates/` (its own git
+  repo) and pushing there; the app's next build picks `main` up. Nothing about
+  the pack belongs in a commit here.
 
 ## Deployment
 
