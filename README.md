@@ -650,6 +650,22 @@ reader, and carry a date prompt for that.
 
 What you can set:
 
+- **Sign with** — where the private key is. A **hardware token** appears here
+  only while [Fortify](https://fortifyapp.com/) is running: a browser has no way
+  to reach a smart card on its own, and Fortify is the local app that
+  republishes the card to the page. The **throwaway key** below it is always
+  offered and is what the pipeline was built against — see the note at the end
+  of this section.
+- **Certificate** — which certificate on that device signs. Nothing is
+  connected until you ask: *Connect and list certificates* is what pairs with
+  Fortify (approve the code it shows, and check it matches the one on the page)
+  and asks the card for its PIN. The list names each certificate by holder,
+  the token it sits on, whether it is a **qualified** one, and when it expires.
+  This is a choice rather than a default because a single card commonly carries
+  two certificates issued to the same person — a qualified one for signing and a
+  commercial one for authentication — and signing with the second produces a
+  file that verifies perfectly and is not a qualified signature. The dialog says
+  so under the picker when the chosen certificate is either of the wrong kinds.
 - **Handwritten signature** — your own scan, picked from the file system. It
   has to be a **PNG or a JPEG**: those are the formats a PDF can carry, and a
   WebP or HEIC is rejected when you pick it rather than at export time. The
@@ -671,14 +687,16 @@ The handwritten image is cosmetic. What makes the document *signed* is the
 certificate, so an export with signing switched off is exactly the document it
 has always been — the same bytes the template produced.
 
-**Right now the signature is made with a throwaway key** generated in the
-browser and discarded when the tab closes. It is cryptographically real: the
-file validates as `PAdES-BASELINE-B` and any viewer can check that the document
-has not been altered since signing. It is not *trusted* — no viewer will show a
-green banner for it, because the key chains to nothing. Signing with the
-qualified certificate on its hardware token is the next step; see
-[docs/pdf-signing-v2.md](docs/pdf-signing-v2.md) for the design and where it
-stands.
+**The throwaway key** is a key generated in the browser and discarded when the
+tab closes. Signatures made with it are cryptographically real — the file
+validates as `PAdES-BASELINE-B` and any viewer can check the document has not
+been altered since signing — and they are not *trusted*: no viewer shows a green
+banner, because the key chains to nothing. It exists so the whole pipeline runs
+without a card in the machine, and the dialog says plainly that what it produces
+is not a qualified signature. Signing with a qualified certificate on its
+hardware token goes through exactly the same pipeline and differs only in where
+the key is; see [docs/pdf-signing-v2.md](docs/pdf-signing-v2.md) for the design
+and where it stands.
 
 ### Linked billing codes (subcontracting)
 

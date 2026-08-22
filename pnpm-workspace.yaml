@@ -1,4 +1,12 @@
 allowBuilds:
+  # protobufjs arrives under @peculiar/fortify-client-core, which loads its
+  # PREBUILT `dist/protobuf.js` in the browser. Its postinstall builds nothing:
+  # it reads the parent package.json and prints a warning when the dependency
+  # range's operator disagrees with protobuf's own version scheme. Nothing here
+  # depends on it directly, so there is no warning to print and no artefact to
+  # miss — pnpm just needs the answer recorded, or every `pnpm install` (and so
+  # every script that checks the lockfile first) exits non-zero.
+  protobufjs: false
   sharp: true
 
 # `pdf-lib` is an ALIAS for @cantoo/pdf-lib (see package.json). The signing

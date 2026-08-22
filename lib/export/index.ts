@@ -75,6 +75,8 @@ export interface SignRequest {
   certificate: import('./pdf/sign/bridge').TokenCertificate;
   reason?: string;
   location?: string;
+  /** Shown by a bridge that asks before it signs; see ./pdf/sign. */
+  documentName?: string;
 }
 
 /**
@@ -88,9 +90,11 @@ async function maybeSign(
   blob: Blob,
   format: ExportFormat,
   pdfTemplateId: string,
-  request: SignRequest | null
+  request: SignRequest | null,
+  documentName?: string
 ): Promise<Blob> {
   if (!request || format !== 'pdf') return blob;
+  request = { ...request, documentName: request.documentName ?? documentName };
   const { getTemplate } = await import('./pdf/templates');
   const widget = getTemplate(pdfTemplateId).signatureWidget;
   // A template with no reserved area cannot carry a widget; exporting it
@@ -105,6 +109,7 @@ async function maybeSign(
     certificate: request.certificate,
     reason: request.reason,
     location: request.location,
+    documentName: request.documentName,
   });
 }
 
@@ -116,12 +121,16 @@ export async function runExport(
   sign: SignRequest | null = null
 ): Promise<boolean> {
   if (isEmptyDoc(doc)) return false;
+  // The filename is settled before signing, so the name a hardware bridge shows
+  // in its confirmation is the name the file will actually be saved under.
+  const filename = exportFilename(doc, format);
   const blob = await maybeSign(
     await serialize(doc, format, pdfTemplateId),
     format,
     pdfTemplateId,
-    sign
+    sign,
+    filename
   );
-  downloadBlob(blob, exportFilename(doc, format));
+  downloadBlob(blob, filename);
   return true;
 }

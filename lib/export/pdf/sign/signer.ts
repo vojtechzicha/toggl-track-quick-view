@@ -19,6 +19,8 @@ export interface PadesSignerOptions {
   certificateId: string;
   certificate: Uint8Array;
   chain: Uint8Array[];
+  /** Passed to the bridge so a hardware one can name it in its PIN prompt. */
+  documentName?: string;
 }
 
 export class PadesSigner extends Signer {
@@ -51,6 +53,7 @@ export class PadesSigner extends Signer {
           certificateId: this.options.certificateId,
           data: toBeSigned,
           hash: 'SHA-256',
+          documentName: this.options.documentName,
         }),
     });
     return Buffer.from(cms);

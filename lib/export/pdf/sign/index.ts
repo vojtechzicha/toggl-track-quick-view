@@ -20,7 +20,7 @@ import type { SignatureWidget } from '../templates';
 import { renderAppearance } from './appearance';
 import { prepareSignature } from './prepare';
 import { PadesSigner } from './signer';
-import type { TokenBridge, TokenCertificate } from './bridge';
+import type { TokenBridge, TokenCertificate } from './tokenBridge';
 import type { SignatureAppearance } from './types';
 
 export { prepareSignature, type PreparedSignature } from './prepare';
@@ -30,8 +30,11 @@ export { widgetRectToPdf, widgetRectFits, type PdfRect } from './widget';
 export {
   WebCryptoBridge,
   FortifyBridge,
+  FORTIFY_ORIGIN,
   TokenBridgeUnavailableError,
   availableBridges,
+  type AvailableBridgeOptions,
+  type FortifyBridgeOptions,
   type TokenBridge,
   type TokenCertificate,
   type SignDigestRequest,
@@ -57,6 +60,11 @@ export interface SignPdfOptions {
   reason?: string;
   location?: string;
   contactInfo?: string;
+  /**
+   * The export's filename, shown by a bridge that confirms before it signs.
+   * Nothing in the PDF depends on it.
+   */
+  documentName?: string;
 }
 
 /**
@@ -96,11 +104,20 @@ export async function signPdf(pdf: Blob, options: SignPdfOptions): Promise<Blob>
     signingTime: new Date(signedAtMs),
   });
 
+  // The issuing chain is fetched here rather than when the certificate was
+  // listed: a bridge over a software key store can list dozens, and only the
+  // one being signed with is worth a round trip. A bridge that has no chain to
+  // offer simply ships without one.
+  const chain = options.certificate.chain.length
+    ? options.certificate.chain
+    : (await options.bridge.certificateChain?.(options.certificate.id)) ?? [];
+
   const signer = new PadesSigner({
     bridge: options.bridge,
     certificateId: options.certificate.id,
     certificate: options.certificate.der,
-    chain: options.certificate.chain,
+    chain,
+    documentName: options.documentName,
   });
   const signed = await new SignPdf().sign(Buffer.from(prepared.bytes), signer);
   return new Blob([new Uint8Array(signed)], { type: 'application/pdf' });

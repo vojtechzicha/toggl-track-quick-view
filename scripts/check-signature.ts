@@ -37,8 +37,10 @@ import {
   CERT_PEM,
   SIGNED_AT_MS,
   SIGNED_PDF,
+  SIGNER,
   TEMPLATE_ID,
   fixtureDoc,
+  loadFixtureKeyPair,
   syntheticSignaturePng,
 } from './signatureFixture.ts';
 
@@ -417,6 +419,195 @@ const cms = (() => {
     signedData.certificates?.length,
     1,
     'the signing certificate is embedded (no chain: the throwaway key is self-signed)'
+  );
+}
+
+// ---- the bridge seam ----
+//
+// The hardware path minus the hardware. A token cannot be part of a check —
+// it needs a card, a PIN and a person — so what is pinned here is everything
+// around it: the constant that decides whether Fortify is ever found, the DN
+// parsing that decides what the stamp prints, and the chain fetch, which is the
+// one piece of pipeline that only the hardware bridge exercises.
+{
+  const { FORTIFY_ORIGIN, FortifyBridge, WebCryptoBridge, availableBridges } = await import(
+    '../lib/export/pdf/sign/bridge.ts'
+  );
+  const { commonName } = await import('../lib/export/pdf/sign/fortify.ts');
+
+  // The address Fortify listens on is duplicated in ./fortify.ts so that
+  // "is Fortify running?" costs one fetch instead of a megabyte of client (see
+  // the comment there). A copy is only safe while something notices it drifting
+  // — and the drift would not look like a bug: Fortify would simply never be
+  // offered, and the dialog would fall back to the throwaway key.
+  //
+  // The library reads its own value off an instance, and its constructor wants
+  // a window, so it gets a stub. Nothing else here touches the DOM.
+  const priorWindow = (globalThis as { window?: unknown }).window;
+  (globalThis as { window?: unknown }).window = { navigator: { userAgent: 'node' } };
+  try {
+    const { FortifyAPI } = await import('@peculiar/fortify-client-core');
+    const api = new FortifyAPI({
+      onDebug: () => {},
+      onClose: () => {},
+      onProvidersAdded: () => {},
+      onProvidersRemoved: () => {},
+    });
+    eq(FORTIFY_ORIGIN, `https://${api.FORTIFY_URL}`, 'we probe the address Fortify actually listens on');
+  } finally {
+    if (priorWindow === undefined) delete (globalThis as { window?: unknown }).window;
+    else (globalThis as { window?: unknown }).window = priorWindow;
+  }
+
+  // What the stamp prints as the certificate, and what the picker shows.
+  eq(commonName('CN=Anna Dvorak, O=Example s.r.o., C=CZ'), 'Anna Dvorak', 'the CN comes off a plain DN');
+  eq(commonName('O=Example s.r.o., C=CZ, CN=Anna Dvorak'), 'Anna Dvorak', 'the CN is found wherever it sits');
+  eq(
+    commonName('CN=Dvorak\\, Anna, O=Example s.r.o.'),
+    'Dvorak, Anna',
+    'an escaped comma stays inside the name instead of cutting it in half'
+  );
+  eq(commonName('OU=Certificates, O=Example'), 'OU=Certificates, O=Example', 'a DN with no CN falls back to itself');
+  eq(commonName(''), '', 'an empty DN is empty, not a crash');
+
+  // isAvailable() runs before the user has asked for anything, on every bridge
+  // the dialog offers. It must answer rather than throw, whatever is or is not
+  // installed — here, nothing.
+  const fortify = new FortifyBridge();
+  eq(await fortify.isAvailable(), false, 'Fortify reports itself absent outside a browser');
+  eq(fortify.interactive, true, 'listing on the hardware bridge prompts, so the dialog waits to be asked');
+
+  const bridges = availableBridges();
+  eq(
+    bridges.map((b) => b.id),
+    ['sign-bridge', 'fortify', 'webcrypto'],
+    'the maintained hardware bridge is preferred, and the throwaway one is always last'
+  );
+  // Order is the whole point of this assertion: the export dialog offers the
+  // first bridge that reports itself available, so a throwaway key ending up
+  // ahead of a token would be a silent downgrade from a qualified signature to
+  // one that is not.
+  eq(bridges[bridges.length - 1].id, 'webcrypto', 'the throwaway key is never preferred to hardware');
+
+  // The flag the export dialog warns off. A signature made with the throwaway
+  // key is a real signature and not a qualified one, and the certificate has to
+  // say so itself — the dialog must not be the only thing that knows.
+  const [throwaway] = await new WebCryptoBridge().listCertificates();
+  eq(throwaway.qualified, false, 'the throwaway certificate does not claim to be qualified');
+  eq(throwaway.forSignature, true, 'the throwaway certificate carries the non-repudiation bit');
+  eq(throwaway.hardware, false, 'the throwaway key is not on hardware');
+}
+
+// ---- what a certificate says about itself ----
+//
+// The Sign Bridge helper reports raw DER and nothing derived from it, so every
+// descriptive field the picker shows — and the qualified claim it warns on —
+// is decided by ./certificateInfo.ts. That makes this the only place the
+// "is it a QES" question is answered, and the only place it can be checked.
+{
+  const { readCertificateInfo } = await import('../lib/export/pdf/sign/certificateInfo.ts');
+
+  const info = readCertificateInfo(certificateDer);
+  eq(info.subjectCN, 'Throwaway Test Signer (NOT a qualified certificate)', 'the subject CN is read from the DER');
+  eq(info.issuerCN, info.subjectCN, 'a self-signed certificate issues itself');
+  ok(info.notBeforeMs > 0 && info.notAfterMs > info.notBeforeMs, 'validity comes out in the right order');
+  // ./throwaway.ts sets digitalSignature | nonRepudiation, which is the shape
+  // of a signing certificate.
+  eq(info.forSignature, true, 'nonRepudiation is detected in the key usage');
+  // The load-bearing negative: a self-signed key made in a browser must never
+  // read as qualified, or the dialog stops warning about the one thing it
+  // exists to warn about.
+  eq(info.qualified, false, 'and a throwaway certificate does not claim to be qualified');
+
+  // Never throws, whatever it is handed: a certificate this cannot read is
+  // still one the token might sign with, so the dialog shows blanks rather
+  // than losing the whole list.
+  const garbage = readCertificateInfo(new Uint8Array([0x30, 0x03, 0x02, 0x01, 0x00]));
+  eq(garbage.subjectCN, '', 'unparseable DER yields an empty CN rather than an exception');
+  eq(garbage.qualified, false, 'and is not qualified');
+  eq(readCertificateInfo(new Uint8Array(0)).notAfterMs, 0, 'empty input is survivable too');
+}
+
+// ---- the chain reaches the CMS ----
+//
+// A hardware bridge lists certificates without their issuing chains — fetching
+// one costs a round trip per certificate and only the chosen certificate needs
+// it — so signPdf() asks for it at signing time. That fallback exists solely
+// for the token path, which means nothing else would ever run it. Here a
+// stand-in bridge supplies a chain the same way FortifyBridge will.
+{
+  const sign = await import('../lib/export/pdf/sign/index.ts');
+  const { getTemplate } = await import('../lib/export/pdf/templates.ts');
+  const asn1js = await import('asn1js');
+  const pkijs = await import('pkijs');
+
+  const inner = new sign.WebCryptoBridge({ ...SIGNER, keyPair: await loadFixtureKeyPair() });
+  const [cert] = await inner.listCertificates();
+  // Any second certificate will do — what is being checked is that whatever
+  // certificateChain() returns ends up in the SignedData, not what it is. The
+  // signer's own certificate stands in for an issuer.
+  const issuerStandIn = cert.der;
+
+  let asked = 0;
+  const signRequests: { documentName?: string }[] = [];
+  const bridge: typeof inner & { certificateChain(id: string): Promise<Uint8Array[]> } =
+    Object.assign(Object.create(Object.getPrototypeOf(inner)), inner, {
+      certificateChain: async (id: string) => {
+        asked++;
+        eq(id, cert.id, 'the chain is asked for by the certificate that is being signed with');
+        return [issuerStandIn];
+      },
+      signDigest: async (request: { documentName?: string }) => {
+        signRequests.push(request);
+        return inner.signDigest(request as Parameters<typeof inner.signDigest>[0]);
+      },
+    });
+
+  const template = getTemplate(TEMPLATE_ID);
+  // Copied rather than passed straight through: `unsigned` is typed off a
+  // generic Uint8Array, and Blob's parameter insists on one backed by a plain
+  // ArrayBuffer.
+  const pdf = new Blob([new Uint8Array(unsigned)], { type: 'application/pdf' });
+  const signedWithChain = await sign.signPdf(pdf, {
+    widget: template.signatureWidget!,
+    appearance: {
+      ...sign.DEFAULT_SIGNATURE_APPEARANCE,
+      signerName: 'Throwaway Test Signer',
+      signedAtMs: SIGNED_AT_MS,
+      locale: 'en',
+    },
+    bridge,
+    // Empty, exactly as a hardware bridge lists it.
+    certificate: { ...cert, chain: [] },
+    documentName: 'Timesheet 2026-08.pdf',
+  });
+
+  eq(asked, 1, 'the chain is fetched once, at signing time, not once per listed certificate');
+  // The name a hardware bridge shows in its confirmation window has to be the
+  // document's, not something the bridge made up — a window that cannot name
+  // what it is signing is not really asking anything.
+  eq(
+    signRequests.map((r) => r.documentName),
+    ['Timesheet 2026-08.pdf'],
+    'the document name reaches signDigest, for the bridge that shows it before signing'
+  );
+
+  const text = Buffer.from(new Uint8Array(await signedWithChain.arrayBuffer())).toString('latin1');
+  const range = /\/ByteRange\s*\[\s*\d+\s+(\d+)\s+(\d+)\s+\d+\s*\]/.exec(text);
+  ok(range != null, 'the chained signature has a ByteRange');
+  // Between the two spans sits the hex string; the delimiters are the < and >
+  // just inside them.
+  const [gapStart, gapEnd] = range!.slice(1).map(Number);
+  const hex = text.slice(gapStart + 1, gapEnd - 1).replace(/0+$/, '');
+  const der = Buffer.from(hex.length % 2 ? `${hex}0` : hex, 'hex');
+  const parsed = asn1js.fromBER(der.buffer.slice(der.byteOffset, der.byteOffset + der.byteLength));
+  const signedData = new pkijs.SignedData({
+    schema: new pkijs.ContentInfo({ schema: parsed.result }).content,
+  });
+  eq(
+    signedData.certificates?.length,
+    2,
+    'the CMS carries the signer AND what the bridge offered as its chain'
   );
 }
 

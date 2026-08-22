@@ -24,6 +24,7 @@
     "@peculiar/asn1-ess": "^2.9.3",
     "@peculiar/asn1-schema": "^2.9.3",
     "@peculiar/asn1-x509": "^2.9.3",
+    "@peculiar/fortify-client-core": "^4.2.0",
     "@signpdf/placeholder-pdf-lib": "^3.3.0",
     "@signpdf/signpdf": "^3.3.0",
     "@signpdf/utils": "^3.3.0",

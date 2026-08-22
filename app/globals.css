@@ -2480,3 +2480,9 @@ body:has(.imp-page) {
     display: none;
   }
 }
+
+/* The "a scan is in use" note sits directly under the file row it corrects, so
+   it reads as part of that control rather than as another paragraph of help. */
+.sig-in-use {
+  margin-top: 4px;
+}
