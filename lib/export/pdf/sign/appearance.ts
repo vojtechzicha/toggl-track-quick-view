@@ -20,6 +20,7 @@
 import type { Content, TDocumentDefinitions } from 'pdfmake/interfaces';
 import type { SignatureWidget } from '../templates';
 import { renderPdfMake } from '../index';
+import { F } from '../identity';
 import {
   formatSignedAt,
   isEmbeddableSignatureImage,
@@ -31,6 +32,9 @@ import {
 // The measurements live in ./types.ts because the export dialog's preview draws
 // the same block from them at 1 pt = 1 px.
 const { pad: PAD, gutter: GUTTER, imageColumnRatio: IMAGE_COLUMN_RATIO } = STAMP_STYLE;
+
+/** Gap between the image and the detail lines below it. */
+const DETAILS_GAP = 4;
 const COLOR = STAMP_STYLE.color;
 
 /**
@@ -71,13 +75,21 @@ export function appearanceDocDefinition(
   if (!appearance.image) {
     body = { stack: details };
   } else if (appearance.layout === 'image-above') {
-    // `fit` scales the image down to the box and never up, so a large scan and
-    // a small one both land inside the stamp.
-    const imageHeight = Math.max(18, innerHeight * STAMP_STYLE.imageRowRatio);
+    // Reserve what the detail lines need, and give the image the rest — see
+    // STAMP_STYLE.lineHeightFactor. `fit` scales the image down to that box and
+    // never up, so a large scan and a small one both land inside the stamp.
+    const f = STAMP_STYLE.font;
+    const detailsHeight =
+      (f.caption + f.name + f.meta * (details.length - 2)) * STAMP_STYLE.lineHeightFactor +
+      DETAILS_GAP;
+    const imageHeight = Math.max(
+      STAMP_STYLE.minImageHeight,
+      innerHeight - detailsHeight - STAMP_STYLE.detailsSlack
+    );
     body = {
       stack: [
         { image: appearance.image, fit: [innerWidth, imageHeight] },
-        { stack: details, margin: [0, 4, 0, 0] },
+        { stack: details, margin: [0, DETAILS_GAP, 0, 0] },
       ],
     };
   } else {
@@ -144,7 +156,9 @@ export function appearanceDocDefinition(
       },
       sigMeta: { fontSize: STAMP_STYLE.font.meta, color: COLOR.muted, margin: [0, 0.5, 0, 0] },
     },
-    defaultStyle: { fontSize: STAMP_STYLE.font.caption, color: COLOR.text },
+    // IBM Plex Sans, like the report the stamp is dropped into — a signature
+    // block set in a different typeface reads as pasted on.
+    defaultStyle: { font: F.sans, fontSize: STAMP_STYLE.font.caption, color: COLOR.text },
   };
 }
 
@@ -153,5 +167,5 @@ export function renderAppearance(
   rect: SignatureWidget['rect'],
   appearance: SignatureAppearance
 ): Promise<Blob> {
-  return renderPdfMake(appearanceDocDefinition(rect, appearance));
+  return renderPdfMake(appearanceDocDefinition(rect, appearance), 'identity');
 }

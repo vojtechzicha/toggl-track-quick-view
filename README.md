@@ -663,10 +663,11 @@ What you can set:
   never bloats the synced settings; trimming the PNG to the ink is worth the
   minute.
 - **Signature block layout** — the handwriting above the certificate details,
-  or beside them. The **preview** below shows the block at its printed size,
-  280 × 95 pt.
+  or beside them. The **preview** below shows the block at its printed size —
+  the *Prepared by* box on the report's sign-off page — set in the same IBM Plex
+  Sans as the report itself.
 
-The handwritten image is cosmetic. What makes the sheet *signed* is the
+The handwritten image is cosmetic. What makes the document *signed* is the
 certificate, so an export with signing switched off is exactly the document it
 has always been — the same bytes the template produced.
 

@@ -987,7 +987,10 @@ body {
 .sig-preview {
   box-sizing: border-box;
   background: #fff;
-  font-family: system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+  /* The exported stamp is set in IBM Plex Sans, like the report it lands in.
+     Preferred here so the preview matches on a machine that has it; nothing is
+     downloaded for a preview, so elsewhere the system sans stands in. */
+  font-family: 'IBM Plex Sans', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
 }
 .sig-row {
   display: flex;

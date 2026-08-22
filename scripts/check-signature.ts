@@ -88,6 +88,80 @@ const { unsigned, signed, certificateDer, rect } = await buildFixture();
   ok(signed.length > unsigned.length, 'signing only ever adds to the document');
 }
 
+// ---- the stamp follows the identity system ----
+//
+// STAMP_STYLE keeps its own copy of the palette so the export dialog's preview
+// does not have to import identity.ts (and pdfmake's types with it). A copy is
+// only safe while it stays a copy.
+{
+  const { STAMP_STYLE } = await import('../lib/export/pdf/sign/types.ts');
+  const { VZ, F } = await import('../lib/export/pdf/identity.ts');
+  const { appearanceDocDefinition } = await import('../lib/export/pdf/sign/appearance.ts');
+  const { DEFAULT_SIGNATURE_APPEARANCE } = await import('../lib/export/pdf/sign/types.ts');
+
+  eq(STAMP_STYLE.color.text, VZ.ink, 'the stamp\'s text colour is the identity Ink');
+  eq(STAMP_STYLE.color.muted, VZ.secondary, 'its muted colour is the identity Secondary');
+  eq(STAMP_STYLE.color.frame, VZ.rule, 'its frame colour is the identity Rule');
+  eq(STAMP_STYLE.color.paper, VZ.paper, 'its background is the identity Paper');
+
+  // And the stamp is SET in the identity's typeface — a signature block in a
+  // different font reads as pasted onto the report rather than part of it.
+  const def = appearanceDocDefinition(
+    { x: 0, y: 0, width: 216, height: 76 },
+    { ...DEFAULT_SIGNATURE_APPEARANCE, signerName: 'A Signer' }
+  );
+  eq(def.defaultStyle?.font, F.sans, 'the stamp is set in the identity typeface');
+}
+
+// ---- the stamp fits its box ----
+//
+// The reserve arithmetic in appearance.ts is an estimate, and when it comes out
+// a point short the symptom is not a cramped stamp: pdfmake pushes the overflow
+// onto a SECOND page, only the first is embedded as the appearance, and the
+// date line — the one line a signature stamp cannot do without — disappears
+// with no error anywhere. So: the stamp must always be exactly one page.
+//
+// (Not assertable by extracting text from the signed PDF — an annotation's
+// appearance stream is not page content, so it does not come out that way.)
+{
+  const { PDFDocument } = await import('@cantoo/pdf-lib');
+  const { renderAppearance } = await import('../lib/export/pdf/sign/appearance.ts');
+  const { DEFAULT_SIGNATURE_APPEARANCE } = await import('../lib/export/pdf/sign/types.ts');
+  const { PDF_TEMPLATES } = await import('../lib/export/pdf/templates.ts');
+
+  const LONG_CN = 'Vojtěch Zicha, I.CA Qualified 2 CA/2016, Prague, Czech Republic';
+  for (const tpl of PDF_TEMPLATES.filter((t) => t.signatureWidget)) {
+    for (const layout of ['image-above', 'image-left'] as const) {
+      for (const locale of ['en', 'cs'] as const) {
+        for (const reason of ['', 'Approval of the monthly timesheet']) {
+          const blob = await renderAppearance(tpl.signatureWidget!.rect, {
+            ...DEFAULT_SIGNATURE_APPEARANCE,
+            image: syntheticSignaturePng(),
+            signerName: 'A Signer With A Fairly Long Name',
+            certificateCN: LONG_CN,
+            signedAtMs: SIGNED_AT_MS,
+            layout,
+            locale,
+            reason,
+          });
+          const stamp = await PDFDocument.load(new Uint8Array(await blob.arrayBuffer()));
+          eq(
+            stamp.getPageCount(),
+            1,
+            `${tpl.id}/${layout}/${locale}${reason ? '/reason' : ''}: the stamp fits one page`
+          );
+          const { width, height } = stamp.getPage(0).getSize();
+          eq(
+            [Math.round(width), Math.round(height)],
+            [Math.round(tpl.signatureWidget!.rect.width), Math.round(tpl.signatureWidget!.rect.height)],
+            `${tpl.id}/${layout}/${locale}: the stamp page is exactly the widget rect`
+          );
+        }
+      }
+    }
+  }
+}
+
 // ---- which signature images can be embedded ----
 //
 // pdfmake embeds images through PDFKit, which reads PNG and JPEG only — and its

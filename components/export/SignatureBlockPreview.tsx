@@ -7,7 +7,8 @@
 // on screen is the design at its printed size, not an impression of it.
 //
 // It is HTML rather than the stamp PDF in an iframe, which is what this started
-// as: at 280x95pt the browsers' built-in PDF viewers ignore `#view=Fit` and
+// as: at a couple of hundred points across, the browsers' built-in PDF
+// viewers ignore `#view=Fit` and
 // render the page at a zoom of their own, so the preview showed a corner of the
 // block blown up. The measurements are shared with the pdfmake definition, so
 // the two cannot drift on size or spacing — only a change to the pdfmake
@@ -30,7 +31,8 @@ export interface SignatureBlockPreviewProps {
 export default function SignatureBlockPreview({ rect, appearance }: SignatureBlockPreviewProps) {
   const t = SIGNATURE_STRINGS[appearance.locale];
   const cn = appearance.certificateCN.trim() || t.unknownCert;
-  const { pad, gutter, imageColumnRatio, imageRowRatio, font, color } = STAMP_STYLE;
+  const { pad, gutter, imageColumnRatio, lineHeightFactor, detailsSlack, minImageHeight, font, color } =
+    STAMP_STYLE;
   const innerWidth = rect.width - 2 * pad;
   const innerHeight = rect.height - 2 * pad;
   const above = appearance.layout === 'image-above';
@@ -90,7 +92,19 @@ export default function SignatureBlockPreview({ rect, appearance }: SignatureBlo
             src={appearance.image}
             style={{
               width: above ? innerWidth : innerWidth * imageColumnRatio,
-              height: above ? Math.max(18, innerHeight * imageRowRatio) : innerHeight,
+              // Same arithmetic as the exported stamp (see sign/appearance.ts):
+              // the detail lines take what they need and the image gets the
+              // rest, so the preview shows the proportions that will print.
+              height: above
+                ? Math.max(
+                    minImageHeight,
+                    innerHeight -
+                      ((font.caption + font.name + font.meta * (appearance.reason.trim() ? 3 : 2)) *
+                        lineHeightFactor +
+                        4 +
+                        detailsSlack)
+                  )
+                : innerHeight,
               objectFit: 'contain',
               objectPosition: 'left top',
             }}

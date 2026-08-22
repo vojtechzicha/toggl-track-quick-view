@@ -65,8 +65,9 @@ export const DEFAULT_SIGNATURE_APPEARANCE: SignatureAppearance = {
  * export dialog's preview, which draws the same block at 1 pt = 1 px — so the
  * preview is the design at its printed size rather than an impression of it.
  * (The obvious alternative, showing the stamp PDF itself in an iframe, does not
- * survive contact with the browsers' built-in PDF viewers: at 280x95pt they
- * ignore `view=Fit` and render the page at a zoom of their own choosing.)
+ * survive contact with the browsers' built-in PDF viewers: at a couple of
+ * hundred points across they ignore `view=Fit` and render the page at a zoom of
+ * their own choosing.)
  */
 export const STAMP_STYLE = {
   /** Inner padding. */
@@ -76,14 +77,41 @@ export const STAMP_STYLE = {
   /** Share of the width the image takes in the 'image-left' layout. */
   imageColumnRatio: 0.42,
   /**
-   * Share of the height the image takes in the 'image-above' layout. Sized so
-   * the four detail lines below it still fit the reserved box — the date line
-   * is the one that falls off the bottom first, and it is the one line the
-   * stamp cannot do without.
+   * Multiplier turning a font size into the height its line occupies, for
+   * reserving room for the detail lines in the 'image-above' layout.
+   *
+   * The image gets whatever the text does not need, rather than a fixed share
+   * of the box: a fixed share has to be re-tuned every time the box or the
+   * typeface changes, and the failure is silent — the DATE line drops off the
+   * bottom, which is the one line the stamp cannot do without. Calibrated by
+   * measuring the rendered block in IBM Plex Sans (four lines totalling 26pt of
+   * type occupy ~40pt including leading and the styles' own margins), with a
+   * couple of points to spare.
    */
-  imageRowRatio: 0.4,
+  lineHeightFactor: 1.55,
+  /**
+   * Slack left below the detail lines. The reserve above is an ESTIMATE, and
+   * the failure mode when it comes out a point short is not a cramped stamp but
+   * a silently missing line: pdfmake pushes the overflow onto a second page,
+   * and only the first page is embedded as the appearance.
+   */
+  detailsSlack: 4,
+  /** Never shrink the image below this, however tight the box. */
+  minImageHeight: 16,
   font: { caption: 6, name: 9, meta: 5.5 },
-  color: { text: '#1f2937', muted: '#6b7280', frame: '#9ca3af', paper: '#ffffff' },
+  /**
+   * The identity palette (lib/export/pdf/identity.ts), repeated as literals
+   * rather than imported: this module is pulled into the export dialog for the
+   * preview, and identity.ts drags pdfmake's types and the rule-grammar helpers
+   * along with it. A copy of four hex values is the cheaper coupling — the
+   * check asserts the two agree.
+   */
+  color: {
+    text: '#1A1C1E',
+    muted: '#575C61',
+    frame: '#E2E4E6',
+    paper: '#FFFFFF',
+  },
 } as const;
 
 /**
