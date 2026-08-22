@@ -816,6 +816,10 @@ come first in the picker, and a pack may name the default. `pnpm pack:sync`
 does the checkout on its own; `pnpm check:pack` runs whatever checks the pack
 ships in `checks/`.
 
+Treat `pdf-templates/` as disposable: the sync step force-checks it out at the
+configured ref every time, so a pack is edited in a clone of its own repository
+and pushed, not in the app's copy.
+
 What is compiled in is decided by the **directory**, not by the variable — the
 variable only says what to fetch into it. So clearing `PDF_TEMPLATE_PACK_REPO`
 on a machine that has already synced stops the updates and keeps the pack;

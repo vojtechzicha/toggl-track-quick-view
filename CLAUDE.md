@@ -179,9 +179,12 @@ checks.
   shipping without it would be a green deploy that had lost every layout in use.
 - Not a submodule, deliberately: `.gitmodules` would make every clone and fork
   of this public repo try to fetch a private repository.
-- Editing a pack template means committing in `pdf-templates/` (its own git
-  repo) and pushing there; the app's next build picks `main` up. Nothing about
-  the pack belongs in a commit here.
+- **`pdf-templates/` is disposable.** `sync-pack.mjs` force-checks it out at
+  the configured ref on every `pnpm dev` / `pnpm build`, so an edit made there
+  is an edit waiting to be discarded. The working copy is the sibling clone at
+  `../toggl-track-quick-view-pdf-templates`: edit and commit THERE, push, and
+  the app's next build picks `main` up. Nothing about the pack ever belongs in
+  a commit here.
 
 ## Deployment
 
