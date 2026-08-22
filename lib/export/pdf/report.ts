@@ -153,9 +153,9 @@ const EN: Strings = {
   metaRef: 'Reference',
   metaPreparedBy: 'Prepared by',
   engagementPlaceholder:
-    'Prepared under the [agreement name] of [date] and the order for [scope], end ' +
-    'customer [end customer]. The reference above is the invoice number these records ' +
-    'support.',
+    'Prepared under the [agreement name] of [date] and order no. [order number], end ' +
+    'customer [end customer]. The reference above identifies this timesheet; the ' +
+    'records support invoice no. [invoice number].',
   metaEffort: 'Time recorded',
   metaFees: 'Fees (excl. VAT)',
   metaIssued: 'Issued',
@@ -241,9 +241,9 @@ const CS: Strings = {
   metaRef: 'Reference',
   metaPreparedBy: 'Zpracoval(a)',
   engagementPlaceholder:
-    'Práce byla provedena podle [název smlouvy] ze dne [datum] a navazující objednávky ' +
-    'na [předmět objednávky] pro koncového zákazníka [koncový zákazník]. Reference ' +
-    'uvedená výše je číslo faktury, k níž je tento výkaz podkladem.',
+    'Práce byla provedena podle [název smlouvy] ze dne [datum] a objednávky č. ' +
+    '[číslo objednávky] pro koncového zákazníka [koncový zákazník]. Reference uvedená ' +
+    'výše označuje tento výkaz; výkaz je podkladem k faktuře č. [číslo faktury].',
   metaEffort: 'Vykázaný čas',
   metaFees: 'Cena bez DPH',
   metaIssued: 'Vystaveno',
@@ -676,7 +676,7 @@ function buildReport(doc: ExportDoc, locale: ReportLocale): TDocumentDefinitions
   const projTable: Content = {
     table: {
       headerRows: 1,
-      widths: rate != null ? ['*', 42, 40, 38, 80, 86] : ['*', 52, 48, 46],
+      widths: rate != null ? ['*', 42, 40, 38, 84, 92] : ['*', 52, 48, 46],
       body: [
         [
           { text: L.thProject, style: 'th' },
@@ -793,8 +793,11 @@ function buildReport(doc: ExportDoc, locale: ReportLocale): TDocumentDefinitions
     // rows is not part of the identity).
     ...(doc.multi ? [64] : []),
     '*',
-    46,
+    54,
   ];
+  // A guaranteed gutter (~4.5 mm) before the Hours column, so a long
+  // description line can never run visually into the figure beside it.
+  const hoursGutter = (i: number) => (i === detailCols - 1 ? 13 : 4);
   const detailHead: TableCell[] = [
     ...(hasTimes ? [{ text: L.thTime, style: 'th' }] : []),
     { text: L.thCode, style: 'th' },
@@ -803,19 +806,36 @@ function buildReport(doc: ExportDoc, locale: ReportLocale): TDocumentDefinitions
     { text: L.thHours, style: 'th', alignment: 'right' as const },
   ];
 
-  const detailBody: TableCell[][] = [detailHead];
-  const dayFillRows = new Set<number>();
+  // The log is one table PER DAY, each with its date band as the table's
+  // header row: when a long day splits across a page break, pdfmake repeats
+  // the band, so no page ever starts with orphaned rows under no date. The
+  // column-label row prints once, above the first day.
+  const detailColHeader: Content = {
+    table: { widths: detailWidths, body: [detailHead] },
+    layout: {
+      hLineWidth: () => 0.5,
+      hLineColor: () => VZ.ink,
+      vLineWidth: () => 0,
+      paddingTop: () => 3.5,
+      paddingBottom: () => 3.5,
+      paddingLeft: hoursGutter,
+      paddingRight: () => 4,
+    },
+  };
+
+  const dayTables: Content[] = [];
   for (const ms of [...dayMs].sort((a, b) => a - b)) {
     const dayLines = lines.filter((l) => l.dateMs === ms);
     const daySecs = dayLines.reduce((s, l) => s + l.secs, 0);
-    dayFillRows.add(detailBody.length);
-    detailBody.push([
-      { text: fmtDate(ms, locale, true), style: 'dayHdr', colSpan: detailCols - 1 },
-      ...Array(detailCols - 2).fill({}),
-      { text: `${h(daySecs)} h`, style: 'dayHdrNum', alignment: 'right' as const },
-    ]);
+    const body: TableCell[][] = [
+      [
+        { text: fmtDate(ms, locale, true), style: 'dayHdr', colSpan: detailCols - 1 },
+        ...Array(detailCols - 2).fill({}),
+        { text: `${h(daySecs)} h`, style: 'dayHdrNum', alignment: 'right' as const },
+      ],
+    ];
     for (const l of dayLines) {
-      detailBody.push([
+      body.push([
         ...(hasTimes ? [{ text: fmtTimeRange(l.startMs, l.endMs, locale), style: 'tdLogMuted' }] : []),
         { text: clamp(l.code, MAX.code), style: 'tdLog' },
         ...(doc.multi ? [{ text: clamp(l.project, MAX.project), style: 'tdLogMuted' }] : []),
@@ -823,28 +843,58 @@ function buildReport(doc: ExportDoc, locale: ReportLocale): TDocumentDefinitions
         { text: h(l.secs), style: 'tdLogNum', alignment: 'right' as const },
       ]);
     }
+    dayTables.push({
+      table: {
+        headerRows: 1,
+        keepWithHeaderRows: 1,
+        dontBreakRows: true,
+        widths: detailWidths,
+        body,
+      },
+      layout: {
+        // The Surface day band separates days; only hairlines run between the
+        // day's own rows. Rows sit roomier than the summary tables — this is
+        // the report's main reading surface — the band a touch more still.
+        hLineWidth: (i: number, node: ContentTable) =>
+          i === 0 || i === node.table.body.length ? 0 : 0.3,
+        hLineColor: () => VZ.rule,
+        vLineWidth: () => 0,
+        fillColor: (rowIndex: number) => (rowIndex === 0 ? VZ.surface : null),
+        paddingTop: (i: number) => (i === 0 ? 6 : 5),
+        paddingBottom: (i: number) => (i === 0 ? 6 : 5),
+        paddingLeft: hoursGutter,
+        paddingRight: () => 4,
+      },
+    });
   }
-  detailBody.push([
-    { text: L.periodTotal, style: 'totalTd', colSpan: detailCols - 1 },
-    ...Array(detailCols - 2).fill({}),
-    { text: `${h(totalSecs)} h`, style: 'totalTdNum', alignment: 'right' as const },
-  ]);
+
+  const detailTotal: Content = {
+    table: {
+      widths: detailWidths,
+      body: [
+        [
+          { text: L.periodTotal, style: 'totalTd', colSpan: detailCols - 1 },
+          ...Array(detailCols - 2).fill({}),
+          { text: `${h(totalSecs)} h`, style: 'totalTdNum', alignment: 'right' as const },
+        ],
+      ],
+    },
+    layout: {
+      hLineWidth: () => 0.5,
+      hLineColor: () => VZ.ink,
+      vLineWidth: () => 0,
+      paddingTop: () => 4,
+      paddingBottom: () => 4,
+      paddingLeft: hoursGutter,
+      paddingRight: () => 4,
+    },
+  };
 
   const detailPage: Content[] = [
     ...phead(L.detailTitle, `${L.detailFirst} · ${ref}`),
-    {
-      table: { headerRows: 1, widths: detailWidths, body: detailBody, dontBreakRows: true },
-      layout: {
-        ...rowTableLayout,
-        // Day header rows read as Surface summary bands; the table head itself
-        // stays unfilled here so the bands carry the day rhythm alone. Rows sit
-        // roomier than the summary tables — this is the report's main reading
-        // surface — and the day bands get a touch more still.
-        fillColor: (rowIndex: number) => (dayFillRows.has(rowIndex) ? VZ.surface : null),
-        paddingTop: (i: number) => (dayFillRows.has(i) ? 6 : 5),
-        paddingBottom: (i: number) => (dayFillRows.has(i) ? 6 : 5),
-      },
-    },
+    detailColHeader,
+    ...dayTables,
+    detailTotal,
     { text: '', pageBreak: 'after' },
   ];
 
