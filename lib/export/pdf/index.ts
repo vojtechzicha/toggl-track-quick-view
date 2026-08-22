@@ -3,10 +3,14 @@
 //
 // Known generator limitation — accessibility: pdfmake emits UNTAGGED PDF.
 // The documents carry real text (selectable, searchable), embedded genuine
-// font cuts, and title/author/subject metadata, but no PDF/UA structure tags
-// or explicit reading order, and no /Lang entry. Producing tagged output
-// would require a different generator; if a client demands PDF/UA, state this
-// limitation rather than implying compliance.
+// font cuts, title/author/subject metadata and a /Lang entry (the
+// `language` doc property), but no PDF/UA structure tags or explicit reading
+// order. pdfmake's own `tagged: true` flag is NOT used deliberately: it was
+// verified (pdfmake 0.2.23) to emit an empty structure tree (/Nums [],
+// no marked content) while stamping /Marked true — a false conformance
+// claim, worse than honestly untagged output. Producing genuinely tagged
+// PDF would require a different generator; if a client demands PDF/UA,
+// state this limitation rather than implying compliance.
 
 import type { ExportDoc } from '../model';
 import { getTemplate } from './templates';

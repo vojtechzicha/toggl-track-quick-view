@@ -190,6 +190,7 @@ export function buildAcceptanceIdentity(
     pageOrientation: 'portrait',
     pageSize: 'A4',
     pageMargins: A4_MARGINS,
+    language: 'en-GB',
     info: {
       title: `Timesheet Acceptance Protocol — ${doc.title || ''}`.trim(),
       author: doc.personName || undefined,

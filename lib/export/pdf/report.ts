@@ -785,13 +785,15 @@ function buildReport(doc: ExportDoc, locale: ReportLocale): TDocumentDefinitions
   // the sign-off box, where the per-project allocation stays consistent.
   const detailCols = 2 + (hasTimes ? 1 : 0) + (doc.multi ? 1 : 0) + 1;
   const detailWidths: (string | number)[] = [
-    ...(hasTimes ? [56] : []),
-    64,
+    ...(hasTimes ? [60] : []),
+    // Wide enough that a code with a longer parenthetical name holds at most
+    // two lines instead of three; the width comes out of the description.
+    ...(hasTimes ? [100] : [112]),
     // A multi-project export names the project on each line (colour coding of
     // rows is not part of the identity).
     ...(doc.multi ? [64] : []),
     '*',
-    44,
+    46,
   ];
   const detailHead: TableCell[] = [
     ...(hasTimes ? [{ text: L.thTime, style: 'th' }] : []),
@@ -814,11 +816,11 @@ function buildReport(doc: ExportDoc, locale: ReportLocale): TDocumentDefinitions
     ]);
     for (const l of dayLines) {
       detailBody.push([
-        ...(hasTimes ? [{ text: fmtTimeRange(l.startMs, l.endMs, locale), style: 'tdMuted' }] : []),
-        { text: clamp(l.code, MAX.code), style: 'td' },
-        ...(doc.multi ? [{ text: clamp(l.project, MAX.project), style: 'tdMuted' }] : []),
-        { text: clamp(l.desc, MAX.desc), style: 'td' },
-        { text: h(l.secs), style: 'tdNum', alignment: 'right' as const },
+        ...(hasTimes ? [{ text: fmtTimeRange(l.startMs, l.endMs, locale), style: 'tdLogMuted' }] : []),
+        { text: clamp(l.code, MAX.code), style: 'tdLog' },
+        ...(doc.multi ? [{ text: clamp(l.project, MAX.project), style: 'tdLogMuted' }] : []),
+        { text: clamp(l.desc, MAX.desc), style: 'tdLog' },
+        { text: h(l.secs), style: 'tdLogNum', alignment: 'right' as const },
       ]);
     }
   }
@@ -835,8 +837,12 @@ function buildReport(doc: ExportDoc, locale: ReportLocale): TDocumentDefinitions
       layout: {
         ...rowTableLayout,
         // Day header rows read as Surface summary bands; the table head itself
-        // stays unfilled here so the bands carry the day rhythm alone.
+        // stays unfilled here so the bands carry the day rhythm alone. Rows sit
+        // roomier than the summary tables — this is the report's main reading
+        // surface — and the day bands get a touch more still.
         fillColor: (rowIndex: number) => (dayFillRows.has(rowIndex) ? VZ.surface : null),
+        paddingTop: (i: number) => (dayFillRows.has(i) ? 6 : 5),
+        paddingBottom: (i: number) => (dayFillRows.has(i) ? 6 : 5),
       },
     },
     { text: '', pageBreak: 'after' },
@@ -970,6 +976,9 @@ function buildReport(doc: ExportDoc, locale: ReportLocale): TDocumentDefinitions
     pageOrientation: 'portrait',
     pageSize: 'A4',
     pageMargins: A4_MARGINS,
+    // Sets the PDF /Lang entry — real metadata, unlike pdfmake's `tagged`
+    // flag, which emits an empty structure tree (see ./index.ts).
+    language: L.localeTag,
     info: {
       title: `${L.docTitle} — ${client}`.trim(),
       author: personName || undefined,
@@ -998,14 +1007,14 @@ function buildReport(doc: ExportDoc, locale: ReportLocale): TDocumentDefinitions
       coverMasthead: { fontSize: 16, bold: true, color: VZ.ink },
       coverConf: { font: F.medium, fontSize: 7.5, color: VZ.secondary },
       coverSignRole: { fontSize: 7.5, color: VZ.secondary },
-      coverTitle: { fontSize: 22, bold: true, color: VZ.ink, lineHeight: 1.1 },
-      coverClient: { fontSize: 11, bold: true, color: VZ.ink, lineHeight: 1.3 },
-      coverSub: { fontSize: 9.5, color: VZ.secondary },
+      coverTitle: { fontSize: 27, bold: true, color: VZ.ink, lineHeight: 1.1 },
+      coverClient: { fontSize: 12.5, bold: true, color: VZ.ink, lineHeight: 1.3 },
+      coverSub: { fontSize: 10, color: VZ.secondary },
       metaK: { font: F.medium, fontSize: 7, color: VZ.secondary },
       metaV: { fontSize: 8.5, bold: true, color: VZ.ink, margin: [0, 3, 0, 0] },
-      pheadTitle: { fontSize: 16, bold: true, color: VZ.ink },
+      pheadTitle: { fontSize: 17.5, bold: true, color: VZ.ink },
       pheadNote: { fontSize: 7.5, color: VZ.secondary },
-      sectionH: { fontSize: 10, bold: true, color: VZ.ink },
+      sectionH: { fontSize: 11, bold: true, color: VZ.ink },
       lead: { fontSize: 9.5, color: VZ.ink, lineHeight: 1.5 },
       kpiK: { font: F.medium, fontSize: 7, color: VZ.secondary },
       kpiV: { fontSize: 15, bold: true, color: VZ.ink },
@@ -1013,13 +1022,18 @@ function buildReport(doc: ExportDoc, locale: ReportLocale): TDocumentDefinitions
       kpiVUnit: { fontSize: 9, color: VZ.secondary },
       kpiD: { fontSize: 7, color: VZ.secondary },
       th: { font: F.medium, fontSize: 7, bold: true, color: VZ.secondary },
-      td: { fontSize: 8.5, color: VZ.ink },
-      tdMuted: { fontSize: 8.5, color: VZ.secondary },
-      tdNum: { fontSize: 8.5, color: VZ.ink },
-      dayHdr: { fontSize: 7.5, bold: true, color: VZ.ink },
-      dayHdrNum: { fontSize: 8, bold: true, color: VZ.ink },
-      totalTd: { fontSize: 8.8, bold: true, color: VZ.ink },
-      totalTdNum: { fontSize: 8.8, bold: true, color: VZ.ink },
+      td: { fontSize: 9, color: VZ.ink },
+      tdMuted: { fontSize: 9, color: VZ.secondary },
+      tdNum: { fontSize: 9, color: VZ.ink },
+      // The detailed log reads at 9.5/12.4 — the report's main reading
+      // surface earns the most comfortable setting (review correction #4).
+      tdLog: { fontSize: 9.5, color: VZ.ink, lineHeight: 1.3 },
+      tdLogMuted: { fontSize: 9.5, color: VZ.secondary, lineHeight: 1.3 },
+      tdLogNum: { fontSize: 9.5, color: VZ.ink },
+      dayHdr: { fontSize: 8.5, bold: true, color: VZ.ink },
+      dayHdrNum: { fontSize: 9, bold: true, color: VZ.ink },
+      totalTd: { fontSize: 9.2, bold: true, color: VZ.ink },
+      totalTdNum: { fontSize: 9.2, bold: true, color: VZ.ink },
       investTotal: { fontSize: 9, bold: true, color: VZ.ink },
       // The document's one oxide value, over the classic double underline.
       investTotalNum: {

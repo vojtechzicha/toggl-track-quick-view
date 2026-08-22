@@ -224,6 +224,7 @@ function buildStandard(doc: ExportDoc): TDocumentDefinitions {
     pageOrientation: landscape ? 'landscape' : 'portrait',
     pageSize: 'A4',
     pageMargins: A4_MARGINS,
+    language: 'en-GB',
     info: {
       title: `Timesheet — ${doc.title || ''}`.trim(),
       author: doc.personName || undefined,
