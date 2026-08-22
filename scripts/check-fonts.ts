@@ -3,7 +3,7 @@
 //
 // pdfmake resolves a font to a filename and then looks that filename up in the
 // VFS. When the two disagree it fails at render time, deep inside the library
-// ("File 'Fraunces-SemiBold.ttf' not found in virtual file system"), and only
+// ("File 'IBMPlexSans-SemiBold.ttf' not found in virtual file system"), and only
 // for documents that actually reach the missing glyph. Cheap to assert here.
 //
 // This exists because the declarations and the data were once passed to pdfmake
@@ -73,7 +73,7 @@ registerHooks({
 });
 
 const { fontConfig, resolveBaseVfs } = await import('../lib/export/pdf/index.ts');
-const { reportVfs, reportFonts } = await import('../lib/export/pdf/reportFonts.ts');
+const { identityVfs, identityFonts } = await import('../lib/export/pdf/identityFonts.ts');
 const { PDF_TEMPLATES } = await import('../lib/export/pdf/templates.ts');
 
 let checks = 0;
@@ -107,22 +107,23 @@ function assertComplete(label: string, cfg: { fonts: Record<string, Record<strin
   ok(Object.keys(cfg.fonts).length === 1, 'only Roboto is declared without a fontset');
 }
 
-// The report fontset: Roboto must survive alongside the embedded cuts.
+// The identity fontset: Roboto must survive alongside the embedded cuts.
 {
-  const cfg = fontConfig(baseVfs, { reportVfs, reportFonts });
-  assertComplete('report fontset', cfg);
+  const cfg = fontConfig(baseVfs, { identityVfs, identityFonts });
+  assertComplete('identity fontset', cfg);
   ok(cfg.fonts.Roboto != null, 'declaring custom fonts must not drop Roboto');
-  ok(cfg.fonts.Fraunces != null, 'the report declares Fraunces');
-  ok(cfg.fonts.IBMPlexMono != null, 'the report declares IBM Plex Mono');
-  // The exact file the production failure named.
+  ok(cfg.fonts.IBMPlexSans != null, 'the identity set declares IBM Plex Sans');
+  ok(cfg.fonts.IBMPlexSansMedium != null, 'the identity set declares the Medium/Bold pair');
+  // The same failure shape the old production bug had: a declared cut whose
+  // data never reaches pdfmake.
   ok(
-    typeof cfg.vfs['Fraunces-SemiBold.ttf'] === 'string' &&
-      cfg.vfs['Fraunces-SemiBold.ttf'].length > 1000,
-    'Fraunces-SemiBold.ttf is present with real data'
+    typeof cfg.vfs['IBMPlexSans-SemiBold.ttf'] === 'string' &&
+      cfg.vfs['IBMPlexSans-SemiBold.ttf'].length > 1000,
+    'IBMPlexSans-SemiBold.ttf is present with real data'
   );
   // Embedded cuts must not be shadowed by, or shadow, the base bundle.
-  for (const file of Object.keys(reportVfs)) {
-    ok(cfg.vfs[file] === reportVfs[file], `${file} survives the merge intact`);
+  for (const file of Object.keys(identityVfs)) {
+    ok(cfg.vfs[file] === identityVfs[file], `${file} survives the merge intact`);
   }
   for (const file of Object.keys(baseVfs)) {
     ok(cfg.vfs[file] != null, `base font ${file} survives the merge`);
@@ -131,12 +132,12 @@ function assertComplete(label: string, cfg: { fonts: Record<string, Record<strin
 
 // Every registered template must declare a fontset it can actually render with.
 for (const tpl of PDF_TEMPLATES) {
-  const cfg = fontConfig(baseVfs, tpl.fontset === 'report' ? { reportVfs, reportFonts } : null);
+  const cfg = fontConfig(baseVfs, tpl.fontset === 'identity' ? { identityVfs, identityFonts } : null);
   assertComplete(`template ${tpl.id}`, cfg);
 }
 
 // Base64 payloads must decode — a truncated paste would still be a string.
-for (const [file, b64] of Object.entries(reportVfs)) {
+for (const [file, b64] of Object.entries(identityVfs)) {
   const buf = Buffer.from(b64, 'base64');
   ok(buf.length > 1000, `${file} decodes to a plausible font (${buf.length} bytes)`);
   // TrueType/OpenType magic: 0x00010000 or "OTTO" or "true".
@@ -188,9 +189,9 @@ for (const [file, b64] of Object.entries(reportVfs)) {
     ok(vfs != null, `${tpl.id}: a VFS reached pdfmake despite the global side effect`);
     // The declarations and the data must still agree at the point of the call.
     assertComplete(`toPDF ${tpl.id}`, { fonts, vfs });
-    if (tpl.fontset === 'report') {
+    if (tpl.fontset === 'identity') {
       ok(
-        typeof vfs['Fraunces-SemiBold.ttf'] === 'string',
+        typeof vfs['IBMPlexSans-SemiBold.ttf'] === 'string',
         `${tpl.id}: the embedded cuts survive the Roboto-only globalVfs — the exact ` +
           'production failure this guards'
       );

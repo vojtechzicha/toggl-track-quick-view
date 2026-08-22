@@ -1,8 +1,8 @@
-// The "report" PDF template: a multi-page, editorially typeset document — cover,
-// summary with totals by project and billing code, a chronological day log, and a
-// sign-off page. Registered twice (English and Czech) over one builder; all text
-// lives in the string tables below. Uses the embedded Fraunces / IBM Plex Mono
-// cuts (see reportFonts.ts) next to pdfmake's bundled Roboto.
+// The "report" PDF template: a multi-page document in the visual-identity
+// design (see ./identity) — cover, summary with totals by project and billing
+// code, a chronological day log, and a sign-off page. Registered twice (English
+// and Czech) over one builder; all text lives in the string tables below. Set
+// entirely in the embedded IBM Plex Sans cuts (see identityFonts.ts).
 //
 // Money is optional: with a rate in the export options the report carries fee
 // columns and an investment box; without one it stays a time-only document. The
@@ -22,29 +22,24 @@ import type { ExportDoc, RateBasis } from '../model';
 import { DAY_MS } from '@/lib/timesheet/constants';
 import type { PdfTemplate } from './templates';
 import { allocate, allocateMd, allocateShares, makeMoney, HOURS_PER_MD } from './money';
+import {
+  VZ,
+  F,
+  A4_MARGINS,
+  CW_PORTRAIT,
+  principalRule,
+  fullRule,
+  hairline,
+  signature,
+  ruledTableLayout,
+  identityBaseStyles,
+  identityDefaultStyle,
+} from './identity';
 
 type ReportLocale = 'en' | 'cs';
 
-// ---- palette (warm paper tones with a deep teal accent) ----
-
-const R = {
-  ink: '#16140F',
-  ink2: '#403A2F',
-  muted: '#7A7263',
-  faint: '#A39A88',
-  line: '#E0DACC',
-  line2: '#EEE9DD',
-  wash: '#F5F1E7',
-  accent: '#14564F',
-  ochre: '#B0792E',
-  paper: '#FCFBF7',
-};
-
-// Project dot colors, assigned in first-seen order and cycled when exceeded.
-const PROJECT_COLORS = ['#14564F', '#B0792E', '#4A5D7E', '#6B4E71', '#556B2F', '#8B5A2B'];
-
-/** Printable width of an A4 portrait page with the 48pt side margins below. */
-const CW = 499;
+/** Printable width of an A4 portrait page inside the identity margins. */
+const CW = CW_PORTRAIT;
 
 // Caps on user-supplied text. A timesheet takes whatever Toggl holds — project
 // names, descriptions and client names have no length limit at the source — and
@@ -342,13 +337,19 @@ const DAYS: Record<ReportLocale, string[]> = {
 };
 const MONTHS_EN = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 
+// Czech dates follow the identity's convention (§5.5): zero-padded `04. 08.
+// 2026`, a space after each dot, and non-breaking spaces inside the date so it
+// never wraps mid-way.
+const NBSP = '\u00a0';
+const csDate = (d: Date, withYear: boolean): string => {
+  const core = `${String(d.getDate()).padStart(2, '0')}.${NBSP}${String(d.getMonth() + 1).padStart(2, '0')}.`;
+  return withYear ? `${core}${NBSP}${d.getFullYear()}` : core;
+};
+
 function fmtDate(ms: number, locale: ReportLocale, withYear: boolean): string {
   const d = new Date(ms);
   const dayName = DAYS[locale][d.getDay()];
-  if (locale === 'cs') {
-    const core = `${dayName} ${d.getDate()}. ${d.getMonth() + 1}.`;
-    return withYear ? `${core} ${d.getFullYear()}` : core;
-  }
+  if (locale === 'cs') return `${dayName} ${csDate(d, withYear)}`;
   const core = `${dayName} ${String(d.getDate()).padStart(2, '0')} ${MONTHS_EN[d.getMonth()]}`;
   return withYear ? `${core} ${d.getFullYear()}` : core;
 }
@@ -357,7 +358,8 @@ function fmtRange(fromMs: number, toMs: number, locale: ReportLocale): string {
   const a = new Date(fromMs);
   const b = new Date(toMs - DAY_MS); // inclusive last day
   if (locale === 'cs') {
-    return `${a.getDate()}. ${a.getMonth() + 1}. – ${b.getDate()}. ${b.getMonth() + 1}. ${b.getFullYear()}`;
+    // Range with a spaced en dash: `01. 08. – 31. 08. 2026`.
+    return `${csDate(a, false)} – ${csDate(b, true)}`;
   }
   return `${a.getDate()} ${MONTHS_EN[a.getMonth()]} – ${b.getDate()} ${MONTHS_EN[b.getMonth()]} ${b.getFullYear()}`;
 }
@@ -445,45 +447,27 @@ function collectLines(doc: ExportDoc): Line[] {
 
 // ---- building blocks ----
 
-/** Colored project dot next to a label (drawn — the embedded fonts have no ● glyph). */
-function dotted(color: string, text: string, style: string): Content {
-  return {
-    columns: [
-      { width: 9, canvas: [{ type: 'ellipse', x: 3, y: 5.2, r1: 2.6, r2: 2.6, color }] },
-      { text, style },
-    ],
-    columnGap: 0,
-  };
-}
-
+/** Section label: sentence case, SemiBold — typography, not decoration. */
 function sectionH(text: string): Content {
-  return { text: text.toUpperCase(), style: 'sectionH', margin: [0, 16, 0, 6] };
+  return { text, style: 'sectionH', margin: [0, 16, 0, 6] };
 }
 
-/** Page heading: serif title, small uppercase note right, heavy rule underneath. */
+/** Page heading: 16 pt SemiBold title, small Secondary note right, full rule under. */
 function phead(title: string, note: string): Content[] {
   return [
     {
       columns: [
         { text: title, style: 'pheadTitle' },
-        { text: note.toUpperCase(), style: 'pheadNote', alignment: 'right', margin: [0, 8, 0, 0] },
+        { text: note, style: 'pheadNote', alignment: 'right', margin: [0, 9, 0, 0] },
       ],
     },
-    { canvas: [{ type: 'line', x1: 0, y1: 0, x2: CW, y2: 0, lineWidth: 1.5, lineColor: R.ink }], margin: [0, 4, 0, 14] },
+    fullRule(CW, [0, 4, 0, 14]),
   ];
 }
 
-const rowTableLayout = {
-  hLineWidth: (i: number, node: ContentTable) =>
-    i === 1 ? 1.2 : i === node.table.body.length ? 1.2 : i === 0 ? 0 : 0.5,
-  hLineColor: (i: number, node: ContentTable) =>
-    i === 1 || i === node.table.body.length ? R.ink : R.line2,
-  vLineWidth: () => 0,
-  paddingTop: () => 4,
-  paddingBottom: () => 4,
-  paddingLeft: () => 5,
-  paddingRight: () => 5,
-};
+// The identity table layout: full rules around the head and the closing total
+// row, hairline rows between, Surface head fill, no vertical lines.
+const rowTableLayout = ruledTableLayout({ totalRow: true });
 
 // ---- the builder ----
 
@@ -536,9 +520,6 @@ function buildReport(doc: ExportDoc, locale: ReportLocale): TDocumentDefinitions
   const nCodes = new Set(lines.map((l) => l.code)).size;
   const projectNames = [...byProject.keys()].filter(Boolean);
   const nProjects = Math.max(projectNames.length, 1);
-  const projColor = new Map(projectNames.map((p, i) => [p, PROJECT_COLORS[i % PROJECT_COLORS.length]]));
-  const dot = (project: string, text: string, style: string): TableCell =>
-    projColor.has(project) ? (dotted(projColor.get(project) as string, text, style) as TableCell) : { text, style };
 
   // Every printed column is allocated against its total rather than rounded row
   // by row, so the columns add up exactly as printed.
@@ -568,17 +549,10 @@ function buildReport(doc: ExportDoc, locale: ReportLocale): TDocumentDefinitions
 
   // -- cover --
 
-  const initials = (personName || '·')
-    .split(/\s+/)
-    .filter(Boolean)
-    .slice(0, 2)
-    .map((w) => w[0].toUpperCase())
-    .join('');
-
   // A client name is never truncated away — it is who the document is for — so
-  // the type shrinks to fit instead.
+  // the type shrinks to fit instead (22 pt is the cover-title size of the spec).
   const coverTitleSize =
-    client.length > 96 ? 15 : client.length > 58 ? 20 : client.length > 32 ? 26 : 33;
+    client.length > 96 ? 13 : client.length > 58 ? 16 : client.length > 32 ? 19 : 22;
 
   const projectsLabel = (() => {
     const names = projectNames.map((p) => clamp(p, MAX.project));
@@ -588,109 +562,80 @@ function buildReport(doc: ExportDoc, locale: ReportLocale): TDocumentDefinitions
     return `${shown} ${L.andMore(names.length - MAX.projectsOnCover)}`;
   })();
 
+  const metaPair = (label: string, value: Content): Content => ({
+    stack: [{ text: label, style: 'metaK' }, value],
+  });
+
   const cover: Content[] = [
     {
       columns: [
+        { text: L.docType, style: 'coverDocType' },
+        // Confidentiality marker, top right (report grammar of the spec, §20).
+        { text: L.confidential, style: 'coverDocType', alignment: 'right' },
+      ],
+    },
+    // The cover's principal double rule — the page's one oxide termination
+    // (80 mm), opening the upper third.
+    principalRule(227, true, [0, 148, 0, 0]),
+    { text: client, style: 'coverTitle', fontSize: coverTitleSize, margin: [0, 18, 0, 0] },
+    { text: `${L.docTitle} · ${range}`, style: 'coverSub', margin: [0, 8, 0, 0] },
+    {
+      // Pinned to the foot of the cover. Sits at 596 (not lower) so a wrapped
+      // client, project or reference value still clears the bottom margin.
+      absolutePosition: { x: 62, y: 596 },
+      stack: [
         {
-          width: '*',
-          columns: [
-            {
-              width: 34,
-              stack: [
-                { canvas: [{ type: 'ellipse', x: 16, y: 16, r1: 16, r2: 16, lineWidth: 1.4, lineColor: R.ink }] },
-                { text: initials, style: 'glyph', margin: [0, -22, 0, 0] },
+          table: {
+            widths: [CW / 2 - 14, CW / 2 - 14],
+            body: [
+              [
+                metaPair(L.metaClient, { text: client, style: 'metaV' }),
+                metaPair(L.metaProjects, { text: projectsLabel, style: 'metaV' }),
               ],
-            },
-            {
-              width: 'auto',
-              margin: [10, 3, 0, 0],
-              stack: [
-                { text: personName, style: 'brandName' },
-                ...(role ? [{ text: role.toUpperCase(), style: 'brandRole', margin: [0, 2, 0, 0] } as Content] : []),
+              [
+                metaPair(L.metaRef, { text: ref, style: 'metaV' }),
+                metaPair(L.metaPreparedBy, { text: personName, style: 'metaV' }),
               ],
-            },
-          ],
-        },
-        {
-          width: 'auto',
-          table: { body: [[{ text: L.confidential.toUpperCase(), style: 'chip' }]] },
+              [
+                metaPair(L.metaEffort, {
+                  text: `${h(totalSecs)} h · ${mdNum(totalMd, L.localeTag)} MD · ${nDays} ${L.daysWord(nDays)}`,
+                  style: 'metaV',
+                }),
+                totalFee != null
+                  ? metaPair(L.metaFees, { text: money.amount(totalFee), style: 'metaV' })
+                  : metaPair(L.metaIssued, {
+                      text: fmtDate(generatedAt, locale, true),
+                      style: 'metaV',
+                    }),
+              ],
+            ],
+          },
+          // Hairline-separated metadata rows — no box, no fills.
           layout: {
-            hLineWidth: () => 0.75,
-            vLineWidth: () => 0.75,
-            hLineColor: () => R.line,
-            vLineColor: () => R.line,
-            paddingTop: () => 4,
-            paddingBottom: () => 4,
-            paddingLeft: () => 9,
-            paddingRight: () => 9,
+            hLineWidth: (i: number) => (i === 1 || i === 2 ? 0.3 : 0),
+            hLineColor: () => VZ.rule,
+            vLineWidth: () => 0,
+            paddingTop: () => 8,
+            paddingBottom: () => 8,
+            paddingLeft: (i: number) => (i === 1 ? 14 : 0),
+            paddingRight: (i: number) => (i === 0 ? 14 : 0),
           },
         },
+        // The signature — the one place on the cover where the name signs.
+        signature(personName, { style: 'coverSign', margin: [0, 22, 0, 0] }),
+        ...(role ? [{ text: role, style: 'coverSignRole', margin: [0, 2, 0, 0] } as Content] : []),
       ],
-      columnGap: 10,
-    },
-    { text: L.docType.toUpperCase(), style: 'doctype', margin: [0, 120, 0, 0] },
-    { text: client, style: 'coverTitle', fontSize: coverTitleSize, margin: [0, 12, 0, 0] },
-    { text: range, style: 'coverSub', margin: [0, 8, 0, 0] },
-    { canvas: [{ type: 'rect', x: 0, y: 0, w: 64, h: 3, color: R.accent }], margin: [0, 20, 0, 0] },
-    {
-      // Pinned to the foot of the cover. Sits at 604 (not lower) so a wrapped
-      // client, project or reference value still clears the bottom margin.
-      absolutePosition: { x: 48, y: 604 },
-      table: {
-        widths: [CW / 2 - 14, CW / 2 - 14],
-        body: [
-          [
-            { stack: [{ text: L.metaClient.toUpperCase(), style: 'metaK' }, { text: client, style: 'metaVSerif' }] },
-            {
-              stack: [
-                { text: L.metaProjects.toUpperCase(), style: 'metaK' },
-                { text: projectsLabel, style: 'metaV' },
-              ],
-            },
-          ],
-          [
-            { stack: [{ text: L.metaRef.toUpperCase(), style: 'metaK' }, { text: ref, style: 'metaVMono' }] },
-            { stack: [{ text: L.metaPreparedBy.toUpperCase(), style: 'metaK' }, { text: personName, style: 'metaV' }] },
-          ],
-          [
-            {
-              stack: [
-                { text: L.metaEffort.toUpperCase(), style: 'metaK' },
-                {
-                  text: `${h(totalSecs)} h · ${mdNum(totalMd, L.localeTag)} MD · ${nDays} ${L.daysWord(nDays)}`,
-                  style: 'metaVMono',
-                },
-              ],
-            },
-            totalFee != null
-              ? { stack: [{ text: L.metaFees.toUpperCase(), style: 'metaK' }, { text: money.amount(totalFee), style: 'metaVMono' }] }
-              : {
-                  stack: [
-                    { text: L.metaIssued.toUpperCase(), style: 'metaK' },
-                    { text: fmtDate(generatedAt, locale, true), style: 'metaV' },
-                  ],
-                },
-          ],
-        ],
-      },
-      layout: {
-        hLineWidth: (i: number) => (i === 0 ? 1 : i === 3 ? 0 : 0.5),
-        hLineColor: (i: number) => (i === 0 ? R.line : R.line2),
-        vLineWidth: (i: number) => (i === 1 ? 0.5 : 0),
-        vLineColor: () => R.line2,
-        paddingTop: () => 10,
-        paddingBottom: () => 10,
-        paddingLeft: (i: number) => (i === 1 ? 18 : 0),
-        paddingRight: (i: number) => (i === 0 ? 18 : 0),
-      },
     },
     { text: '', pageBreak: 'after' },
   ];
 
   // -- summary page --
 
+  // The key figures as a Surface summary band between two full rules — a
+  // functional band of the identity, not a card row. Values stay Ink; the
+  // document's one oxide value lives on the sign-off page.
   const kpiCell = (k: string, v: Content, d: string): TableCell => ({
-    stack: [{ text: k.toUpperCase(), style: 'kpiK' }, v, { text: d, style: 'kpiD' }],
+    stack: [{ text: k, style: 'kpiK' }, v, { text: d, style: 'kpiD' }],
   });
   const kpis: Content = {
     table: {
@@ -705,20 +650,20 @@ function buildReport(doc: ExportDoc, locale: ReportLocale): TDocumentDefinitions
           kpiCell(L.kpiDays, { text: String(nDays), style: 'kpiV', margin: [0, 4, 0, 2] }, L.kpiDaysNote(nDays ? hoursNum(totalSecs / nDays, L.localeTag, 1) : '0')),
           kpiCell(L.kpiCodes, { text: String(nCodes), style: 'kpiV', margin: [0, 4, 0, 2] }, L.kpiCodesNote(nProjects)),
           totalFee != null
-            ? kpiCell(L.kpiFees, { text: money.amount(totalFee), style: 'kpiVSmall', margin: [0, 7, 0, 3] }, L.kpiFeesNote)
+            ? kpiCell(L.kpiFees, { text: money.amount(totalFee), style: 'kpiVSmall', margin: [0, 8, 0, 3] }, L.kpiFeesNote)
             : kpiCell(L.kpiEntries, { text: String(lines.length), style: 'kpiV', margin: [0, 4, 0, 2] }, L.kpiEntriesNote),
         ],
       ],
     },
     layout: {
-      hLineWidth: () => 0.75,
-      hLineColor: () => R.line,
-      vLineWidth: (i: number) => (i === 0 || i === 4 ? 0.75 : 0.5),
-      vLineColor: (i: number) => (i === 0 || i === 4 ? R.line : R.line2),
-      paddingTop: () => 10,
-      paddingBottom: () => 10,
-      paddingLeft: () => 11,
-      paddingRight: () => 11,
+      hLineWidth: () => 0.5,
+      hLineColor: () => VZ.ink,
+      vLineWidth: () => 0,
+      fillColor: () => VZ.surface,
+      paddingTop: () => 9,
+      paddingBottom: () => 9,
+      paddingLeft: () => 10,
+      paddingRight: () => 10,
     },
   };
 
@@ -730,19 +675,19 @@ function buildReport(doc: ExportDoc, locale: ReportLocale): TDocumentDefinitions
       widths: rate != null ? ['*', 42, 40, 38, 80, 86] : ['*', 52, 48, 46],
       body: [
         [
-          { text: L.thProject.toUpperCase(), style: 'th' },
-          { text: L.thHours.toUpperCase(), style: 'th', alignment: 'right' },
-          { text: L.thMd.toUpperCase(), style: 'th', alignment: 'right' },
-          { text: L.thShare.toUpperCase(), style: 'th', alignment: 'right' },
+          { text: L.thProject, style: 'th' },
+          { text: L.thHours, style: 'th', alignment: 'right' },
+          { text: L.thMd, style: 'th', alignment: 'right' },
+          { text: L.thShare, style: 'th', alignment: 'right' },
           ...(rate != null
             ? [
-                { text: L.thRate.toUpperCase(), style: 'th', alignment: 'right' as const },
-                { text: L.thFees.toUpperCase(), style: 'th', alignment: 'right' as const },
+                { text: L.thRate, style: 'th', alignment: 'right' as const },
+                { text: L.thFees, style: 'th', alignment: 'right' as const },
               ]
             : []),
         ],
         ...projRows.map(([name, secs], i): TableCell[] => [
-          dot(name, clamp(name || doc.title, MAX.project), 'td'),
+          { text: clamp(name || doc.title, MAX.project), style: 'td' },
           { text: h(secs), style: 'tdNum', alignment: 'right' },
           { text: mdNum(projMd.rows[i], L.localeTag), style: 'tdNum', alignment: 'right' },
           { text: pctStr(projShare[i]), style: 'tdMuted', alignment: 'right' },
@@ -776,15 +721,15 @@ function buildReport(doc: ExportDoc, locale: ReportLocale): TDocumentDefinitions
       widths: rate != null ? [88, '*', 42, 40, 86] : [88, '*', 52, 48],
       body: [
         [
-          { text: L.thCode.toUpperCase(), style: 'th' },
-          { text: L.thProject.toUpperCase(), style: 'th' },
-          { text: L.thHours.toUpperCase(), style: 'th', alignment: 'right' },
-          { text: L.thMd.toUpperCase(), style: 'th', alignment: 'right' },
-          ...(rate != null ? [{ text: L.thFees.toUpperCase(), style: 'th', alignment: 'right' as const }] : []),
+          { text: L.thCode, style: 'th' },
+          { text: L.thProject, style: 'th' },
+          { text: L.thHours, style: 'th', alignment: 'right' },
+          { text: L.thMd, style: 'th', alignment: 'right' },
+          ...(rate != null ? [{ text: L.thFees, style: 'th', alignment: 'right' as const }] : []),
         ],
         ...codeRows.map(([, v], i): TableCell[] => [
-          { text: clamp(v.code, MAX.code), style: 'tdMono' },
-          dot(v.project, clamp(v.project || doc.title, MAX.project), 'td'),
+          { text: clamp(v.code, MAX.code), style: 'td' },
+          { text: clamp(v.project || doc.title, MAX.project), style: 'td' },
           { text: h(v.secs), style: 'tdNum', alignment: 'right' },
           { text: mdNum(codeMd.rows[i], L.localeTag), style: 'tdNum', alignment: 'right' },
           ...(rate != null && codeFees
@@ -838,16 +783,18 @@ function buildReport(doc: ExportDoc, locale: ReportLocale): TDocumentDefinitions
   const detailWidths: (string | number)[] = [
     ...(hasTimes ? [56] : []),
     64,
-    ...(doc.multi ? [16] : []),
+    // A multi-project export names the project on each line (colour coding of
+    // rows is not part of the identity).
+    ...(doc.multi ? [64] : []),
     '*',
     44,
   ];
   const detailHead: TableCell[] = [
-    ...(hasTimes ? [{ text: L.thTime.toUpperCase(), style: 'th' }] : []),
-    { text: L.thCode.toUpperCase(), style: 'th' },
-    ...(doc.multi ? [{ text: '', style: 'th' }] : []),
-    { text: L.thDesc.toUpperCase(), style: 'th' },
-    { text: L.thHours.toUpperCase(), style: 'th', alignment: 'right' as const },
+    ...(hasTimes ? [{ text: L.thTime, style: 'th' }] : []),
+    { text: L.thCode, style: 'th' },
+    ...(doc.multi ? [{ text: L.thProject, style: 'th' }] : []),
+    { text: L.thDesc, style: 'th' },
+    { text: L.thHours, style: 'th', alignment: 'right' as const },
   ];
 
   const detailBody: TableCell[][] = [detailHead];
@@ -863,9 +810,9 @@ function buildReport(doc: ExportDoc, locale: ReportLocale): TDocumentDefinitions
     ]);
     for (const l of dayLines) {
       detailBody.push([
-        ...(hasTimes ? [{ text: fmtTimeRange(l.startMs, l.endMs, locale), style: 'tdMonoMuted' }] : []),
-        { text: clamp(l.code, MAX.code), style: 'tdMono' },
-        ...(doc.multi ? [dot(l.project, '', 'td')] : []),
+        ...(hasTimes ? [{ text: fmtTimeRange(l.startMs, l.endMs, locale), style: 'tdMuted' }] : []),
+        { text: clamp(l.code, MAX.code), style: 'td' },
+        ...(doc.multi ? [{ text: clamp(l.project, MAX.project), style: 'tdMuted' }] : []),
         { text: clamp(l.desc, MAX.desc), style: 'td' },
         { text: h(l.secs), style: 'tdNum', alignment: 'right' as const },
       ]);
@@ -883,7 +830,9 @@ function buildReport(doc: ExportDoc, locale: ReportLocale): TDocumentDefinitions
       table: { headerRows: 1, widths: detailWidths, body: detailBody, dontBreakRows: true },
       layout: {
         ...rowTableLayout,
-        fillColor: (rowIndex: number) => (dayFillRows.has(rowIndex) ? R.wash : null),
+        // Day header rows read as Surface summary bands; the table head itself
+        // stays unfilled here so the bands carry the day rhythm alone.
+        fillColor: (rowIndex: number) => (dayFillRows.has(rowIndex) ? VZ.surface : null),
       },
     },
     { text: '', pageBreak: 'after' },
@@ -897,39 +846,42 @@ function buildReport(doc: ExportDoc, locale: ReportLocale): TDocumentDefinitions
           sectionH(L.feesForPeriod),
           {
             table: {
-              widths: [270, 90],
+              widths: [270, 100],
               body: [
                 ...projRows.map(([name, secs], i): TableCell[] => [
-                  dot(
-                    name,
+                  {
                     // The breakdown line speaks in the rate's own unit: hours
                     // for an hourly engagement, allocated MD for an MD one.
-                    basis === 'md'
-                      ? `${clamp(name || doc.title, MAX.project)} · ${mdNum(projMd.rows[i], L.localeTag)} MD × ${money.rate(rate)}/MD`
-                      : `${clamp(name || doc.title, MAX.project)} · ${h(secs)} h × ${money.rate(rate)}/h`,
-                    'td'
-                  ),
+                    text:
+                      basis === 'md'
+                        ? `${clamp(name || doc.title, MAX.project)} · ${mdNum(projMd.rows[i], L.localeTag)} MD × ${money.rate(rate)}/MD`
+                        : `${clamp(name || doc.title, MAX.project)} · ${h(secs)} h × ${money.rate(rate)}/h`,
+                    style: 'td',
+                  },
                   { text: money.amount(projFees.rows[i]), style: 'tdNum', alignment: 'right' },
                 ]),
                 [
                   { text: L.feesTotal, style: 'investTotal' },
+                  // The document's one oxide value, over the classic double
+                  // underline — the identity's total treatment.
                   { text: money.amount(totalFee), style: 'investTotalNum', alignment: 'right' },
                 ],
               ],
             },
             layout: {
               hLineWidth: (i: number, node: ContentTable) =>
-                i === 0 || i === node.table.body.length ? 1 : 0.5,
+                i === 0 || i === node.table.body.length || i === node.table.body.length - 1
+                  ? 0.5
+                  : 0.3,
               hLineColor: (i: number, node: ContentTable) =>
-                i === 0 || i === node.table.body.length ? R.ink : R.line2,
-              vLineWidth: (i: number) => (i === 0 || i === 2 ? 1 : 0),
-              vLineColor: () => R.ink,
-              fillColor: (rowIndex: number, node: ContentTable) =>
-                rowIndex === node.table.body.length - 1 ? R.ink : null,
-              paddingTop: () => 6,
-              paddingBottom: () => 6,
-              paddingLeft: () => 12,
-              paddingRight: () => 12,
+                i === 0 || i === node.table.body.length || i === node.table.body.length - 1
+                  ? VZ.ink
+                  : VZ.rule,
+              vLineWidth: () => 0,
+              paddingTop: () => 5,
+              paddingBottom: () => 5,
+              paddingLeft: () => 0,
+              paddingRight: () => 0,
             },
           },
           { text: L.feesNote(basis), style: 'smallMuted', margin: [0, 8, 0, 0] },
@@ -944,7 +896,7 @@ function buildReport(doc: ExportDoc, locale: ReportLocale): TDocumentDefinitions
 
   const signBlock = (signRole: string, name: string): Content => ({
     stack: [
-      { canvas: [{ type: 'line', x1: 0, y1: 0, x2: SIG_W, y2: 0, lineWidth: 1.2, lineColor: R.ink }] },
+      { canvas: [{ type: 'line', x1: 0, y1: 0.25, x2: SIG_W, y2: 0.25, lineWidth: 0.5, lineColor: VZ.ink }] },
       { text: signRole, style: 'signRole', margin: [0, 8, 0, 0] },
       { text: name || ' ', style: 'signName', margin: [0, 2, 0, 0] },
       { text: L.signatureHint, style: 'signHint', margin: [0, 10, 0, 0] },
@@ -956,8 +908,8 @@ function buildReport(doc: ExportDoc, locale: ReportLocale): TDocumentDefinitions
             y: 0,
             w: SIG_W,
             h: SIG_H,
-            lineWidth: 0.75,
-            lineColor: R.faint,
+            lineWidth: 0.5,
+            lineColor: VZ.secondary,
             dash: { length: 2.5, space: 2.5 },
           },
         ],
@@ -992,101 +944,93 @@ function buildReport(doc: ExportDoc, locale: ReportLocale): TDocumentDefinitions
       margin: [0, 36, 0, 0],
     },
     {
+      // Basis of preparation as a footnote block — a hairline above, never a
+      // box around content (the identity's rule grammar).
       unbreakable: true,
       margin: [0, 30, 0, 0],
-      table: {
-        widths: ['*'],
-        body: [
-          [
-            {
-              stack: [
-                { text: L.basisTitle.toUpperCase(), style: 'basisTitle' },
-                // The engagement sentence is the user's own wording, in this
-                // template's language — it leads, because it says what the
-                // document is; the standing wording below says how it was made.
-                ...(engagement
-                  ? [{ text: engagement, style: 'basisLead', margin: [0, 5, 0, 0] } as Content]
-                  : []),
-                { text: L.basis, style: 'smallMuted', margin: [0, engagement ? 6 : 5, 0, 0] },
-              ],
-            },
-          ],
-        ],
-      },
-      layout: {
-        hLineWidth: () => 0.75,
-        vLineWidth: () => 0.75,
-        hLineColor: () => R.line,
-        vLineColor: () => R.line,
-        paddingTop: () => 10,
-        paddingBottom: () => 10,
-        paddingLeft: () => 12,
-        paddingRight: () => 12,
-      },
+      stack: [
+        hairline(CW, [0, 0, 0, 8]),
+        { text: L.basisTitle, style: 'basisTitle' },
+        // The engagement sentence is the user's own wording, in this
+        // template's language — it leads, because it says what the
+        // document is; the standing wording below says how it was made.
+        ...(engagement
+          ? [{ text: engagement, style: 'basisLead', margin: [0, 5, 0, 0] } as Content]
+          : []),
+        { text: L.basis, style: 'smallMuted', margin: [0, engagement ? 6 : 5, 0, 0] },
+      ],
     },
   ];
 
   return {
     pageOrientation: 'portrait',
     pageSize: 'A4',
-    pageMargins: [48, 48, 48, 60],
+    pageMargins: A4_MARGINS,
     info: { title: `${L.docTitle} — ${client}`.trim() },
     content: [...cover, ...summaryPage, ...detailPage, ...signoffPage],
     footer: (currentPage: number, pageCount: number): Content =>
       currentPage === 1
         ? { text: '' }
         : {
-            margin: [48, 14, 48, 0],
-            columns: [
-              { text: `${personName} · ${L.confidential}`.toUpperCase(), style: 'foot' },
-              { text: ref, style: 'foot', alignment: 'center' },
-              { text: L.page(currentPage, pageCount), style: 'footMono', alignment: 'right' },
+            // Footer on the bottom margin line, above a hairline (§8).
+            margin: [62, 10, 62, 0],
+            stack: [
+              hairline(CW, [0, 0, 0, 4]),
+              {
+                columns: [
+                  { text: `${personName} · ${L.confidential}`, style: 'foot' },
+                  { text: ref, style: 'foot', alignment: 'center' },
+                  { text: L.page(currentPage, pageCount), style: 'foot', alignment: 'right' },
+                ],
+              },
             ],
           },
     styles: {
-      glyph: { font: 'Fraunces', fontSize: 12, bold: true, color: R.ink, alignment: 'center' },
-      brandName: { fontSize: 10.5, bold: true, color: R.ink },
-      brandRole: { fontSize: 6.6, color: R.muted, characterSpacing: 1.2 },
-      chip: { fontSize: 7, color: R.muted, characterSpacing: 1.6 },
-      doctype: { fontSize: 8, bold: true, color: R.ochre, characterSpacing: 2.4 },
-      coverTitle: { font: 'Fraunces', fontSize: 33, color: R.ink, lineHeight: 1.05 },
-      coverSub: { font: 'Fraunces', fontSize: 13.5, italics: true, color: R.ink2 },
-      metaK: { fontSize: 6.6, color: R.muted, characterSpacing: 1.3 },
-      metaV: { fontSize: 10, bold: true, color: R.ink, margin: [0, 3, 0, 0] },
-      metaVSerif: { font: 'Fraunces', fontSize: 12, color: R.ink, margin: [0, 3, 0, 0] },
-      metaVMono: { font: 'IBMPlexMono', fontSize: 9, bold: true, color: R.ink, margin: [0, 3, 0, 0] },
-      pheadTitle: { font: 'Fraunces', fontSize: 17, color: R.ink },
-      pheadNote: { fontSize: 7, color: R.muted, characterSpacing: 1.4 },
-      sectionH: { fontSize: 7.4, bold: true, color: R.accent, characterSpacing: 1.5 },
-      lead: { font: 'Fraunces', fontSize: 11, color: R.ink2, lineHeight: 1.35 },
-      kpiK: { fontSize: 6.4, color: R.muted, characterSpacing: 1 },
-      kpiV: { font: 'IBMPlexMono', fontSize: 16, color: R.ink },
-      kpiVSmall: { font: 'IBMPlexMono', fontSize: 10, color: R.ink },
-      kpiVUnit: { font: 'IBMPlexMono', fontSize: 9, color: R.muted },
-      kpiD: { fontSize: 7, color: R.muted },
-      th: { fontSize: 6.6, bold: true, color: R.muted, characterSpacing: 0.8 },
-      td: { fontSize: 8.4, color: R.ink },
-      tdMuted: { fontSize: 8.4, color: R.muted },
-      tdMono: { font: 'IBMPlexMono', fontSize: 8, color: R.ink },
-      tdMonoMuted: { font: 'IBMPlexMono', fontSize: 8, color: R.muted },
-      tdNum: { font: 'IBMPlexMono', fontSize: 8.4, color: R.ink },
-      dayHdr: { fontSize: 7.4, bold: true, color: R.ink2, characterSpacing: 0.8 },
-      dayHdrNum: { font: 'IBMPlexMono', fontSize: 8, bold: true, color: R.ink2 },
-      totalTd: { fontSize: 8.8, bold: true, color: R.ink },
-      totalTdNum: { font: 'IBMPlexMono', fontSize: 8.8, bold: true, color: R.ink },
-      investTotal: { fontSize: 9, bold: true, color: R.paper },
-      investTotalNum: { font: 'IBMPlexMono', fontSize: 9, bold: true, color: R.paper },
-      declare: { font: 'Fraunces', fontSize: 11, color: R.ink2, lineHeight: 1.45 },
-      signRole: { fontSize: 9.2, bold: true, color: R.ink },
-      signHint: { fontSize: 6.6, color: R.faint, characterSpacing: 0.6 },
-      basisLead: { fontSize: 7.9, color: R.ink2, lineHeight: 1.45 },
-      signName: { fontSize: 8.2, color: R.muted },
-      basisTitle: { fontSize: 7, bold: true, color: R.muted, characterSpacing: 1.5 },
-      smallMuted: { fontSize: 7.6, color: R.muted, lineHeight: 1.4 },
-      foot: { fontSize: 6.6, color: R.muted, characterSpacing: 1 },
-      footMono: { font: 'IBMPlexMono', fontSize: 7, color: R.muted },
+      ...identityBaseStyles,
+      coverDocType: { font: F.medium, fontSize: 7.5, color: VZ.secondary },
+      coverTitle: { fontSize: 22, bold: true, color: VZ.ink, lineHeight: 1.1 },
+      coverSub: { fontSize: 11, color: VZ.secondary },
+      coverSign: { fontSize: 12, bold: true, color: VZ.ink },
+      coverSignRole: { fontSize: 7.5, color: VZ.secondary },
+      metaK: { font: F.medium, fontSize: 7, color: VZ.secondary },
+      metaV: { fontSize: 8.5, bold: true, color: VZ.ink, margin: [0, 3, 0, 0] },
+      pheadTitle: { fontSize: 16, bold: true, color: VZ.ink },
+      pheadNote: { fontSize: 7.5, color: VZ.secondary },
+      sectionH: { fontSize: 10, bold: true, color: VZ.ink },
+      lead: { fontSize: 9.5, color: VZ.ink, lineHeight: 1.5 },
+      kpiK: { font: F.medium, fontSize: 7, color: VZ.secondary },
+      kpiV: { fontSize: 15, bold: true, color: VZ.ink },
+      kpiVSmall: { fontSize: 10.5, bold: true, color: VZ.ink },
+      kpiVUnit: { fontSize: 9, color: VZ.secondary },
+      kpiD: { fontSize: 7, color: VZ.secondary },
+      th: { font: F.medium, fontSize: 7, bold: true, color: VZ.secondary },
+      td: { fontSize: 8.5, color: VZ.ink },
+      tdMuted: { fontSize: 8.5, color: VZ.secondary },
+      tdNum: { fontSize: 8.5, color: VZ.ink },
+      dayHdr: { fontSize: 7.5, bold: true, color: VZ.ink },
+      dayHdrNum: { fontSize: 8, bold: true, color: VZ.ink },
+      totalTd: { fontSize: 8.8, bold: true, color: VZ.ink },
+      totalTdNum: { fontSize: 8.8, bold: true, color: VZ.ink },
+      investTotal: { fontSize: 9, bold: true, color: VZ.ink },
+      // The document's one oxide value, over the classic double underline.
+      investTotalNum: {
+        fontSize: 9.5,
+        bold: true,
+        color: VZ.oxide,
+        decoration: 'underline',
+        decorationStyle: 'double',
+        decorationColor: VZ.ink,
+      },
+      declare: { fontSize: 9.5, color: VZ.ink, lineHeight: 1.5 },
+      signRole: { fontSize: 9, bold: true, color: VZ.ink },
+      signHint: { fontSize: 6.5, color: VZ.secondary },
+      basisLead: { fontSize: 8, color: VZ.ink, lineHeight: 1.45 },
+      signName: { fontSize: 8, color: VZ.secondary },
+      basisTitle: { font: F.medium, fontSize: 7, bold: true, color: VZ.secondary },
+      smallMuted: { fontSize: 7.5, color: VZ.secondary, lineHeight: 1.4 },
+      foot: { fontSize: 6.5, color: VZ.secondary },
     },
-    defaultStyle: { font: 'Roboto', fontSize: 9, color: R.ink },
+    defaultStyle: identityDefaultStyle,
   };
 }
 
@@ -1113,7 +1057,7 @@ export const reportTemplates: PdfTemplate[] = [
       'rate to include fees.',
     fields: ['role', 'client', 'approver', 'reference', 'engagement', 'rate'],
     locale: 'en',
-    fontset: 'report',
+    fontset: 'identity',
     build: (doc) => buildReport(doc, 'en'),
   },
   {
@@ -1125,7 +1069,7 @@ export const reportTemplates: PdfTemplate[] = [
       'nebo sazby za MD doplní i cenu.',
     fields: ['role', 'client', 'approver', 'reference', 'engagement', 'rate'],
     locale: 'cs',
-    fontset: 'report',
+    fontset: 'identity',
     build: (doc) => buildReport(doc, 'cs'),
   },
 ];

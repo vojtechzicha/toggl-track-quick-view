@@ -40,11 +40,11 @@ export function resolveBaseVfs(mod: unknown): Vfs {
  */
 export function fontConfig(
   baseVfs: Vfs,
-  extra: { reportVfs: Vfs; reportFonts: FontDecl } | null
+  extra: { identityVfs: Vfs; identityFonts: FontDecl } | null
 ): { fonts: FontDecl; vfs: Vfs } {
   return {
-    fonts: { Roboto: ROBOTO, ...(extra?.reportFonts ?? {}) },
-    vfs: { ...baseVfs, ...(extra?.reportVfs ?? {}) },
+    fonts: { Roboto: ROBOTO, ...(extra?.identityFonts ?? {}) },
+    vfs: { ...baseVfs, ...(extra?.identityVfs ?? {}) },
   };
 }
 
@@ -55,7 +55,7 @@ export async function toPDF(doc: ExportDoc, templateId: string): Promise<Blob> {
     import('pdfmake/build/pdfmake'),
     import('pdfmake/build/vfs_fonts'),
     // Templates with their own typography also pull in the embedded font module.
-    template.fontset === 'report' ? import('./reportFonts') : Promise.resolve(null),
+    template.fontset === 'identity' ? import('./identityFonts') : Promise.resolve(null),
   ]);
 
   const cfg = fontConfig(resolveBaseVfs(fonts), extra);
