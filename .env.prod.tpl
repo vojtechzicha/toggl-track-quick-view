@@ -66,3 +66,28 @@ MONGODB_DB=
 # invalidates every 7-day session and every device is asked again.
 
 APP_PASSWORD=op://Development/toggl-track-quick-view-prod/APP_PASSWORD
+
+# -- PDF template pack --------------------------------------------------------
+# Every document this deployment has ever filed with a client comes from this
+# private repository; the app itself ships only a generic Timesheet template.
+# Drop these rows in Vercel and the build still succeeds — with an export dialog
+# that has quietly lost every layout anyone uses. scripts/env-spec.mjs marks
+# them required in production and preview for that reason.
+#
+# https, not ssh: a Vercel build has no ssh key, so the token below is the only
+# way in. scripts/sync-pack.mjs FAILS the build when the checkout fails, rather
+# than deploying without the templates.
+
+PDF_TEMPLATE_PACK_REPO=https://github.com/vojtechzicha/toggl-track-quick-view-pdf-templates.git
+
+# Blank = "main": a deployment picks up whatever the pack holds when it builds.
+# Pin it to a commit when a pack change should not be able to alter the next
+# deploy of this app on its own.
+
+PDF_TEMPLATE_PACK_REF=
+
+# GitHub fine-grained PAT, scoped to that one repository with Contents: Read.
+# Mark it Sensitive in Vercel. It expires — a build that starts failing at the
+# checkout with a 403 is the first sign.
+
+PDF_TEMPLATE_PACK_TOKEN=op://Development/toggl-track-quick-view-prod/PDF_TEMPLATE_PACK_TOKEN

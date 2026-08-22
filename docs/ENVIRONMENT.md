@@ -88,6 +88,41 @@ from Settings — with one server-held token every viewer is the same user looki
 at the same data, so one cadence serves them all. Toggl's Free plan allows **30
 requests/hour per account**, which is one per 120s; `env:check` warns below that.
 
+**Which PDF templates the export dialog offers** is
+`PDF_TEMPLATE_PACK_REPO`, and it is the one variable here that is read at BUILD
+time rather than at runtime. Before `next build` (and before `next dev`),
+`scripts/sync-pack.mjs` checks that repository out into `pdf-templates/`, and
+the app compiles its templates in alongside its own; see "Private template
+packs" in README.md for what a pack is. Unset, nothing is fetched and the app
+offers only the generic **Timesheet** template it ships — which is a supported
+deployment, and what a plain clone of this repository does.
+
+- What is compiled in is decided by the **directory**, not by the variable: the
+  variable says what to fetch into `pdf-templates/`, and the alias resolves
+  against that directory existing. Clearing the variable on a machine that has
+  already synced therefore stops the updates but keeps the pack — the script
+  prints exactly that, and `rm -rf pdf-templates` is how you build without one.
+  It never deletes a checkout itself: it cannot tell one it made from one you
+  cloned by hand. A deployment starts from a fresh clone, so there the variable
+  is the whole story.
+
+- The remote must be **https** in a deployment. There is no ssh key in a Vercel
+  build, so an ssh remote cannot be fetched there; `env:check` rejects it as an
+  error rather than letting the build discover it. Locally, ssh is the right
+  form — your own key already has access and no token is needed.
+- A private pack over https needs `PDF_TEMPLATE_PACK_TOKEN`: a GitHub
+  fine-grained PAT with **Contents: Read** on that one repository, marked
+  Sensitive in Vercel. It expires, and the first sign is a build failing at the
+  checkout.
+- `PDF_TEMPLATE_PACK_REF` pins a branch, tag or commit; blank means `main`. Pin
+  it to a commit when a change in the pack should not be able to alter the next
+  deployment of this app on its own.
+- A configured pack that cannot be fetched **fails the build**. Continuing would
+  produce a green deployment whose export dialog had quietly lost every layout
+  its documents are filed under — the same failure shape `APP_MODE` guards
+  against. Offline on a laptop is the one exception: a checkout already on disk
+  is kept and the dev server starts.
+
 ## Getting a working .env
 
 ### By hand
@@ -246,6 +281,7 @@ value is yours to invent.
 | `TOGGL_API_TOKEN` | https://track.toggl.com/profile, bottom of the page. Regenerating it there invalidates the old one immediately. |
 | `MONGODB_URI` | MongoDB Atlas, the `timetrack-quick-view` cluster, Connect > Drivers. Atlas shows the password only when the user is created. |
 | `APP_PASSWORD` | Chosen, not issued. Recovered by hand — see below. |
+| `PDF_TEMPLATE_PACK_TOKEN` | GitHub → Settings → Developer settings → Personal access tokens → Fine-grained. Repository access limited to `toggl-track-quick-view-pdf-templates`, permission **Contents: Read**. Shown once at creation. |
 
 `APP_PASSWORD` is marked Sensitive in Vercel, so neither the CLI nor the
 dashboard can ever read it back. When this item was created the live value
@@ -282,6 +318,8 @@ non-secret rows included.
 | `MONGODB_URI` | — | Same connection string as production, byte for byte: same Atlas cluster, same credentials. |
 | `MONGODB_DB` | `timetrack-quick-view` | **Preview-only, and load-bearing.** |
 | `APP_PASSWORD` | — | **Its own value**, so a leaked preview password cannot open production. |
+| `PDF_TEMPLATE_PACK_REPO` | — | Same row in Vercel, shared with production. |
+| `PDF_TEMPLATE_PACK_TOKEN` | — | Same row in Vercel, shared with production — one PAT reads the pack for both. |
 
 Preview and production share one Atlas cluster and one database user. What keeps
 a branch deployment out of the live synced setup is `MONGODB_DB` alone:
@@ -408,5 +446,7 @@ Deliberately absent:
 | The dashboard shows an empty store instead of Toggl data | `APP_MODE=toggl` is missing while `MONGODB_URI` is set — standalone mode. |
 | Toggl starts answering 429 | The hourly budget is per account and local dev shares it with production. Raise `TOGGL_CACHE_INTERVAL` in `.env`. |
 | The "Refresh interval" picker vanished from Settings | Expected whenever `TOGGL_CACHE_INTERVAL` is set: the shared server cache drives the cadence for everyone. |
+| The build fails at `pdf-pack ERROR` | The configured template pack could not be checked out. Usually an expired `PDF_TEMPLATE_PACK_TOKEN`, or an ssh remote in a deployment. |
+| The export dialog lost its PDF template picker | Only one template is registered, so there is nothing to pick — i.e. no pack is checked out. `pnpm pack:sync` locally; check `PDF_TEMPLATE_PACK_REPO` in a deployment. |
 | `pnpm dev` fails to start the database | `docker compose` is not available, or port 27018 is taken. `docker compose ps` and `pnpm db` on their own show the real error. |
 | The preview domain stops following deployments | The `VERCEL_TOKEN` repo secret is missing, empty or revoked. Check the newest `Alias preview domain` run; re-push it from `vercel-zicha-dev-ci` as above. |

@@ -6,43 +6,20 @@
 // fails the pull request's own preview deployment first, which is where you
 // want to find out. Locally: `pnpm env:check`.
 //
-// Reads the environment the way Next does for this project's files: real env
-// vars win, then .env.local, then .env. (Next would also read
-// .env.development / .env.production — this project never uses them.) Paths
-// resolve against the repo root, not the CWD, so the check works from anywhere.
-//
-// The .env parser below is deliberate rather than a dotenv dependency: this
-// file has to run under bare Node before `next build`, and the app itself ships
-// no dotenv, so adding one purely for a build-time check would be the only
-// reason it exists in the lockfile.
+// Reads the environment the way Next does for this project's files — see
+// scripts/load-env.mjs. Paths resolve against the repo root, not the CWD, so
+// the check works from anywhere.
 
-import { existsSync, readFileSync } from 'node:fs';
+import { existsSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { ENV_SPEC, EXTERNAL_ENV, present, validateEnv } from './env-spec.mjs';
+import { loadDotEnv } from './load-env.mjs';
 
 const root = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
 
-/**
- * Fills in keys that are not already set, so a real environment variable always
- * beats the file — the same precedence Next applies.
- */
-function loadEnvFile(file) {
-  if (!existsSync(file)) return;
-  for (const line of readFileSync(file, 'utf8').split('\n')) {
-    const match = /^\s*(?:export\s+)?([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.*)$/.exec(line);
-    if (!match) continue; // blank line, comment, or continuation of a quoted value
-    const [, key] = match;
-    let value = match[2].trim();
-    if (/^(['"]).*\1$/s.test(value)) value = value.slice(1, -1);
-    else value = value.replace(/\s+#.*$/, '').trim(); // trailing comment on a bare value
-    if (process.env[key] === undefined) process.env[key] = value;
-  }
-}
-
-loadEnvFile(path.join(root, '.env.local'));
-loadEnvFile(path.join(root, '.env'));
+loadDotEnv(root);
 
 // `vercel link` and `vercel env pull` write a .env.local holding a VERCEL_OIDC_
 // TOKEN. Nothing in this app reads it, but Next loads .env.local ahead of .env,

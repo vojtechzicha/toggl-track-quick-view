@@ -14,50 +14,13 @@
 
 import type { ExportDoc } from '../model';
 import { getTemplate } from './templates';
+import { fontConfig, resolveBaseVfs } from './fonts';
 
-export { PDF_TEMPLATES, DEFAULT_TEMPLATE_ID } from './templates';
-
-/**
- * pdfmake's bundled default. Declaring any custom font replaces the implicit
- * set, so Roboto has to be re-declared alongside the report's own cuts.
- */
-const ROBOTO = {
-  normal: 'Roboto-Regular.ttf',
-  bold: 'Roboto-Medium.ttf',
-  italics: 'Roboto-Italic.ttf',
-  bolditalics: 'Roboto-MediumItalic.ttf',
-};
-
-export type FontDecl = Record<string, Record<string, string>>;
-export type Vfs = Record<string, string>;
-
-/** pdfmake's vfs bundle has changed export shape between versions; cover the variants. */
-export function resolveBaseVfs(mod: unknown): Vfs {
-  const f = mod as Record<string, unknown> & {
-    pdfMake?: { vfs?: unknown };
-    vfs?: unknown;
-    default?: unknown;
-  };
-  return (f.pdfMake?.vfs ?? f.vfs ?? f.default ?? f) as Vfs;
-}
-
-/**
- * Assemble the font declarations and the virtual file system for a render.
- *
- * Kept pure and exported so the pairing can be checked directly: every file a
- * declaration names must exist in the vfs. A mismatch fails at render time deep
- * inside pdfmake ("File 'X.ttf' not found in virtual file system"), so it is
- * worth asserting up front — see scripts/check-fonts.ts.
- */
-export function fontConfig(
-  baseVfs: Vfs,
-  extra: { identityVfs: Vfs; identityFonts: FontDecl } | null
-): { fonts: FontDecl; vfs: Vfs } {
-  return {
-    fonts: { Roboto: ROBOTO, ...(extra?.identityFonts ?? {}) },
-    vfs: { ...baseVfs, ...(extra?.identityVfs ?? {}) },
-  };
-}
+export { PDF_TEMPLATES, DEFAULT_TEMPLATE_ID, getTemplate, getDefaultTemplate } from './templates';
+export type { PdfTemplate, PdfFontPack, ExportFieldName } from './types';
+export { LOCALE_LABELS } from './types';
+export { fontConfig, resolveBaseVfs } from './fonts';
+export type { FontDecl, Vfs } from './fonts';
 
 /** Render the document to a PDF Blob using the chosen template. */
 export async function toPDF(doc: ExportDoc, templateId: string): Promise<Blob> {
@@ -65,8 +28,9 @@ export async function toPDF(doc: ExportDoc, templateId: string): Promise<Blob> {
   const [{ default: pdfMake }, fonts, extra] = await Promise.all([
     import('pdfmake/build/pdfmake'),
     import('pdfmake/build/vfs_fonts'),
-    // Templates with their own typography also pull in the embedded font module.
-    template.fontset === 'identity' ? import('./identityFonts') : Promise.resolve(null),
+    // A template with its own typography loads its cuts here, so an embedded
+    // typeface never reaches a browser exporting through a different template.
+    template.loadFonts ? template.loadFonts() : Promise.resolve(null),
   ]);
 
   const cfg = fontConfig(resolveBaseVfs(fonts), extra);

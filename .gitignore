@@ -151,3 +151,11 @@ vite.config.ts.timestamp-*
 next-env.d.ts
 .vercel
 *.tsbuildinfo
+
+# The optional PDF template pack — a checkout of its OWN repository, put here by
+# scripts/sync-pack.mjs (see README.md). Never part of this repository: a plain
+# clone has no pack and builds with the app's own templates.
+/pdf-templates/
+
+# macOS
+.DS_Store
