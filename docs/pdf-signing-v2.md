@@ -481,6 +481,40 @@ and no binary. `check:signature` skips the pyHanko half with a message when the 
 is absent, so a missing Python tool never disables the whole check chain; `PYHANKO` can
 point at it.
 
+### DSS validator, 2026-08-22 — the profile is right
+
+Run against `scripts/fixtures/signed-report.pdf` on DSS Demonstration WebApp 6.4,
+policy "QES AES/QC AES TL based". The fixture rather than a real export, deliberately:
+the validator's own privacy notice advises against sending anything sensitive, a real
+timesheet is a client's data, and the profile is decided by structure rather than
+content — the fixture comes off the same `toPDF` → `prepareSignature` → `buildCms` path
+that every export does.
+
+```
+Signature format:   PAdES-BASELINE-B          ← the question this run answered
+Signature scope:    Full PDF (FULL)
+ByteRange:          [0, 57957, 66151, 2018]
+On claimed time:    2026-08-19 10:30:00 (UTC) ← our /M, read as the claimed time
+Indication:         INDETERMINATE
+Sub indication:     NO_CERTIFICATE_CHAIN_FOUND
+```
+
+**What matters is what is absent.** Not one complaint about structure: no objection to
+the signed attributes, no note about the appearance stream, no partial-coverage warning
+— "Full PDF (FULL)" says the signature covers the document rather than a revision of it.
+The single failure is `NO_CERTIFICATE_CHAIN_FOUND`, which is not a defect: the throwaway
+certificate is self-signed and chains to no trust anchor, so "0 valid signatures out of
+1" is the correct verdict about a key invented in a browser.
+
+That is the whole pipeline cleared ahead of the certificate. What the qualified
+certificate changes is the trust decision and nothing else — `Qualification: N/A`
+becomes a QES determination, and the indication becomes TOTAL_PASSED. Nothing in the
+document has to change for that to happen.
+
+Worth repeating once a certificate exists, and worth repeating on a hardware-signed
+file — signing the FIXTURE document through the token would give both a real chain and
+no client data, which is the run to make.
+
 ### Phase 2 results (2026-08-19)
 
 Fixture: `scripts/fixtures/signed-report.pdf`, signed with the committed throwaway
