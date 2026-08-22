@@ -177,7 +177,7 @@ const parseCs = (s: string) => Number(s.replace(/[^\d,-]/g, '').replace(',', '.'
 for (const currency of ['CZK', 'EUR', 'USD', 'JPY', 'KWD', 'HUF']) {
   for (const rate of [1125, 95.5, 1234.5678, 0.07, 18500]) {
     const def = build('report-cs', { currency, rate });
-    for (const header of ['PODÍL', 'KÓD PROJEKT']) {
+    for (const header of ['Podíl', 'Kód Projekt']) {
       const bodies = tableRows(def, header);
       ok(bodies.length === 1, `one ${header} table for ${currency}@${rate}`);
       const body = bodies[0];
@@ -197,7 +197,7 @@ for (const currency of ['CZK', 'EUR', 'USD', 'JPY', 'KWD', 'HUF']) {
 // MD and share columns must total too.
 {
   const def = build('report-cs');
-  const body = tableRows(def, 'PODÍL')[0];
+  const body = tableRows(def, 'Podíl')[0];
   const mdCol = 2;
   const shareCol = 3;
   const rows = body.slice(1, -1);
@@ -222,7 +222,7 @@ for (const currency of ['CZK', 'EUR', 'USD', 'JPY', 'KWD', 'HUF']) {
     days: thirds,
     grandTotal: thirds.reduce((s, d) => s + d.total, 0),
   });
-  const body = tableRows(def, 'SHARE')[0];
+  const body = tableRows(def, 'Share')[0];
   const rows = body.slice(1, -1);
   const shares = rows.map((r) => parseInt(texts(r[3]).join(''), 10));
   ok(
@@ -267,7 +267,7 @@ for (const currency of ['CZK', 'EUR', 'USD', 'JPY', 'KWD', 'HUF']) {
   ok(/18,75/.test(cs), 'CZ decimals use a comma');
   no(/18\.75/.test(cs), 'CZ decimals never use a point');
   ok(/100 %|100 %/.test(cs), 'CZ puts a space before the percent sign');
-  ok(cs.includes('1. 7. – 31. 7. 2026'), 'CZ date range uses day. month. year');
+  ok(cs.includes('01. 07. – 31. 07. 2026'), 'CZ date range is zero-padded per the identity conventions');
   // "Odměna" is contract-law wording, not what a Czech timesheet annex says.
   no(/[Oo]dměn/.test(cs), 'the CZ report has dropped "odměna"');
   ok(/Cena|Částka|Fakturace/.test(cs), 'the CZ report uses standard invoicing wording');
@@ -293,9 +293,9 @@ for (const id of ['report-en', 'report-cs'] as const) {
     /8 hours|8 hodinám/.test(t),
     `${id} restates the man-day basis in the basis-of-preparation note`
   );
-  const projBody = tableRows(def, id === 'report-cs' ? 'PODÍL' : 'SHARE')[0];
+  const projBody = tableRows(def, id === 'report-cs' ? 'Podíl' : 'Share')[0];
   ok(texts(projBody[0]).includes('MD'), `${id} by-project table has an MD column`);
-  const codeBody = tableRows(def, id === 'report-cs' ? 'KÓD PROJEKT' : 'CODE PROJECT')[0];
+  const codeBody = tableRows(def, id === 'report-cs' ? 'Kód Projekt' : 'Code Project')[0];
   ok(texts(codeBody[0]).includes('MD'), `${id} by-code table has an MD column`);
   // The cover states effort in both units.
   ok(
@@ -345,8 +345,8 @@ const MD_FEE_EN = /21,060\.00/;
 {
   const def = build('report-cs', { rate: 9000, rateBasis: 'md' });
   for (const [header, mdCol] of [
-    ['PODÍL', 2],
-    ['KÓD PROJEKT', 3],
+    ['Podíl', 2],
+    ['Kód Projekt', 3],
   ] as const) {
     const body = tableRows(def, header)[0];
     const feeCol = texts(body[0]).length - 1;
@@ -389,7 +389,7 @@ const MD_FEE_EN = /21,060\.00/;
     const t = allText(build(id, { engagement: note }));
     ok(t.includes(note), `${id} prints the engagement note word for word`);
     // It leads the basis block, and the standing wording still follows it.
-    const basisAt = t.indexOf(id === 'report-cs' ? 'ZPŮSOB VYKAZOVÁNÍ' : 'BASIS OF PREPARATION');
+    const basisAt = t.indexOf(id === 'report-cs' ? 'Způsob vykazování' : 'Basis of preparation');
     ok(basisAt >= 0, `${id} still has a basis block`);
     ok(t.indexOf(note) > basisAt, `${id} puts the note inside the basis block`);
     ok(
@@ -426,7 +426,7 @@ for (const id of ['report-en', 'report-cs'] as const) {
   const t = allText(build('report-cs'));
   ok(t.includes('Zpracoval(a)'), 'CZ prepared-by covers either signer');
   ok(t.includes('Schválil(a)'), 'CZ approved-by covers either signer');
-  ok(t.includes('ZPRACOVAL(A)'), 'the CZ cover label does too');
+  no(t.includes('ZPRACOVAL(A)'), 'no tracked-uppercase label survives the identity redesign');
 }
 
 // ---- the supplier company is genuinely unused by this template ----
