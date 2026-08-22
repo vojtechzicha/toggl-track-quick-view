@@ -6,6 +6,15 @@
 // and what a plain clone of this repository does: the app then offers its own
 // Timesheet template alone (lib/export/pdf/emptyPack.ts).
 //
+// What gets COMPILED IN is decided by the directory, not by the variable: the
+// `@pdf-template-pack` alias resolves against pdf-templates/ existing. The
+// variable decides only what is FETCHED into it. So clearing the variable stops
+// the updates but keeps whatever is on disk — this script never deletes a
+// checkout, because it cannot tell one it made from one cloned by hand, and
+// silently discarding someone's working tree is not a thing a prebuild step
+// should do. Removing a pack is `rm -rf pdf-templates`, and the line printed
+// below says so.
+//
 // Why a checkout rather than a git submodule: a submodule puts the pack's URL
 // in .gitmodules, and every clone — every FORK — then tries to fetch it. A
 // private pack would fail that fetch and take the fork's build down with it,
@@ -95,7 +104,8 @@ const isNetworkError = (detail) =>
 
 if (!repo) {
   if (existsSync(ENTRY)) {
-    say('PDF_TEMPLATE_PACK_REPO is not set — using the checkout already in pdf-templates/.');
+    say('PDF_TEMPLATE_PACK_REPO is not set, so nothing was fetched — but pdf-templates/');
+    say(`is on disk (${headSha(DIR)}) and IS compiled in. Delete it to build without a pack.`);
   } else {
     say('no template pack configured — exports offer this app\'s own Timesheet template.');
   }

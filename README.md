@@ -816,6 +816,14 @@ come first in the picker, and a pack may name the default. `pnpm pack:sync`
 does the checkout on its own; `pnpm check:pack` runs whatever checks the pack
 ships in `checks/`.
 
+What is compiled in is decided by the **directory**, not by the variable — the
+variable only says what to fetch into it. So clearing `PDF_TEMPLATE_PACK_REPO`
+on a machine that has already synced stops the updates and keeps the pack;
+`rm -rf pdf-templates` is how you build without one. The sync step never
+deletes a checkout itself, because it cannot tell one it made from one you
+cloned by hand. A deployment starts from a fresh clone, so there the variable
+is the whole story.
+
 Two consequences worth stating plainly:
 
 - **A clone of this repository with no pack configured is a complete, working

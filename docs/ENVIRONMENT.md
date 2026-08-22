@@ -93,9 +93,18 @@ requests/hour per account**, which is one per 120s; `env:check` warns below that
 time rather than at runtime. Before `next build` (and before `next dev`),
 `scripts/sync-pack.mjs` checks that repository out into `pdf-templates/`, and
 the app compiles its templates in alongside its own; see "Private template
-packs" in README.md for what a pack is. Unset, the app offers only the generic
-**Timesheet** template it ships — which is a supported deployment, and what a
-plain clone of this repository does.
+packs" in README.md for what a pack is. Unset, nothing is fetched and the app
+offers only the generic **Timesheet** template it ships — which is a supported
+deployment, and what a plain clone of this repository does.
+
+- What is compiled in is decided by the **directory**, not by the variable: the
+  variable says what to fetch into `pdf-templates/`, and the alias resolves
+  against that directory existing. Clearing the variable on a machine that has
+  already synced therefore stops the updates but keeps the pack — the script
+  prints exactly that, and `rm -rf pdf-templates` is how you build without one.
+  It never deletes a checkout itself: it cannot tell one it made from one you
+  cloned by hand. A deployment starts from a fresh clone, so there the variable
+  is the whole story.
 
 - The remote must be **https** in a deployment. There is no ssh key in a Vercel
   build, so an ssh remote cannot be fetched there; `env:check` rejects it as an

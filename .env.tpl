@@ -78,8 +78,12 @@ APP_PASSWORD=
 # -- PDF template pack --------------------------------------------------------
 # The private repository holding the engagement-specific PDF layouts, checked
 # out into pdf-templates/ by scripts/sync-pack.mjs before `pnpm dev` and
-# `pnpm build`. Blank it and the app offers only the generic Timesheet template
-# it ships — which is what a plain clone gets, and a supported way to work.
+# `pnpm build`. Blank it and nothing is fetched — a plain clone then offers only
+# the generic Timesheet template the app ships, which is a supported way to work.
+#
+# Blanking it does NOT remove a pack you have already synced: what gets compiled
+# in is whether pdf-templates/ exists, and the sync step will not delete your
+# working tree. `rm -rf pdf-templates` is how you build without one.
 #
 # SSH here, https in the deployments: your own key already has access, so no
 # token is needed locally. Offline, the checkout already on disk is kept and the
