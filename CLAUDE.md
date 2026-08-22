@@ -142,6 +142,13 @@ Vercel, GitHub integration, previews per PR.
 - `vercel-build` runs `node scripts/check-env.mjs` before `next build`, so a
   missing or contradictory variable fails the build — and fails the PR's own
   preview deployment first, at review time.
+- **`beta.track.zicha.dev` always points at the newest preview.**
+  `.github/workflows/preview-alias.yml` reacts to Vercel's `deployment_status`
+  events and re-aliases the domain on every successful Preview deployment
+  ("last preview wins"); production is ignored. The fixed host exists because
+  the password-gate session (`localStorage` `tqv.auth.v1`) and the PWA are both
+  per-ORIGIN — a fresh `*-<hash>.vercel.app` per deployment loses both. Needs
+  the `VERCEL_TOKEN` repo secret.
 - **Post-deploy refresh hint**: every build bakes a deterministic build id (git
   commit via `VERCEL_GIT_COMMIT_SHA`, `computeBuildId()` in `next.config.js`)
   into the client bundle AND the server routes; long-lived tabs compare theirs

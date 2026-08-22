@@ -84,6 +84,12 @@ environments: **[docs/ENVIRONMENT.md](docs/ENVIRONMENT.md)**.
 3. (Optional) Set `APP_PASSWORD` to put the whole dashboard behind a password —
    see below.
 
+Preview deployments are reachable at a stable **beta.track.zicha.dev**, which
+`.github/workflows/preview-alias.yml` re-points at the newest successful preview
+on every deployment. That matters because the password-gate session and the
+installed PWA are both tied to the origin — a per-deployment URL would ask for
+the preview password every time. It needs a `VERCEL_TOKEN` repository secret.
+
 The build runs `pnpm env:check` before `next build` (the `vercel-build` script),
 so a variable the code needs but the Vercel project lacks fails the deployment
 rather than shipping a half-configured app. It also flags the combinations that
