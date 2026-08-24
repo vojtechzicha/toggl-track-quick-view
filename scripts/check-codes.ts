@@ -41,11 +41,16 @@ registerHooks({
 const { parseBillingCode, stripCodeParens } = await import('../lib/calc.ts');
 const { buildSummaryGrid } = await import('../lib/timesheet/summary.ts');
 const { buildIndividualWeek } = await import('../lib/timesheet/individual.ts');
+const { buildExportDoc } = await import('../lib/export/model.ts');
 
 let checks = 0;
 const eq = (a: unknown, b: unknown, msg: string) => {
   checks++;
   assert.deepEqual(a, b, msg);
+};
+const ok = (v: unknown, msg: string) => {
+  checks++;
+  assert.ok(v, msg);
 };
 
 // ---- parseBillingCode: marker first, strip second ----
@@ -251,6 +256,51 @@ const byProject = { ...base, entries: mixed, billByProject: true };
     '#1',
     'and the Individual view uses the same fallback'
   );
+}
+
+{
+  // The exported document's contract for a projects-only sheet, which a
+  // template pack is told it can rely on: `billingCode` equals `project` on
+  // every row, and neither is ever blank — a template that lays the two out
+  // separately must not print an empty cell where the billing column shows the
+  // nameless-project fallback.
+  const range = { fromMs: WEEK, toMs: WEEK + 7 * 24 * 3600e3 };
+  const docOpts = {
+    range,
+    entries: mixed,
+    nowMs: base.nowMs,
+    multi: true,
+    maxBillableHours: 8,
+    billingTagPrefix: 'D',
+    roundingSeconds: 900,
+    noOvertime: false,
+    weeklyHours: 40,
+    billByProject: true,
+    title: 'T',
+    personName: 'P',
+  };
+  const views: ('summary' | 'individual')[] = ['summary', 'individual'];
+  // Both a named project and a nameless (archived) one, which is where the two
+  // fields could drift apart.
+  const projectSets: { id: number; name: string }[][] = [[{ id: 1, name: 'Proj' }], [{ id: 1, name: '' }]];
+  for (const view of views) {
+    for (const projects of projectSets) {
+      const doc = buildExportDoc({ ...docOpts, view, projects });
+      // `label` (summary) and `code` (individual) are the same slot: the text
+      // the billing column prints.
+      const rows =
+        doc.view === 'summary'
+          ? doc.weeks.flatMap((w) => w.rows.map((r) => ({ ...r, shown: r.label })))
+          : doc.days.flatMap((d) => d.rows.map((r) => ({ ...r, shown: r.code })));
+      ok(rows.length > 0, `${view}: the projects-only document has rows`);
+      for (const r of rows) {
+        eq(r.billingCode, r.project, `${view}: billingCode equals project ("${r.billingCode}")`);
+        ok(r.project !== '', `${view}: the project field is never blank`);
+        // multi is true above, so this also pins the no-prefix rule.
+        eq(r.shown, r.billingCode, `${view}: the billing column carries no project prefix`);
+      }
+    }
+  }
 }
 
 {
