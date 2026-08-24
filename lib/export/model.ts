@@ -267,7 +267,12 @@ function buildSummaryDoc(o: ExportOptions): SummaryDoc {
         return {
           label,
           billingCode: meta?.tag ?? '',
-          project: meta?.projectName ?? '',
+          // Billing by project the two are the same field, and the row's code
+          // has already been through the nameless-project fallback (see
+          // projectBillingCode) — so take it from there rather than from the
+          // raw name, or a template printing `project` would show a blank
+          // where the billing column shows the fallback.
+          project: (billByProject ? meta?.tag : meta?.projectName) ?? '',
           warn: false,
           cells,
           desc: fitDescs(descs, maxDescriptionLength).text,
@@ -373,7 +378,14 @@ function buildIndividualDoc(o: ExportOptions): IndividualDoc {
             prefixProject
           ),
           billingCode: row.code ?? '',
-          project: (row.projId != null ? nameById.get(row.projId) : undefined) ?? '',
+          // As in the summary: billing by project these are one field, and the
+          // code already carries the nameless-project fallback.
+          project:
+            (billByProject
+              ? row.code
+              : row.projId != null
+              ? nameById.get(row.projId)
+              : undefined) ?? '',
           warn: false,
           desc: row.desc,
         }));
