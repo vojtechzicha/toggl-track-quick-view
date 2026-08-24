@@ -225,12 +225,20 @@ export default function TrackerPage() {
 
   const running = merged.find(isRunning) ?? null;
 
-  const handleContinue = (e: TimeEntry) =>
-    t.startTimer({
+  const handleContinue = (e: TimeEntry) => {
+    const workspaceId = e.project_id ?? defaultWorkspaceId;
+    // Continuing copies the entry's tags — except into a workspace that bills
+    // by project, whose entries carry none. An older (or imported) entry can
+    // still hold a billing tag from before the switch, and the tracker shows no
+    // tag control there to notice or clear it, so a copy would quietly seed
+    // stale codes that only resurface if the workspace goes back to billing by
+    // code.
+    return t.startTimer({
       description: e.description ?? '',
-      tags: e.tags ?? [],
-      workspaceId: e.project_id ?? defaultWorkspaceId,
+      tags: billsByProject(workspaces, workspaceId) ? [] : e.tags ?? [],
+      workspaceId,
     });
+  };
 
   // First run: nothing to track against yet — open settings, where the
   // Workspaces section creates the first workspace (same as the dashboard's
