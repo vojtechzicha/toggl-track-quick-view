@@ -83,6 +83,8 @@ export interface ExportDialogProps {
   codeMappings: CodeMapping[];
   /** When true, billing codes export without their parenthetical groups. */
   stripCodeParens: boolean;
+  /** When true, the workspace bills by project instead of by billing code. */
+  billByProject: boolean;
   /** Document title (project / group name). */
   title: string;
   /** Person the timesheet is for (resolved name, may be empty). */
@@ -119,6 +121,7 @@ export default function ExportDialog({
   timeOffTag,
   codeMappings,
   stripCodeParens,
+  billByProject,
   title,
   personName,
   prefetched,
@@ -257,6 +260,7 @@ export default function ExportDialog({
         timeOffTag,
         codeMappings,
         stripCodeParens,
+        billByProject,
         title,
         personName: name.trim(),
         // The template's own language, or the other one when it is empty — a

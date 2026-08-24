@@ -75,6 +75,7 @@ export default function AppSettings({
         maxBillableHours: settings.maxBillableHours,
         minWorkingDayHours: settings.minWorkingDayHours,
         billingTagPrefix: settings.billingTagPrefix,
+        billByProject: settings.billByProject,
         stripCodeParens: settings.stripCodeParens,
         timeOffTag: settings.timeOffTag,
         roundingHours: settings.roundingHours,

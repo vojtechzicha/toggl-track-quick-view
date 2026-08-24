@@ -116,6 +116,7 @@ export const DEFAULTS: StoredSettings = {
   maxBillableHours: null,
   minWorkingDayHours: null,
   billingTagPrefix: DEFAULT_BILLING_TAG_PREFIX,
+  billByProject: false,
   stripCodeParens: false,
   timeOffTag: DEFAULT_TIME_OFF_TAG,
   roundingHours: DEFAULT_ROUNDING_HOURS,
@@ -157,6 +158,8 @@ export function applyPreset(
     timeOffTag: preset.value.timeOffTag ?? DEFAULT_TIME_OFF_TAG,
     // And for presets stored before the parentheses strip existed.
     stripCodeParens: preset.value.stripCodeParens ?? false,
+    // And for presets stored before projects-only billing existed.
+    billByProject: preset.value.billByProject ?? false,
     // Export identity fields are per workspace: recalling one recalls its own
     // company/client/rate, so another client's details can never ride along.
     // A workspace stored BEFORE they were scoped carries none at all — it

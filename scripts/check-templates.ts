@@ -86,6 +86,7 @@ const meta = {
   fromMs: new Date(2026, 6, 1).getTime(),
   toMs: new Date(2026, 7, 1).getTime(),
   multi: false,
+  billByProject: false,
 };
 
 const individualDoc: IndividualDoc = {
@@ -160,12 +161,26 @@ const emptyDoc: IndividualDoc = { ...individualDoc, days: [], grandTotal: 0 };
 // And a time-only document: a template that prints fees must not assume a rate.
 const noRateDoc: IndividualDoc = { ...individualDoc, rate: null, currency: '' };
 
+// A workspace that doesn't use billing codes bills by PROJECT: every row's code
+// is its project's name (billingCode === project), and `billByProject` says so
+// for a template that heads the column. A template may ignore the flag, but it
+// must still build — the codes it prints are simply project names.
+const byProjectDoc: SummaryDoc = {
+  ...summaryDoc,
+  billByProject: true,
+  weeks: summaryDoc.weeks.map((w) => ({
+    ...w,
+    rows: w.rows.map((r) => ({ ...r, label: r.project, billingCode: r.project })),
+  })),
+};
+
 for (const tpl of PDF_TEMPLATES) {
   for (const [label, doc] of [
     ['individual', individualDoc],
     ['summary', summaryDoc],
     ['empty', emptyDoc],
     ['rate-less', noRateDoc],
+    ['by-project', byProjectDoc],
   ] as const) {
     const def = tpl.build(doc);
     ok(def != null && typeof def === 'object', `${tpl.id}: builds a ${label} document definition`);

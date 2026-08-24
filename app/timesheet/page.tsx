@@ -35,17 +35,18 @@ const PICKER_PAGE = 12; // how many previous weeks the picker reveals at a time
 const VIEWS: Record<
   TimesheetMode,
   {
-    note: (roundMins: number, windowMins: number) => string;
+    note: (roundMins: number, windowMins: number, byProject: boolean) => string;
     Component: ComponentType<TimesheetViewProps>;
   }
 > = {
   summary: {
-    note: (m) => `Combined per billing tag, rounded to ${m} min · copy a cell to paste into your timesheet`,
+    note: (m, _w, byProject) =>
+      `Combined per ${byProject ? 'project' : 'billing tag'}, rounded to ${m} min · copy a cell to paste into your timesheet`,
     Component: SummaryTimesheet,
   },
   individual: {
-    note: (m, w) =>
-      `One row per entry, with times · same-code neighbours combined, rounded to ${m} min` +
+    note: (m, w, byProject) =>
+      `One row per entry, with times · same-${byProject ? 'project' : 'code'} neighbours combined, rounded to ${m} min` +
       (w > m ? ` · starting every ${w} min` : ''),
     Component: IndividualTimesheet,
   },
@@ -322,12 +323,17 @@ export default function TimesheetPage() {
             timeOffTag={settings.timeOffTag}
             codeMappings={settings.codeMappings}
             stripCodeParens={settings.stripCodeParens}
+            billByProject={settings.billByProject}
           />
         )}
 
         <footer className="footer">
           <span>
-            {view.note(Math.round(settings.roundingHours * 60), Math.round(startWindowSeconds / 60))}{' '}
+            {view.note(
+              Math.round(settings.roundingHours * 60),
+              Math.round(startWindowSeconds / 60),
+              settings.billByProject
+            )}{' '}
             ·{' '}
             {mode === 'history'
               ? 'past week · manual refresh'
@@ -365,6 +371,7 @@ export default function TimesheetPage() {
           timeOffTag={settings.timeOffTag}
           codeMappings={settings.codeMappings}
           stripCodeParens={settings.stripCodeParens}
+          billByProject={settings.billByProject}
           title={projectTitle}
           personName={settings.exportName.trim() || settings.accountName}
           prefetched={exportPrefetched}

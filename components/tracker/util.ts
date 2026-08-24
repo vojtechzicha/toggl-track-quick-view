@@ -41,6 +41,19 @@ export function prefixFor(workspaces: StoreWorkspace[], workspaceId: number | nu
   return ws?.settings.billingTagPrefix || 'D';
 }
 
+/**
+ * True when the workspace bills by project rather than by billing code — its
+ * entries carry no billing tag at all, so the tracker offers none. An unknown
+ * workspace (and every workspace stored before the setting existed) bills by
+ * code, the behaviour the tracker has always had.
+ */
+export function billsByProject(
+  workspaces: StoreWorkspace[],
+  workspaceId: number | null
+): boolean {
+  return !!workspaces.find((w) => w.id === workspaceId)?.settings.billByProject;
+}
+
 export function isRunning(e: TimeEntry): boolean {
   return e.duration < 0 || !e.stop;
 }

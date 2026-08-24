@@ -32,6 +32,7 @@ export default function SummaryTimesheet({
   timeOffTag,
   codeMappings,
   stripCodeParens,
+  billByProject,
 }: TimesheetViewProps) {
   const grid = useMemo(
     () =>
@@ -48,8 +49,9 @@ export default function SummaryTimesheet({
         timeOffTag,
         codeMappings,
         stripCodeParens,
+        billByProject,
       }),
-    [entries, weekStart, nowMs, projects, billingTagPrefix, roundingSeconds, maxDescriptionLength, noOvertime, weeklyHours, timeOffTag, codeMappings, stripCodeParens]
+    [entries, weekStart, nowMs, projects, billingTagPrefix, roundingSeconds, maxDescriptionLength, noOvertime, weeklyHours, timeOffTag, codeMappings, stripCodeParens, billByProject]
   );
 
   if (!grid || grid.rows.length === 0) {
@@ -65,7 +67,7 @@ export default function SummaryTimesheet({
       <table className="ts-table">
         <thead>
           <tr>
-            <th className="ts-corner">Billing tag</th>
+            <th className="ts-corner">{billByProject ? 'Project' : 'Billing tag'}</th>
             {grid.dayCols.map((d) => (
               <th key={d} className="ts-day-head">
                 {DAY_LABELS[d]}
@@ -104,7 +106,12 @@ export default function SummaryTimesheet({
                     </span>
                   ) : (
                     <>
-                      {multi && meta && <span className="ts-proj">{meta.projectName}: </span>}
+                      {/* The project prefix disambiguates a code shared by two
+                          projects; billing by project, the row IS the project,
+                          so prefixing it would just repeat the name. */}
+                      {multi && !billByProject && meta && (
+                        <span className="ts-proj">{meta.projectName}: </span>
+                      )}
                       {meta?.tag}
                     </>
                   )}

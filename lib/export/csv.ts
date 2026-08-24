@@ -21,6 +21,9 @@ function hoursCell(seconds: number): string | number {
 
 export function toCSV(doc: ExportDoc): string {
   const lines: string[] = [];
+  // What the billing column holds: billing codes, or — for a workspace that
+  // doesn't use them — the project each entry belongs to.
+  const billingHead = doc.billByProject ? 'Project' : 'Billing tag';
   const title = doc.title || 'Timesheet';
   lines.push(row([title]));
   if (doc.personName) lines.push(row([doc.personName]));
@@ -30,7 +33,7 @@ export function toCSV(doc: ExportDoc): string {
   if (doc.view === 'summary') {
     for (const week of doc.weeks) {
       lines.push(row([week.label]));
-      lines.push(row(['Billing tag', ...week.dayLabels, 'Total', 'Description']));
+      lines.push(row([billingHead, ...week.dayLabels, 'Total', 'Description']));
       for (const r of week.rows) {
         lines.push(
           row([
@@ -48,7 +51,7 @@ export function toCSV(doc: ExportDoc): string {
     }
     lines.push(row(['Grand total', secsToHoursNum(doc.grandTotal)]));
   } else {
-    lines.push(row(['Date', 'Day', 'Time', 'Hours', 'Billing', 'Description']));
+    lines.push(row(['Date', 'Day', 'Time', 'Hours', doc.billByProject ? 'Project' : 'Billing', 'Description']));
     for (const day of doc.days) {
       const [dayName, dateStr] = day.label.split(' · ');
       for (const r of day.rows) {

@@ -18,7 +18,7 @@ import MutationToast from '@/components/MutationToast';
 import PasswordGate from '@/components/PasswordGate';
 import AddBar from '@/components/tracker/AddBar';
 import EntryRow from '@/components/tracker/EntryRow';
-import { durationSec, isRunning, prefixFor } from '@/components/tracker/util';
+import { billsByProject, durationSec, isRunning, prefixFor } from '@/components/tracker/util';
 import { useTrackSource, pollWindow } from '@/lib/useTrackSource';
 import { fetchStoreEntries } from '@/lib/source/standalone';
 import { startOfDay, startOfWeek, fmtHM, type TimeEntry } from '@/lib/calc';
@@ -334,6 +334,7 @@ export default function TrackerPage() {
                           nowMs={nowMs}
                           workspaces={workspaces}
                           prefix={prefixFor(workspaces, e.project_id)}
+                          byProject={billsByProject(workspaces, e.project_id)}
                           showChip={workspaces.length > 1}
                           onEdit={async (id, patch) => syncOlder(await t.editEntry(id, patch))}
                           onContinue={handleContinue}

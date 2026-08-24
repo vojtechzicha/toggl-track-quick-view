@@ -54,6 +54,12 @@ export interface ExportOptions {
    * "(X)"/"(!)" markers are interpreted first, then the strip runs).
    */
   stripCodeParens?: boolean;
+  /**
+   * When true, the workspace bills by project rather than by billing code:
+   * every row's code IS its project name, and no billing-code machinery
+   * (tickets, markers, the strip, linked codes) applies.
+   */
+  billByProject?: boolean;
   /** Title shown on the document (project / group name). */
   title: string;
   /** Person the timesheet is for (may be empty). */
@@ -103,6 +109,22 @@ export interface ExportMeta {
   fromMs: number;
   toMs: number; // exclusive
   multi: boolean;
+  /**
+   * True when the document's billing lines are PROJECTS, not billing codes —
+   * `billingCode` then holds the project's name and equals `project`. A
+   * template that heads its billing column can say so ("Project" rather than
+   * "Billing code"); one that ignores it prints correct figures either way,
+   * since the codes it prints are simply project names.
+   *
+   * OPTIONAL on purpose, unlike every other field here: a template PACK is a
+   * separate repository compiled into this one (see README → "Private template
+   * packs"), and its typed ExportDoc fixtures are type-checked by `next build`.
+   * A required field would deadlock the two repos — a pack that hasn't added it
+   * fails to build here, and a pack that adds it early fails against the app
+   * that hasn't. Optional, either merges in any order. `buildExportDoc` always
+   * sets it, so absent means false; read it as truthy.
+   */
+  billByProject?: boolean;
 }
 
 // ---- Summary shape ----
@@ -187,8 +209,11 @@ function codeLabel(
 }
 
 function buildSummaryDoc(o: ExportOptions): SummaryDoc {
-  const { range, entries, nowMs, projects, multi, billingTagPrefix, roundingSeconds, maxDescriptionLength, noOvertime, weeklyHours, timeOffTag, codeMappings, stripCodeParens } = o;
+  const { range, entries, nowMs, projects, multi, billingTagPrefix, roundingSeconds, maxDescriptionLength, noOvertime, weeklyHours, timeOffTag, codeMappings, stripCodeParens, billByProject } = o;
   const weeks: SummaryWeekBlock[] = [];
+  // Billing by project the code already IS the project name, so the
+  // disambiguating "Project: " prefix would only repeat it.
+  const prefixProject = multi && !billByProject;
 
   for (const weekStart of weeksInRange(range.fromMs, range.toMs)) {
     const grid = buildSummaryGrid({
@@ -204,6 +229,7 @@ function buildSummaryDoc(o: ExportOptions): SummaryDoc {
       timeOffTag,
       codeMappings,
       stripCodeParens,
+      billByProject,
     });
     if (!grid || grid.rows.length === 0) continue;
 
@@ -221,7 +247,7 @@ function buildSummaryDoc(o: ExportOptions): SummaryDoc {
       .filter((rowKey) => rowKey !== UNTAGGED && rowKey !== MULTIPLE)
       .map((rowKey) => {
         const meta = grid.rowMeta.get(rowKey);
-        const label = codeLabel(meta?.projectName, meta?.tag, multi);
+        const label = codeLabel(meta?.projectName, meta?.tag, prefixProject);
         const cells = dayCols.map((d) => grid.rounded.get(`${d}|${rowKey}`) ?? 0);
         // Aggregate this row's descriptions across the visible days (deduped),
         // then fit the week-level join within the same length limit the per-day
@@ -292,15 +318,19 @@ function buildSummaryDoc(o: ExportOptions): SummaryDoc {
     fromMs: range.fromMs,
     toMs: range.toMs,
     multi,
+    billByProject: !!billByProject,
     weeks,
     grandTotal,
   };
 }
 
 function buildIndividualDoc(o: ExportOptions): IndividualDoc {
-  const { range, entries, nowMs, projects, multi, maxBillableHours, billingTagPrefix, roundingSeconds, startWindowSeconds, maxDescriptionLength, noOvertime, weeklyHours, timeOffTag, codeMappings, stripCodeParens } = o;
+  const { range, entries, nowMs, projects, multi, maxBillableHours, billingTagPrefix, roundingSeconds, startWindowSeconds, maxDescriptionLength, noOvertime, weeklyHours, timeOffTag, codeMappings, stripCodeParens, billByProject } = o;
   const nameById = new Map(projects.map((p) => [p.id, p.name]));
   const days: IndividualDayBlock[] = [];
+  // Billing by project the code already IS the project name, so the
+  // disambiguating "Project: " prefix would only repeat it.
+  const prefixProject = multi && !billByProject;
 
   for (const weekStart of weeksInRange(range.fromMs, range.toMs)) {
     const week = buildIndividualWeek({
@@ -318,6 +348,7 @@ function buildIndividualDoc(o: ExportOptions): IndividualDoc {
       timeOffTag,
       codeMappings,
       stripCodeParens,
+      billByProject,
     });
     if (!week) continue;
     for (const day of week.days) {
@@ -339,7 +370,7 @@ function buildIndividualDoc(o: ExportOptions): IndividualDoc {
           code: codeLabel(
             row.projId != null ? nameById.get(row.projId) : undefined,
             row.code,
-            multi
+            prefixProject
           ),
           billingCode: row.code ?? '',
           project: (row.projId != null ? nameById.get(row.projId) : undefined) ?? '',
@@ -373,6 +404,7 @@ function buildIndividualDoc(o: ExportOptions): IndividualDoc {
     fromMs: range.fromMs,
     toMs: range.toMs,
     multi,
+    billByProject: !!billByProject,
     days,
     grandTotal,
   };

@@ -54,4 +54,8 @@ export interface TimesheetViewProps {
   // When true, billing codes show without their parenthetical groups (the
   // "(X)"/"(!)" markers are interpreted first, then the strip runs).
   stripCodeParens: boolean;
+  // When true, the workspace doesn't use billing codes at all: entries bill to
+  // their project, which is what the views show in the billing column. No entry
+  // can then be untagged or multi-tagged, so those warnings never appear.
+  billByProject: boolean;
 }
