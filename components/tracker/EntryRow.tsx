@@ -20,6 +20,7 @@ export default function EntryRow({
   nowMs,
   workspaces,
   prefix,
+  byProject,
   showChip,
   onEdit,
   onContinue,
@@ -30,6 +31,8 @@ export default function EntryRow({
   workspaces: StoreWorkspace[];
   /** The billing prefix of THIS entry's workspace. */
   prefix: string;
+  /** THIS entry's workspace bills by project — it has no billing tag to show. */
+  byProject: boolean;
   /** Show the workspace chip (only useful once several workspaces exist). */
   showChip: boolean;
   onEdit: (id: number, patch: EntryInput) => void;
@@ -120,6 +123,9 @@ export default function EntryRow({
           </button>
         )}
 
+        {/* A workspace that bills by project has no billing tag to edit —
+            the workspace chip below already says what the entry bills to. */}
+        {!byProject && (
         <span className="tr-tagwrap">
           {tagOpen ? (
             <TagCombobox
@@ -146,6 +152,7 @@ export default function EntryRow({
             </button>
           )}
         </span>
+        )}
 
         {showChip && ws && (
           <span

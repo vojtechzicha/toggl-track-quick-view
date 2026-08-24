@@ -142,7 +142,8 @@ function summaryContent(doc: SummaryDoc): Content[] {
 
     const body: TableCell[][] = [
       [
-        { text: 'Billing tag', style: 'th' },
+        // A workspace that bills by project has project names in this column.
+        { text: doc.billByProject ? 'Project' : 'Billing tag', style: 'th' },
         ...week.dayLabels.map((d) => ({ text: d, style: 'th', alignment: 'center' as const })),
         { text: 'Total', style: 'th', alignment: 'center' as const },
         { text: 'Description', style: 'th' },
@@ -193,7 +194,7 @@ function individualContent(doc: IndividualDoc): Content[] {
       [
         { text: 'Time', style: 'th' },
         { text: 'Hours', style: 'th', alignment: 'center' },
-        { text: 'Billing', style: 'th' },
+        { text: doc.billByProject ? 'Project' : 'Billing', style: 'th' },
         { text: 'Description', style: 'th' },
       ],
     ];

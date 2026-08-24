@@ -191,6 +191,7 @@ for (const [file, b64] of embedded) {
     fromMs: new Date(2026, 6, 1).getTime(),
     toMs: new Date(2026, 7, 1).getTime(),
     multi: false,
+    billByProject: false,
     days: [],
     grandTotal: 0,
   };

@@ -419,6 +419,10 @@ The prefix is configurable under **Settings → Advanced → Billing tag prefix*
 (change it to `A`, say, to match `A123` tags). Its default lives in
 [`lib/calc.ts`](lib/calc.ts) as `DEFAULT_BILLING_TAG_PREFIX`.
 
+Everything in this section assumes the engagement bills by code. One that bills
+per project instead turns the whole layer off — see **Projects-only billing**
+below.
+
 ### Strip parentheses from billing codes
 
 A tag often carries a human-readable name in parentheses — `D123 (Phase 2)` —
@@ -433,6 +437,44 @@ lands as `D123`. Since the stripped code is what's *used* (not just shown),
 codes that differ only in the parenthetical — `D123 (a)` and `D123 (b)` —
 merge into one `D123` line, exactly like the marker twins do. It's a workspace
 setting, so each stored workspace remembers its own choice.
+
+### Projects-only billing (no billing codes)
+
+Not every engagement bills by code. Some are billed **per project** — the
+client's timesheet has one line per project and there is nothing finer to
+report. Turn on **Settings → Advanced → Bill by project** and this workspace
+stops using billing codes altogether: **every entry bills to its project**,
+whose name is the line.
+
+What follows from that:
+
+- **Nothing can be untagged.** The "No billing tag" and "Multiple billing tags"
+  warnings can't occur — an entry always has a project — so they never appear on
+  the timesheet, and the dashboard timeline drops its ⚠ missing-tag marker.
+- **Rows are projects.** The Summary view heads its first column **Project** and
+  gives each tracked project one row; the Individual view codes each line by its
+  project. Tracking several projects, the project-name prefix disappears — the
+  line already *is* the project, so prefixing would just repeat it. Exports
+  (CSV/XLSX/PDF) head that column **Project** to match.
+- **Adjacent same-project entries combine** in the Individual view, exactly as
+  same-code ones do (within an hour, capped at the billable limit).
+- **Every code-shaped input is inert**: a tag that looks like a billing tag, a
+  `[T-1234]` support-ticket bracket (the bracket stays in the description — it
+  isn't a code here), the `(X)` / `(!)` overtime markers, a parenthetical, and
+  linked billing codes. The settings that configure them — billing tag prefix,
+  strip parentheses, linked billing codes — are hidden while this is on. They
+  keep their stored values, so turning it back off restores the setup intact.
+- **Everything that isn't about codes still works**: rounding and the start
+  window, the description length limit, the billable-length cap, overlap
+  warnings, "Don't bill overtime" (with nothing marked `(X)`/`(!)`, the trim
+  simply spreads over the projects), and the **time off tag** — that's a plain
+  tag, not a billing code, so state holidays behave exactly as described above.
+- In **standalone mode** the tracker drops the billing-tag chip and its
+  autocomplete for such a workspace: there is no tag to set, and entries created
+  there carry none.
+
+It's a **workspace setting**, so one client can bill by project while another
+bills by code, each in its own stored workspace.
 
 ### Support tickets
 
@@ -709,6 +751,7 @@ Every document carries the same header block:
 | `personName` | Who the timesheet is for. |
 | `fromMs`, `toMs` | Half-open range in local-midnight epoch ms: `toMs` is **exclusive**, so the last day is `toMs - 1`. |
 | `multi` | True when several projects are exported together (billing codes then carry a project prefix). |
+| `billByProject` | True when the workspace bills by project rather than by billing code: every row's `billingCode` is its project's name (and equals `project`), and no code carries a prefix. A template that heads its billing column can say "Project" instead; one that ignores the flag still prints correct figures. |
 | `grandTotal` | Rounded seconds across the whole period. |
 | `role`, `company`, `client`, `approver`, `reference`, `engagement` | The identity fields, as typed by the user. Empty string = not given. |
 | `rate`, `rateBasis`, `currency` | `rate` is `null` for a time-only document; `rateBasis` is `'hourly'` or `'md'`. A template that prints money **must** handle the `null` case. |

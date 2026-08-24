@@ -46,6 +46,12 @@ export interface SettingsValue {
   minWorkingDayHours: number | null;
   // The prefix that marks a tag as a billing tag (default "D", e.g. "D123").
   billingTagPrefix: string;
+  // When true, this workspace doesn't use billing codes at all: every entry
+  // bills to its PROJECT instead. The timesheet groups per project, nothing is
+  // ever flagged as untagged/multi-tagged, and all billing-code machinery —
+  // the tag prefix, support-ticket brackets, the "(X)"/"(!)" markers, the
+  // parentheses strip and linked billing codes — is ignored. Off by default.
+  billByProject: boolean;
   // When true, billing codes are used without their parenthetical groups — a
   // tag like "D123 (Phase 2)" bills and displays as "D123". The overtime
   // markers "(X)"/"(!)" are interpreted first, then the strip runs, then the
@@ -118,6 +124,7 @@ export function toPresetValue(s: SettingsValue): PresetValue {
     maxBillableHours: s.maxBillableHours,
     minWorkingDayHours: s.minWorkingDayHours,
     billingTagPrefix: s.billingTagPrefix,
+    billByProject: s.billByProject,
     stripCodeParens: s.stripCodeParens,
     timeOffTag: s.timeOffTag,
     roundingHours: s.roundingHours,
@@ -166,6 +173,8 @@ export function presetMatches(value: PresetValue, s: SettingsValue): boolean {
     value.maxBillableHours === s.maxBillableHours &&
     value.minWorkingDayHours === s.minWorkingDayHours &&
     value.billingTagPrefix === s.billingTagPrefix &&
+    // `?? false` covers presets stored before projects-only billing existed.
+    (value.billByProject ?? false) === (s.billByProject ?? false) &&
     // `?? false` covers presets stored before the parentheses strip existed.
     (value.stripCodeParens ?? false) === (s.stripCodeParens ?? false) &&
     // `?? default` covers presets stored before the time-off tag existed.
@@ -390,6 +399,8 @@ export default function SettingsPanel({
     initial.minWorkingDayHours === null ? '' : numLabel(initial.minWorkingDayHours)
   );
   const [billingPrefix, setBillingPrefix] = useState(initial.billingTagPrefix);
+  // `!!` covers settings stored before projects-only billing existed.
+  const [billByProject, setBillByProject] = useState(!!initial.billByProject);
   // `!!` covers settings stored before the parentheses strip existed.
   const [stripCodeParens, setStripCodeParens] = useState(!!initial.stripCodeParens);
   const [timeOffTag, setTimeOffTag] = useState(initial.timeOffTag ?? DEFAULT_TIME_OFF_TAG);
@@ -409,6 +420,7 @@ export default function SettingsPanel({
     initial.maxBillableHours !== null ||
       initial.minWorkingDayHours !== null ||
       initial.billingTagPrefix !== DEFAULT_BILLING_TAG_PREFIX ||
+      !!initial.billByProject ||
       !!initial.stripCodeParens ||
       (initial.timeOffTag ?? DEFAULT_TIME_OFF_TAG) !== DEFAULT_TIME_OFF_TAG ||
       initial.roundingHours !== DEFAULT_ROUNDING_HOURS ||
@@ -547,6 +559,9 @@ export default function SettingsPanel({
       minWorkingDayHours: parseOverride(minDayStr, 0),
       // An empty prefix would match every tag, so fall back to the default.
       billingTagPrefix: billingPrefix.trim() || DEFAULT_BILLING_TAG_PREFIX,
+      // The code-specific settings (prefix, strip, linked codes) keep their
+      // stored values while hidden by this — turning it back off restores them.
+      billByProject,
       stripCodeParens,
       // An empty tag can't mark anything, so fall back to the default.
       timeOffTag: timeOffTag.trim() || DEFAULT_TIME_OFF_TAG,
@@ -674,6 +689,7 @@ export default function SettingsPanel({
     setMaxBillStr(v.maxBillableHours === null ? '' : numLabel(v.maxBillableHours));
     setMinDayStr(v.minWorkingDayHours === null ? '' : numLabel(v.minWorkingDayHours));
     setBillingPrefix(v.billingTagPrefix);
+    setBillByProject(!!v.billByProject); // presets stored before projects-only billing existed
     setStripCodeParens(!!v.stripCodeParens); // presets stored before the strip existed
     // `??` covers presets stored before the time-off tag existed.
     setTimeOffTag(v.timeOffTag ?? DEFAULT_TIME_OFF_TAG);
@@ -688,6 +704,7 @@ export default function SettingsPanel({
       v.maxBillableHours !== null ||
       v.minWorkingDayHours !== null ||
       v.billingTagPrefix !== DEFAULT_BILLING_TAG_PREFIX ||
+      !!v.billByProject ||
       !!v.stripCodeParens ||
       (v.timeOffTag ?? DEFAULT_TIME_OFF_TAG) !== DEFAULT_TIME_OFF_TAG ||
       v.roundingHours !== DEFAULT_ROUNDING_HOURS ||
@@ -955,12 +972,15 @@ export default function SettingsPanel({
               value={timesheetMode}
               onChange={(e) => setTimesheetMode(e.target.value as TimesheetMode)}
             >
-              <option value="summary">Summary — combined per billing tag</option>
+              <option value="summary">
+                Summary — combined per {billByProject ? itemNoun : 'billing tag'}
+              </option>
               <option value="individual">Individual — one row per entry</option>
             </select>
             <p className="hint">
-              Which view the Timesheet button opens. Summary groups each day&apos;s entries by
-              billing tag and rounds to your chosen unit; Individual lists entries one by one.
+              Which view the Timesheet button opens. Summary groups each day&apos;s entries by{' '}
+              {billByProject ? itemNoun : 'billing tag'} and rounds to your chosen unit;
+              Individual lists entries one by one.
             </p>
           </div>
         )}
@@ -1049,6 +1069,30 @@ export default function SettingsPanel({
             </p>
           </div>
 
+          <div className="toggle">
+            <div className="t-text">
+              <strong>Bill by {itemNoun}</strong>
+              <span>
+                This workspace doesn&apos;t use billing codes: every entry bills to its{' '}
+                {itemNoun} instead. The timesheet groups per {itemNoun}, nothing is ever flagged
+                as untagged, and exports show the {itemNoun} as the billing line. The tag prefix,
+                support-ticket brackets, the <strong>(X)</strong> / <strong>(!)</strong> overtime
+                markers, the parentheses strip and linked billing codes are all billing-code
+                machinery, so they don&apos;t apply. The time-off tag still works — it&apos;s a
+                plain tag, not a billing code.
+              </span>
+            </div>
+            <label className="switch">
+              <input
+                type="checkbox"
+                checked={billByProject}
+                onChange={(e) => setBillByProject(e.target.checked)}
+              />
+              <span className="slider" />
+            </label>
+          </div>
+
+          {!billByProject && (
           <div className="field">
             <label htmlFor="billing-prefix">Billing tag prefix</label>
             <input
@@ -1067,7 +1111,9 @@ export default function SettingsPanel({
               <strong>{DEFAULT_BILLING_TAG_PREFIX}</strong>.
             </p>
           </div>
+          )}
 
+          {!billByProject && (
           <div className="toggle">
             <div className="t-text">
               <strong>Strip parentheses from billing codes</strong>
@@ -1090,6 +1136,7 @@ export default function SettingsPanel({
               <span className="slider" />
             </label>
           </div>
+          )}
 
           <div className="field">
             <label htmlFor="time-off-tag">Time off tag</label>
@@ -1188,6 +1235,7 @@ export default function SettingsPanel({
             </p>
           </div>
 
+          {!billByProject && (
           <div className="field">
             <label>Linked billing codes</label>
             {codeMappings.length > 0 && (
@@ -1324,6 +1372,7 @@ export default function SettingsPanel({
               must be this sheet&apos;s unit or a whole multiple of it.
             </p>
           </div>
+          )}
 
           <div className="toggle">
             <div className="t-text">
@@ -1332,9 +1381,15 @@ export default function SettingsPanel({
                 Cap each week&apos;s billed total at your{' '}
                 {fmtHoursLabel(previewWeekly)} weekly hours. Anything over is trimmed off the
                 timesheet (rounding down) and shown as an &ldquo;Overtime&rdquo; line — still tracked,
-                just not billed. Codes ending in <strong>(X)</strong> are trimmed first; codes
-                ending in <strong>(!)</strong> are <em>never</em> trimmed (they bill whole and the
-                cut falls on the rest). Neither marker is ever shown. In the{' '}
+                just not billed.{' '}
+                {!billByProject && (
+                  <>
+                    Codes ending in <strong>(X)</strong> are trimmed first; codes ending in{' '}
+                    <strong>(!)</strong> are <em>never</em> trimmed (they bill whole and the cut
+                    falls on the rest). Neither marker is ever shown.{' '}
+                  </>
+                )}
+                In the{' '}
                 <strong>Summary</strong> view the weekdays are also evened out — the weekend and
                 any time-off days stay billed in full and the working days are levelled toward
                 (weekly hours − those days) ÷ their count.

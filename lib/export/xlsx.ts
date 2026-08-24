@@ -19,7 +19,9 @@ function summaryAOA(doc: Extract<ExportDoc, { view: 'summary' }>): Cell[][] {
   aoa.push([]);
   for (const week of doc.weeks) {
     aoa.push([week.label]);
-    aoa.push(['Billing tag', ...week.dayLabels, 'Total', 'Description']);
+    // What the billing column holds: billing codes, or — for a workspace that
+    // doesn't use them — the project each entry belongs to.
+    aoa.push([doc.billByProject ? 'Project' : 'Billing tag', ...week.dayLabels, 'Total', 'Description']);
     for (const r of week.rows) {
       aoa.push([r.label, ...r.cells.map(hoursCell), secsToHoursNum(r.total), r.desc]);
     }
@@ -36,7 +38,7 @@ function individualAOA(doc: Extract<ExportDoc, { view: 'individual' }>): Cell[][
   if (doc.personName) aoa.push([doc.personName]);
   aoa.push([periodLabel(doc.fromMs, doc.toMs)]);
   aoa.push([]);
-  aoa.push(['Date', 'Day', 'Time', 'Hours', 'Billing', 'Description']);
+  aoa.push(['Date', 'Day', 'Time', 'Hours', doc.billByProject ? 'Project' : 'Billing', 'Description']);
   for (const day of doc.days) {
     const [dayName, dateStr] = day.label.split(' · ');
     for (const r of day.rows) {
