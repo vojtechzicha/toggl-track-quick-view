@@ -10,7 +10,7 @@
 // far side, where the person is. That is the point of the arrangement, and the
 // reason this file has no security logic in it to get wrong.
 
-import { readCertificateInfo } from './certificateInfo';
+import { readCertificateInfo, readCertificateNames } from './certificateInfo';
 import {
   TokenBridgeUnavailableError,
   type BridgeReadiness,
@@ -246,12 +246,62 @@ export class ExtensionBridge implements TokenBridge {
         providerName: entry.tokenLabel,
         hardware: true,
         qualified: info.qualified,
-        // A certificate with no private key on the card cannot sign whatever
-        // its key usage says — a CA certificate the card carries for path
-        // building is the common case.
-        forSignature: entry.hasPrivateKey && info.forSignature,
+        forSignature: info.forSignature,
+        hasKey: entry.hasPrivateKey,
       };
     });
+  }
+
+  /**
+   * The issuing chain of one listed certificate, built out of the card itself.
+   *
+   * The card carries its issuer's CA certificates — that is what the other
+   * thirty on this token are, and why `listCertificates` reports them instead
+   * of hiding everything without a private key. So the chain costs no round
+   * trip and no new protocol message: it is a walk up the list already in
+   * hand, matching each certificate's issuer name against another's subject.
+   *
+   * It matters because a CMS carrying the leaf alone leaves a validator to
+   * fetch the issuer over AIA — which needs the network, and fails quietly
+   * into "the chain could not be built" on a validator that will not go out to
+   * get it. Embedding what the card already knows makes the signature verify
+   * on its own bytes.
+   *
+   * Returns what it found, leaf EXCLUDED, and stops at whatever the card
+   * stops at: a chain reaching the root is better than one that does not, and
+   * a short chain is better than none. A self-issued certificate ends the walk
+   * — it is the root, and following it would be following it to itself.
+   */
+  async certificateChain(certificateId: string): Promise<Uint8Array[]> {
+    const leaf = this.certificates.get(certificateId);
+    if (!leaf) return [];
+
+    // Built per call rather than kept: the map is thirty entries, the walk
+    // happens once per signature, and a cache would only be one more thing
+    // that can be stale when the card is swapped.
+    const bySubject = new Map<string, { der: Uint8Array; names: { subject: string; issuer: string } }>();
+    for (const [id, entry] of this.certificates) {
+      if (id === certificateId) continue;
+      const names = readCertificateNames(entry.der);
+      // First one wins: a card holding two certificates for the same CA
+      // (a re-issue) offers a choice this cannot decide, and either builds a
+      // chain that verifies or is caught by the check that follows.
+      if (names && !bySubject.has(names.subject)) bySubject.set(names.subject, { der: entry.der, names });
+    }
+
+    const chain: Uint8Array[] = [];
+    let names = readCertificateNames(leaf.der);
+    // Bounded: a card with a certificate cycle on it would otherwise walk
+    // forever, and no real chain is anywhere near this long.
+    while (names && chain.length < 8) {
+      if (names.issuer === names.subject) break;
+      const issuer = bySubject.get(names.issuer);
+      if (!issuer) break;
+      chain.push(issuer.der);
+      bySubject.delete(names.issuer);
+      names = issuer.names;
+    }
+    return chain;
   }
 
   async signDigest(request: SignDigestRequest): Promise<Uint8Array> {

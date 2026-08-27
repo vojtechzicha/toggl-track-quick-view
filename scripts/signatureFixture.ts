@@ -275,3 +275,45 @@ export async function buildFixture(): Promise<BuiltFixture> {
     rect: widgetRectToPdf(template.signatureWidget.rect, template.signatureWidget.page.height),
   };
 }
+
+/**
+ * A DER certificate with any issuer and subject you like, signed by a key that
+ * has nothing to do with either.
+ *
+ * Chain building matches names and never verifies a signature (see
+ * `ExtensionBridge.certificateChain`), so a chain fixture only has to get the
+ * NAMES right — and a self-signed generator cannot produce a certificate whose
+ * issuer differs from its subject, which is the only interesting case. This
+ * builds one directly. It is a fixture and nothing else: the signature on it is
+ * meaningless by construction, so it must never leave the checks.
+ */
+export async function chainFixtureCertificate(subjectCN: string, issuerCN: string): Promise<Uint8Array> {
+  const asn1js = await import('asn1js');
+  const pkijs = await import('pkijs');
+  const { ensureCryptoEngine } = await import('../lib/export/pdf/sign/throwaway.ts');
+  ensureCryptoEngine();
+
+  const keyPair = (await globalThis.crypto.subtle.generateKey(
+    { name: 'RSASSA-PKCS1-v1_5', modulusLength: 2048, publicExponent: new Uint8Array([1, 0, 1]), hash: 'SHA-256' },
+    true,
+    ['sign', 'verify']
+  )) as CryptoKeyPair;
+
+  const name = (cn: string) =>
+    new pkijs.RelativeDistinguishedNames({
+      typesAndValues: [
+        new pkijs.AttributeTypeAndValue({ type: '2.5.4.3', value: new asn1js.Utf8String({ value: cn }) }),
+      ],
+    });
+
+  const certificate = new pkijs.Certificate();
+  certificate.version = 2;
+  certificate.serialNumber = new asn1js.Integer({ value: 1 });
+  certificate.issuer = name(issuerCN);
+  certificate.subject = name(subjectCN);
+  certificate.notBefore.value = new Date(SIGNED_AT_MS - 86_400_000);
+  certificate.notAfter.value = new Date(SIGNED_AT_MS + 86_400_000);
+  await certificate.subjectPublicKeyInfo.importKey(keyPair.publicKey);
+  await certificate.sign(keyPair.privateKey, 'SHA-256');
+  return new Uint8Array(certificate.toSchema(true).toBER(false));
+}

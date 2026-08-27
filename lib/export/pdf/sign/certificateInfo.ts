@@ -9,7 +9,7 @@
 // up in a validator is the exact failure the picker exists to prevent.
 
 import * as asn1js from 'asn1js';
-import { AsnParser } from '@peculiar/asn1-schema';
+import { AsnConvert, AsnParser } from '@peculiar/asn1-schema';
 import {
   Certificate,
   KeyUsage,
@@ -39,6 +39,69 @@ export interface CertificateInfo {
    */
   forSignature: boolean;
 }
+
+/**
+ * A certificate's issuer and subject names, as the bytes X.509 compares them by.
+ *
+ * Chain building matches one certificate's issuer against another's subject,
+ * and the comparison has to be over the encoded names rather than over any
+ * rendering of them: two RDNSequences that print identically can differ in
+ * string type or in ordering, and two that print differently — a UTF8String
+ * against a PrintableString of the same letters — are still not the same name.
+ * Hex of the DER is simply a string the Map can key on.
+ *
+ * Null when the certificate will not parse, which is the same answer
+ * `readCertificateInfo` gives and means the same thing: this one takes no part.
+ */
+export function readCertificateNames(der: Uint8Array): { subject: string; issuer: string } | null {
+  try {
+    const certificate = AsnParser.parse(toArrayBuffer(der), Certificate);
+    return {
+      subject: hex(AsnConvert.serialize(certificate.tbsCertificate.subject)),
+      issuer: hex(AsnConvert.serialize(certificate.tbsCertificate.issuer)),
+    };
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * How many bytes an RSASSA-PKCS1-v1_5 signature made with this certificate's
+ * key will occupy — which is the modulus length, exactly.
+ *
+ * Needed before the signature exists: the PDF has to reserve room for the CMS
+ * before anything is signed (see ../prepare.ts), and the difference between a
+ * 2048-bit and a 4096-bit signer is 256 bytes of it. Null when the key is not
+ * RSA or will not parse, leaving the caller to fall back rather than reserve a
+ * confidently wrong amount.
+ */
+export function rsaSignatureBytes(der: Uint8Array): number | null {
+  try {
+    const certificate = AsnParser.parse(toArrayBuffer(der), Certificate);
+    const spki = certificate.tbsCertificate.subjectPublicKeyInfo;
+    const parsed = asn1js.fromBER(spki.subjectPublicKey as ArrayBuffer);
+    if (parsed.offset === -1) return null;
+    // RSAPublicKey ::= SEQUENCE { modulus INTEGER, publicExponent INTEGER }
+    const modulus = (parsed.result as unknown as { valueBlock?: { value?: asn1js.AsnType[] } })
+      .valueBlock?.value?.[0];
+    if (!(modulus instanceof asn1js.Integer)) return null;
+    const bytes = new Uint8Array(modulus.valueBlock.valueHexView);
+    // DER pads a positive INTEGER whose top bit is set with a leading zero;
+    // that byte is notation, not key material, and counting it would reserve
+    // one byte more than every signature will ever use.
+    return bytes[0] === 0x00 ? bytes.length - 1 : bytes.length;
+  } catch {
+    return null;
+  }
+}
+
+const hex = (buffer: ArrayBuffer): string =>
+  Array.from(new Uint8Array(buffer))
+    .map((b) => b.toString(16).padStart(2, '0'))
+    .join('');
+
+const toArrayBuffer = (der: Uint8Array): ArrayBuffer =>
+  der.buffer.slice(der.byteOffset, der.byteOffset + der.byteLength) as ArrayBuffer;
 
 /** ETSI EN 319 412-5 qcStatements, and the policies that mean "on a QSCD". */
 const OID = {
@@ -91,10 +154,7 @@ export function readCertificateInfo(der: Uint8Array): CertificateInfo {
 
   let certificate: Certificate;
   try {
-    certificate = AsnParser.parse(
-      der.buffer.slice(der.byteOffset, der.byteOffset + der.byteLength) as ArrayBuffer,
-      Certificate
-    );
+    certificate = AsnParser.parse(toArrayBuffer(der), Certificate);
   } catch {
     return empty;
   }

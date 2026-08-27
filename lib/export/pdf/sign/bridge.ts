@@ -1,17 +1,16 @@
 // The bridges the app knows about, and the one that needs no hardware.
 //
 // The interface they implement lives in ./tokenBridge.ts; the hardware one in
-// ./fortify.ts. What is here is the WebCrypto bridge and the list itself:
+// ./extensionBridge.ts. What is here is the WebCrypto bridge and the list:
 //
+//  - ExtensionBridge — the card, through the Sign Bridge extension and helper.
+//    The only one that can produce a qualified signature.
 //  - WebCryptoBridge — a throwaway key generated in the browser. Not a legal
 //    signature and never presented as one: it exists so the whole pipeline runs
 //    end to end without a token, with real CMS, real digests and a really
 //    verifiable signature that simply chains to nothing anyone trusts.
-//  - FortifyBridge — the hardware path, offered only when Fortify is actually
-//    running, so nothing silently half-works on a machine without it.
 
 import { ExtensionBridge, type ExtensionBridgeOptions } from './extensionBridge';
-import { FortifyBridge, type FortifyBridgeOptions } from './fortify';
 import { generateThrowawayKey, type ThrowawayKey, type ThrowawayKeyOptions } from './throwaway';
 import {
   TokenBridgeUnavailableError,
@@ -27,7 +26,6 @@ export {
   type TokenBridge,
   type TokenCertificate,
 } from './tokenBridge';
-export { FortifyBridge, FORTIFY_ORIGIN, type FortifyBridgeOptions } from './fortify';
 export {
   ExtensionBridge,
   SIGN_BRIDGE_EXTENSION_ID,
@@ -97,6 +95,8 @@ export class WebCryptoBridge implements TokenBridge {
         // It does carry digitalSignature | nonRepudiation (./throwaway.ts), so
         // it is the right SHAPE of certificate — just not a trusted one.
         forSignature: true,
+        // Generated in this tab, so the key is as present as a key gets.
+        hasKey: true,
       },
     ];
   }
@@ -119,7 +119,6 @@ export class WebCryptoBridge implements TokenBridge {
 
 export interface AvailableBridgeOptions {
   signBridge?: ExtensionBridgeOptions;
-  fortify?: FortifyBridgeOptions;
 }
 
 /**
@@ -132,13 +131,10 @@ export interface AvailableBridgeOptions {
  * the export dialog says out loud.
  */
 export function availableBridges(options: AvailableBridgeOptions = {}): TokenBridge[] {
-  // Sign Bridge first: it is the one that is actually maintained, and the only
-  // one that can produce a qualified signature. Fortify stays behind it until
-  // it is deleted — it reports itself unavailable on any machine where it is
-  // not running, which is all of them since it stopped working on macOS 26.
-  return [
-    new ExtensionBridge(options.signBridge),
-    new FortifyBridge(options.fortify),
-    new WebCryptoBridge(),
-  ];
+  // Sign Bridge first: it is the only one that can produce a qualified
+  // signature. Fortify used to sit between the two and is gone — macOS 26
+  // stopped loading it (see docs/pdf-signing-v2.md), and the extension bridge
+  // that replaced it now signs with the card, which was the condition for
+  // deleting it.
+  return [new ExtensionBridge(options.signBridge), new WebCryptoBridge()];
 }

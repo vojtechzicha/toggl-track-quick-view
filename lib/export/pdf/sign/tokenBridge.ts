@@ -2,14 +2,14 @@
 //
 // A qualified certificate's key lives on certified hardware, and a browser
 // cannot talk to a PKCS#11 token directly — so signing goes through a local
-// bridge (Fortify, or a small localhost helper; see docs/pdf-signing-v2.md).
-// Which one is a deployment detail, and the pipeline must not care: everything
-// downstream of here works against this interface alone.
+// bridge (see docs/sign-bridge-plan.md). Which one is a deployment detail, and
+// the pipeline must not care: everything downstream of here works against this
+// interface alone.
 //
 // The contract lives in its own module rather than beside an implementation
 // because both implementations need it: ./bridge.ts holds the WebCrypto one
-// and ./fortify.ts the hardware one, and having either import the other's file
-// for the interface would be a cycle.
+// and ./extensionBridge.ts the hardware one, and having either import the
+// other's file for the interface would be a cycle.
 
 export interface TokenCertificate {
   /** Stable within a bridge session; what signDigest() selects on. */
@@ -53,8 +53,23 @@ export interface TokenCertificate {
    * Worth surfacing because I.CA's TWINS product puts BOTH on the same card,
    * and signing a timesheet with the commercial authentication certificate
    * produces a file that verifies cryptographically and is not a QES.
+   *
+   * Read from the certificate and nothing else, so it says what the issuer
+   * intended this certificate for — not whether this machine can act on it.
+   * That is `hasKey`, and the two are separate on purpose: a certificate can
+   * be a perfectly good signing certificate and still be unusable here.
    */
   forSignature: boolean;
+  /**
+   * The private key is present on the device.
+   *
+   * False means it can never sign, whatever its key usage says — and on a real
+   * card that is the common case rather than the exception: an I.CA card
+   * carries around thirty of its issuer's CA certificates for path building,
+   * every one of them a certificate with no key. A picker that offers those is
+   * offering a PIN prompt that ends in "no private key".
+   */
+  hasKey: boolean;
 }
 
 export interface SignDigestRequest {
@@ -62,9 +77,9 @@ export interface SignDigestRequest {
   /**
    * The bytes to be signed: the DER SignedAttributes (see ./cms.ts), NOT the
    * byte-range digest. The bridge hashes them with `hash` and produces an
-   * RSASSA-PKCS1-v1_5 signature — the same contract WebCrypto's subtle.sign and
-   * Fortify's remote crypto expose, and the one PKCS#11 reaches through
-   * CKM_SHA256_RSA_PKCS.
+   * RSASSA-PKCS1-v1_5 signature — the same contract WebCrypto's subtle.sign
+   * exposes, and the one PKCS#11 reaches by building the DigestInfo itself and
+   * signing with raw CKM_RSA_PKCS (the card offers no CKM_SHA256_RSA_PKCS).
    */
   data: Uint8Array;
   hash: 'SHA-256';

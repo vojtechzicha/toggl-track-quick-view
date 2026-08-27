@@ -34,6 +34,7 @@ import { spawnSync } from 'node:child_process';
 import { createHash, createVerify, X509Certificate } from 'node:crypto';
 import {
   buildFixture,
+  chainFixtureCertificate,
   CERT_PEM,
   SIGNED_AT_MS,
   SIGNED_PDF,
@@ -424,64 +425,33 @@ const cms = (() => {
 
 // ---- the bridge seam ----
 //
-// The hardware path minus the hardware. A token cannot be part of a check —
-// it needs a card, a PIN and a person — so what is pinned here is everything
-// around it: the constant that decides whether Fortify is ever found, the DN
-// parsing that decides what the stamp prints, and the chain fetch, which is the
-// one piece of pipeline that only the hardware bridge exercises.
+// The hardware path minus the hardware. A token cannot be part of a check — it
+// needs a card, a PIN and a person — so what is pinned here is everything
+// around it: which bridges are offered and in what order, and the chain walk,
+// which is the one piece of pipeline only the hardware bridge exercises and the
+// one that decides whether a validator can build a path without the network.
 {
-  const { FORTIFY_ORIGIN, FortifyBridge, WebCryptoBridge, availableBridges } = await import(
+  const { ExtensionBridge, WebCryptoBridge, availableBridges } = await import(
     '../lib/export/pdf/sign/bridge.ts'
   );
-  const { commonName } = await import('../lib/export/pdf/sign/fortify.ts');
-
-  // The address Fortify listens on is duplicated in ./fortify.ts so that
-  // "is Fortify running?" costs one fetch instead of a megabyte of client (see
-  // the comment there). A copy is only safe while something notices it drifting
-  // — and the drift would not look like a bug: Fortify would simply never be
-  // offered, and the dialog would fall back to the throwaway key.
-  //
-  // The library reads its own value off an instance, and its constructor wants
-  // a window, so it gets a stub. Nothing else here touches the DOM.
-  const priorWindow = (globalThis as { window?: unknown }).window;
-  (globalThis as { window?: unknown }).window = { navigator: { userAgent: 'node' } };
-  try {
-    const { FortifyAPI } = await import('@peculiar/fortify-client-core');
-    const api = new FortifyAPI({
-      onDebug: () => {},
-      onClose: () => {},
-      onProvidersAdded: () => {},
-      onProvidersRemoved: () => {},
-    });
-    eq(FORTIFY_ORIGIN, `https://${api.FORTIFY_URL}`, 'we probe the address Fortify actually listens on');
-  } finally {
-    if (priorWindow === undefined) delete (globalThis as { window?: unknown }).window;
-    else (globalThis as { window?: unknown }).window = priorWindow;
-  }
-
-  // What the stamp prints as the certificate, and what the picker shows.
-  eq(commonName('CN=Anna Dvorak, O=Example s.r.o., C=CZ'), 'Anna Dvorak', 'the CN comes off a plain DN');
-  eq(commonName('O=Example s.r.o., C=CZ, CN=Anna Dvorak'), 'Anna Dvorak', 'the CN is found wherever it sits');
-  eq(
-    commonName('CN=Dvorak\\, Anna, O=Example s.r.o.'),
-    'Dvorak, Anna',
-    'an escaped comma stays inside the name instead of cutting it in half'
-  );
-  eq(commonName('OU=Certificates, O=Example'), 'OU=Certificates, O=Example', 'a DN with no CN falls back to itself');
-  eq(commonName(''), '', 'an empty DN is empty, not a crash');
 
   // isAvailable() runs before the user has asked for anything, on every bridge
   // the dialog offers. It must answer rather than throw, whatever is or is not
-  // installed — here, nothing.
-  const fortify = new FortifyBridge();
-  eq(await fortify.isAvailable(), false, 'Fortify reports itself absent outside a browser');
-  eq(fortify.interactive, true, 'listing on the hardware bridge prompts, so the dialog waits to be asked');
+  // installed — here, nothing: there is no `chrome` outside a browser.
+  const extension = new ExtensionBridge();
+  eq(await extension.isAvailable(), false, 'the Sign Bridge bridge reports itself absent outside a browser');
+  eq(
+    (await extension.readiness()).state,
+    'unsupported',
+    'and says why, rather than sending someone to install something that would not help'
+  );
+  eq(extension.interactive, true, 'listing on the hardware bridge prompts, so the dialog waits to be asked');
 
   const bridges = availableBridges();
   eq(
     bridges.map((b) => b.id),
-    ['sign-bridge', 'fortify', 'webcrypto'],
-    'the maintained hardware bridge is preferred, and the throwaway one is always last'
+    ['sign-bridge', 'webcrypto'],
+    'the hardware bridge is preferred, and the throwaway one is always last'
   );
   // Order is the whole point of this assertion: the export dialog offers the
   // first bridge that reports itself available, so a throwaway key ending up
@@ -495,7 +465,64 @@ const cms = (() => {
   const [throwaway] = await new WebCryptoBridge().listCertificates();
   eq(throwaway.qualified, false, 'the throwaway certificate does not claim to be qualified');
   eq(throwaway.forSignature, true, 'the throwaway certificate carries the non-repudiation bit');
+  eq(throwaway.hasKey, true, 'the throwaway key is present, so the certificate is offerable');
   eq(throwaway.hardware, false, 'the throwaway key is not on hardware');
+
+  // ---- the chain walk ----
+  //
+  // A card carries its issuer's CA certificates alongside its own, so the chain
+  // the CMS embeds is built from the list already fetched rather than from a
+  // second round trip. What matters is that it climbs, stops, and never loops.
+  const leaf = await chainFixtureCertificate('Leaf Signer', 'Fixture Issuing CA');
+  const intermediate = await chainFixtureCertificate('Fixture Issuing CA', 'Fixture Root CA');
+  const root = await chainFixtureCertificate('Fixture Root CA', 'Fixture Root CA');
+  const unrelated = await chainFixtureCertificate('Somebody Else', 'Some Other CA');
+
+  /** Stock a bridge with the certificates a card would have reported. */
+  const bridgeHolding = (entries: [string, Uint8Array][]) => {
+    const bridge = new ExtensionBridge();
+    const held = (bridge as unknown as {
+      certificates: Map<string, { der: Uint8Array; tokenLabel: string }>;
+    }).certificates;
+    for (const [id, der] of entries) held.set(id, { der, tokenLabel: 'Fixture token' });
+    return bridge;
+  };
+
+  const full = bridgeHolding([
+    ['leaf', leaf],
+    ['ca', intermediate],
+    ['root', root],
+    ['other', unrelated],
+  ]);
+  const chain = await full.certificateChain('leaf');
+  eq(chain.length, 2, 'the walk climbs from the leaf to the root and stops there');
+  eq(chain[0], intermediate, 'the issuing CA comes first — the chain is ordered leaf-outwards');
+  eq(chain[1], root, 'and its own issuer follows');
+  // A self-issued certificate ends the walk. Without that, the root names
+  // itself as its issuer and the walk follows it to itself forever.
+  eq(
+    chain.some((der) => der === unrelated),
+    false,
+    'a certificate belonging to no part of this chain is left out of it'
+  );
+
+  eq(
+    (await bridgeHolding([['leaf', leaf], ['other', unrelated]]).certificateChain('leaf')).length,
+    0,
+    'a card that carries no issuer of its own yields an empty chain rather than a wrong one'
+  );
+  eq(
+    (await bridgeHolding([['leaf', leaf], ['ca', intermediate]]).certificateChain('nosuch')).length,
+    0,
+    'an unknown certificate id yields nothing instead of guessing a chain'
+  );
+  // The CMS ships [signerCert, ...chain] — repeating the leaf inside the chain
+  // would put it in the SignedData twice.
+  eq(
+    (await full.certificateChain('leaf')).some((der) => der === leaf),
+    false,
+    'the leaf is not repeated inside its own chain'
+  );
 }
 
 // ---- what a certificate says about itself ----
