@@ -36,7 +36,7 @@ import {
   type SignatureLayout,
 } from '@/lib/export/pdf/sign/types';
 // The bridge contract, types only — ./tokenBridge carries no implementation and
-// so drags neither the Fortify client nor PKI.js into this bundle.
+// so drags neither the signing stack nor PKI.js into this bundle.
 import type {
   BridgeReadiness,
   TokenBridge,
@@ -324,8 +324,8 @@ export default function ExportDialog({
     format === 'pdf' ? PDF_TEMPLATES.find((t) => t.id === templateId)?.signatureWidget : undefined;
 
   // The bridge objects themselves, built once per dialog rather than per
-  // render: each one holds live state — a Fortify socket and its approved
-  // pairing, or the throwaway key whose CN is already in the preview — and
+  // render: each one holds live state — the extension port and the certificates
+  // it listed, or the throwaway key whose CN is already in the preview — and
   // rebuilding it would silently throw that away mid-flow.
   const bridgesRef = useRef<TokenBridge[] | null>(null);
   const loadBridges = async (): Promise<TokenBridge[]> => {
@@ -333,13 +333,6 @@ export default function ExportDialog({
       const { availableBridges } = await import('@/lib/export/pdf/sign/bridge');
       bridgesRef.current = availableBridges({
         signBridge: { onPairingCode: setPairingCode },
-        fortify: {
-          onPairing: setPairingCode,
-          onDisconnect: () => {
-            setCertificates(null);
-            setCertificateId('');
-          },
-        },
       });
     }
     return bridgesRef.current;
@@ -433,7 +426,13 @@ export default function ExportDialog({
     setError(null);
     setDone(null);
     try {
-      const list = await bridge.listCertificates();
+      const all = await bridge.listCertificates();
+      // Only what this device can actually sign with. A card reports its
+      // issuer's CA certificates alongside its own — around thirty of them on
+      // an I.CA card — and every one is a certificate with no private key here.
+      // Offering them is offering a PIN prompt that ends in "no private key",
+      // so they are counted and dropped rather than listed.
+      const list = all.filter((c) => c.hasKey);
       setCertificates(list);
       // Preselect what the document actually needs: a qualified certificate
       // whose key usage allows non-repudiation. The alternative — first in the
@@ -446,8 +445,12 @@ export default function ExportDialog({
       setCertificateId(preferred?.id ?? '');
       if (!list.length) {
         setError(
-          'That device holds no usable certificate. A card with no certificate on it yet, ' +
-            'or one whose certificates have expired, both look like this.'
+          all.length
+            ? `That device carries ${all.length} certificate${all.length === 1 ? '' : 's'} and the ` +
+                'private key of none of them — which is what a card looks like before its own ' +
+                'certificate has been issued onto it.'
+            : 'That device holds no usable certificate. A card with no certificate on it yet, ' +
+                'or one whose certificates have expired, both look like this.'
         );
       }
     } catch (e) {
@@ -646,7 +649,19 @@ export default function ExportDialog({
       } else if (isRateLimit(e)) {
         setError('Toggl rate limit reached — wait a moment, then try again.');
       } else {
-        setError('Could not load this range from Toggl. Try again.');
+        // Everything else, said as it happened rather than guessed at. This
+        // branch used to blame Toggl for anything it did not recognise, which
+        // covers the whole render-and-sign half of the pipeline too: a font
+        // that would not load, a widget that would not fit, a card pulled
+        // mid-signature all reported themselves as a failed download, and the
+        // only honest next step was the console.
+        console.error('Export failed', e);
+        const detail = e instanceof Error ? e.message : String(e);
+        setError(
+          detail
+            ? `The export failed: ${detail}`
+            : 'The export failed, and gave no reason. The browser console has the error.'
+        );
       }
     } finally {
       setBusy(false);
