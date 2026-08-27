@@ -22,7 +22,7 @@ import {
   type MappedAgg,
 } from './mapping';
 import { fitDescs } from './desc';
-import { DAY_MS, UNTAGGED, MULTIPLE } from './constants';
+import { DAY_MS, UNTAGGED, MULTIPLE, projectBillingCode } from './constants';
 
 export interface Cell {
   descs: string[]; // de-duplicated, original-cased, in first-seen order
@@ -96,6 +96,11 @@ export interface SummaryInput {
   // rows as "D123") — after the "(X)"/"(!)" markers are interpreted, so those
   // keep working. Codes differing only in the parenthetical share one row.
   stripCodeParens?: boolean;
+  // When true, this workspace doesn't use billing codes: every entry bills to
+  // its PROJECT, whose name is the row. Nothing can be untagged or
+  // multi-tagged, and none of the billing-code machinery applies — no support
+  // tickets, no "(X)"/"(!)" markers, no parentheses strip, no linked codes.
+  billByProject?: boolean;
 }
 
 /**
@@ -120,6 +125,7 @@ export function buildSummaryGrid({
   timeOffTag,
   codeMappings,
   stripCodeParens,
+  billByProject,
 }: SummaryInput): SummaryGrid | null {
   if (!weekStart) return null;
   const ids = new Set(projects.map((p) => p.id));
@@ -174,8 +180,19 @@ export function buildSummaryGrid({
     // untagged entry whose description opens with "[ticket]" bills to that
     // ticket instead of warning (support tickets — see entryBilling), with the
     // bracket dropped from the billed description.
-    const mapping = mappingFor(codeMappings, e.project_id);
-    const { tags, description } = entryBilling(e.tags, e.description, mapping, billingTagPrefix);
+    //
+    // With projects-only billing the entry's PROJECT is its billing line: the
+    // project name stands in as the single "tag" (so nothing can be untagged or
+    // multi-tagged), the description passes through verbatim (no ticket
+    // bracket), and mappings are ignored — a linked code is billing-code
+    // machinery this workspace doesn't use.
+    const mapping = billByProject ? undefined : mappingFor(codeMappings, e.project_id);
+    const { tags, description } = billByProject
+      ? {
+          tags: [projectBillingCode(nameById.get(e.project_id), e.project_id)],
+          description: e.description ?? '',
+        }
+      : entryBilling(e.tags, e.description, mapping, billingTagPrefix);
     let rowKey: string;
     if (tags.length === 0) {
       rowKey = UNTAGGED;
@@ -216,8 +233,10 @@ export function buildSummaryGrid({
       // the "(X)" seconds are tracked per cell as the trim budget and the "(!)"
       // seconds as the untouchable floor. The markers are internal, so only the
       // base is displayed — with its parentheticals also dropped when the
-      // workspace opts in (markers first, then the strip).
-      const { base } = parseBillingCode(tags[0], stripCodeParens);
+      // workspace opts in (markers first, then the strip). A projects-only row
+      // is the project name verbatim — a name that happens to end in "(X)" is
+      // just a name, never a marker.
+      const base = billByProject ? tags[0] : parseBillingCode(tags[0], stripCodeParens).base;
       rowKey = `p${e.project_id}|${base}`;
       if (!rowMeta.has(rowKey)) {
         rowMeta.set(rowKey, {
@@ -236,7 +255,7 @@ export function buildSummaryGrid({
       cells.set(key, cell);
     }
     cell.seconds += seconds;
-    if (rowKey !== UNTAGGED && rowKey !== MULTIPLE) {
+    if (!billByProject && rowKey !== UNTAGGED && rowKey !== MULTIPLE) {
       const { trimmable, neverTrim } = parseBillingCode(tags[0]);
       if (trimmable) cell.trimmableSeconds += seconds;
       if (neverTrim) cell.noTrimSeconds += seconds;

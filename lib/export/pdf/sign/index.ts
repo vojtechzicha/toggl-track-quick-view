@@ -16,7 +16,7 @@
 // lib/export/index.ts), so @signpdf, PKI.js and pdf-lib stay out of the bundle
 // of anyone who never signs anything.
 
-import type { SignatureWidget } from '../templates';
+import type { PdfFontPack, SignatureWidget } from '../types';
 import { renderAppearance } from './appearance';
 import { rsaSignatureBytes } from './certificateInfo';
 import { buildCms } from './cms';
@@ -77,6 +77,12 @@ export interface SignPdfOptions {
    * Nothing in the PDF depends on it.
    */
   documentName?: string;
+  /**
+   * The signed template's font loader, so the visible stamp sets type in the
+   * same cuts as the page it lands on. Omitted renders it in pdfmake's Roboto —
+   * correct for a template that has no embedded fonts of its own.
+   */
+  loadFonts?: () => Promise<PdfFontPack>;
   /**
    * Ask the configured timestamp authority for an RFC 3161 token, producing
    * PAdES-B-T instead of B-B. Off when absent.
@@ -178,7 +184,7 @@ export async function signPdf(pdf: Blob, options: SignPdfOptions): Promise<Blob>
     ? options.certificate.chain
     : (await options.bridge.certificateChain?.(options.certificate.id)) ?? [];
 
-  const stamp = await renderAppearance(options.widget.rect, appearance);
+  const stamp = await renderAppearance(options.widget, appearance, options.loadFonts);
   const prepared = await prepareSignature(pdf, {
     widget: options.widget,
     appearance: new Uint8Array(await stamp.arrayBuffer()),

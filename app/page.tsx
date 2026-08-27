@@ -287,12 +287,15 @@ export default function Page() {
           // A linked-code project's entries carry the mapping's own tag prefix,
           // so they're checked against that instead of this sheet's. An entry
           // whose description opens with "[ticket]" bills to that ticket
-          // (support tickets), so it isn't missing a tag.
+          // (support tickets), so it isn't missing a tag. A workspace that
+          // bills by project has no billing tags to miss.
           missingTag:
+            !settings.billByProject &&
             !hasBillingTag(
               e.tags,
               mappingFor(settings.codeMappings, e.projectId)?.tagPrefix ?? settings.billingTagPrefix
-            ) && supportTicketCode(e.desc) === null,
+            ) &&
+            supportTicketCode(e.desc) === null,
           tooLong: settings.timesheetMode === 'individual' && dur > maxBillSec,
           projId: e.projectId,
         });
@@ -352,6 +355,7 @@ export default function Page() {
     settings.weeklyHours,
     settings.maxBillableHours,
     settings.billingTagPrefix,
+    settings.billByProject,
     settings.timeOffTag,
     settings.codeMappings,
   ]);

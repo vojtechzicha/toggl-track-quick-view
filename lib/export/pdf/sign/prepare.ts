@@ -24,7 +24,7 @@ import {
 } from '@cantoo/pdf-lib';
 import { pdflibAddPlaceholder } from '@signpdf/placeholder-pdf-lib';
 import { SUBFILTER_ETSI_CADES_DETACHED, DEFAULT_SIGNATURE_LENGTH } from '@signpdf/utils';
-import type { SignatureWidget } from '../templates';
+import type { SignatureWidget } from '../types';
 import { widgetRectFits, widgetRectToPdf, type PdfRect } from './widget';
 
 export interface PrepareSignatureOptions {

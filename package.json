@@ -4,19 +4,27 @@
   "private": true,
   "description": "A single-screen quick view for tracking a work day (configurable weekly target) on one or more Toggl Track projects.",
   "scripts": {
-    "dev": "next dev",
-    "build": "next build",
+    "dev": "node scripts/sync-pack.mjs && WAS_RUNNING=$(docker compose ps -q mongo 2>/dev/null); docker compose up -d mongo && trap '[ -z \"$WAS_RUNNING\" ] && docker compose down' EXIT && next dev",
+    "devsafe": "node scripts/sync-pack.mjs && rm -rf .next && next dev",
+    "build": "node scripts/sync-pack.mjs && next build",
+    "vercel-build": "node scripts/check-env.mjs && node scripts/sync-pack.mjs && next build",
     "start": "next start",
     "lint": "next lint",
+    "db": "docker compose up -d mongo",
+    "db:stop": "docker compose down",
+    "pack:sync": "node scripts/sync-pack.mjs",
+    "env:pull": "op inject -i .env.tpl -o .env -f",
+    "env:pull:prod": "op inject -i .env.prod.tpl -o .env.prod -f",
+    "env:check": "node scripts/check-env.mjs",
+    "check": "npm run check:money && npm run check:codes && npm run check:windows && npm run check:export && npm run check:templates && npm run check:fonts && npm run check:signature && npm run check:pack",
     "check:money": "node scripts/check-money.ts",
-    "check:report": "node scripts/check-report.ts",
-    "check:acceptance": "node scripts/check-acceptance.ts",
     "check:codes": "node scripts/check-codes.ts",
     "check:windows": "node scripts/check-windows.ts",
     "check:export": "node scripts/check-export-scope.ts",
-    "check:signature": "node scripts/check-signature.ts",
-    "check": "npm run check:money && npm run check:report && npm run check:acceptance && npm run check:codes && npm run check:windows && npm run check:export && npm run check:fonts && npm run check:signature",
+    "check:templates": "node scripts/check-templates.ts",
     "check:fonts": "node scripts/check-fonts.ts",
+    "check:signature": "node scripts/check-signature.ts",
+    "check:pack": "node scripts/check-pack.mjs",
     "make:signature-fixture": "node scripts/make-signature-fixture.ts"
   },
   "dependencies": {
@@ -44,5 +52,9 @@
     "@types/react": "^19.0.0",
     "@types/react-dom": "^19.0.0",
     "typescript": "^5.7.0"
+  },
+  "engines": {
+    "node": ">=20.12",
+    "pnpm": ">=10"
   }
 }

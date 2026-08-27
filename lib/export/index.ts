@@ -100,7 +100,8 @@ async function maybeSign(
   if (!request || format !== 'pdf') return blob;
   request = { ...request, documentName: request.documentName ?? documentName };
   const { getTemplate } = await import('./pdf/templates');
-  const widget = getTemplate(pdfTemplateId).signatureWidget;
+  const template = getTemplate(pdfTemplateId);
+  const widget = template.signatureWidget;
   // A template with no reserved area cannot carry a widget; exporting it
   // unsigned beats putting one somewhere arbitrary.
   if (!widget) return blob;
@@ -108,6 +109,9 @@ async function maybeSign(
   const { signPdf } = await import('./pdf/sign');
   return signPdf(blob, {
     widget,
+    // The stamp renders in the template's own cuts, so it reads as part of the
+    // document rather than pasted onto it.
+    loadFonts: template.loadFonts,
     appearance: request.appearance,
     bridge: request.bridge,
     certificate: request.certificate,

@@ -23,7 +23,7 @@ import {
   type MappedAgg,
 } from './mapping';
 import { fitDescs } from './desc';
-import { DAY_MS, UNTAGGED, MULTIPLE, TOOLONG } from './constants';
+import { DAY_MS, UNTAGGED, MULTIPLE, TOOLONG, projectBillingCode } from './constants';
 
 const COMBINE_GAP_SECONDS = 60 * 60; // combine same-code entries only within this gap
 const OVERLAP_MIN_MS = 60 * 1000; // ignore sub-minute touches (display/manual-entry noise)
@@ -121,6 +121,13 @@ export interface IndividualInput {
   // lines as "D123") — after the "(X)"/"(!)" markers are interpreted, so those
   // keep working. Codes differing only in the parenthetical combine as one code.
   stripCodeParens?: boolean;
+  // When true, this workspace doesn't use billing codes: every entry bills to
+  // its PROJECT, whose name is the line's code. Nothing can be untagged or
+  // multi-tagged, and none of the billing-code machinery applies — no support
+  // tickets, no "(X)"/"(!)" markers, no parentheses strip, no linked codes.
+  // The length cap and the overlap warnings still apply — they're about time,
+  // not codes.
+  billByProject?: boolean;
 }
 
 export function warnLabel(kind: WarnKind, maxBillableHours: number): string {
@@ -207,7 +214,11 @@ function classifyDay(
   billingTagPrefix: string,
   roundingSeconds: number,
   codeMappings?: CodeMapping[],
-  stripCodeParens?: boolean
+  stripCodeParens?: boolean,
+  // Projects-only billing: the project name (from `nameById`) is the line's
+  // code and the tag/ticket/marker machinery is bypassed entirely.
+  billByProject?: boolean,
+  nameById?: Map<number, string>
 ): ClassifiedDay {
   const sorted = [...dayEntries].sort((a, b) => a.startMs - b.startMs);
 
@@ -262,8 +273,19 @@ function classifyDay(
     // untagged entry whose description opens with "[ticket]" bills to that
     // ticket instead of warning (support tickets — see entryBilling), with the
     // bracket dropped from the billed description.
-    const mapping = mappingFor(codeMappings, e.projId);
-    const { tags, description } = entryBilling(e.tags, e.desc, mapping, billingTagPrefix);
+    //
+    // With projects-only billing the entry's PROJECT is its billing line: the
+    // project name stands in as the single "tag" (so nothing can be untagged or
+    // multi-tagged), the description passes through verbatim (no ticket
+    // bracket), and mappings are ignored — a linked code is billing-code
+    // machinery this workspace doesn't use.
+    const mapping = billByProject ? undefined : mappingFor(codeMappings, e.projId);
+    const { tags, description } = billByProject
+      ? {
+          tags: [projectBillingCode(nameById?.get(e.projId as number), e.projId as number)],
+          description: e.desc,
+        }
+      : entryBilling(e.tags, e.desc, mapping, billingTagPrefix);
     if (tags.length === 0) {
       flush();
       addWarn(UNTAGGED, e);
@@ -299,7 +321,12 @@ function classifyDay(
     // untouchable floor. Same code under two different projects still stays
     // separate (a project is a group of billing tags). The parenthetical strip
     // (when the workspace opts in) runs after the marker interpretation.
-    const { base, trimmable, neverTrim } = parseBillingCode(tags[0], stripCodeParens);
+    // A projects-only line is the project name verbatim — a name that happens to
+    // end in "(X)" is just a name, never a marker, and nothing there is trimmable
+    // or protected.
+    const { base, trimmable, neverTrim } = billByProject
+      ? { base: tags[0], trimmable: false, neverTrim: false }
+      : parseBillingCode(tags[0], stripCodeParens);
     const canCombine =
       current !== null &&
       current.code === base &&
@@ -435,9 +462,11 @@ export function buildIndividualWeek({
   timeOffTag,
   codeMappings,
   stripCodeParens,
+  billByProject,
 }: IndividualInput): IndividualWeek | null {
   if (!weekStart) return null;
   const ids = new Set(projects.map((p) => p.id));
+  const nameById = new Map(projects.map((p) => [p.id, p.name]));
   const maxBillableSeconds = maxBillableHours * 3600;
   // Durations round on the rounding unit; start times anchor to the window, which
   // is the same grid unless the workspace picked a coarser one. A finer window would
@@ -483,7 +512,9 @@ export function buildIndividualWeek({
       billingTagPrefix,
       roundingSeconds,
       codeMappings,
-      stripCodeParens
+      stripCodeParens,
+      billByProject,
+      nameById
     )
   );
 

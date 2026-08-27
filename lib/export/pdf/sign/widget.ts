@@ -8,7 +8,7 @@
 // so this conversion is the whole of the coordinate work — kept pure and
 // exported on its own so it can be asserted directly.
 
-import type { SignatureWidget } from '../templates';
+import type { SignatureWidget } from '../types';
 
 /** A PDF annotation rectangle: [x1, y1, x2, y2], bottom-left origin. */
 export type PdfRect = [number, number, number, number];

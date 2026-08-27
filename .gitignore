@@ -66,9 +66,12 @@ web_modules/
 .yarn-integrity
 
 # dotenv environment variable files
+# The templates are committed; what they GENERATE never is. .env holds a real
+# Toggl token and .env.prod holds live production secrets.
 .env
 .env.*
-!.env.example
+!.env.tpl
+!.env.prod.tpl
 
 # parcel-bundler cache (https://parceljs.org/)
 .cache
@@ -159,5 +162,10 @@ signature-*.png
 *.signature.png
 /signatures/
 
-# macOS leaves these in every directory it has been looked at.
+# The optional PDF template pack — a checkout of its OWN repository, put here by
+# scripts/sync-pack.mjs (see README.md). Never part of this repository: a plain
+# clone has no pack and builds with the app's own templates.
+/pdf-templates/
+
+# macOS
 .DS_Store

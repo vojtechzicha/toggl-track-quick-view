@@ -36,6 +36,7 @@ import {
   buildFixture,
   chainFixtureCertificate,
   fakeTimestampResponse,
+  fixtureTemplate,
   CERT_PEM,
   SIGNED_AT_MS,
   SIGNED_PDF,
@@ -92,29 +93,34 @@ const { unsigned, signed, certificateDer, rect } = await buildFixture();
   ok(signed.length > unsigned.length, 'signing only ever adds to the document');
 }
 
-// ---- the stamp follows the identity system ----
+// ---- the stamp's own styling ----
 //
-// STAMP_STYLE keeps its own copy of the palette so the export dialog's preview
-// does not have to import identity.ts (and pdfmake's types with it). A copy is
-// only safe while it stays a copy.
+// STAMP_STYLE is the app's, not a pack's: the stamp is drawn by the signing
+// stage and has to look like something on a deployment with no template pack at
+// all. What a pack MAY do is name the family it wants the block set in
+// (SignatureWidget.fontFamily) — and whether its palette matches its own
+// templates is a claim only that pack can make, so it is checked there.
 {
   const { STAMP_STYLE } = await import('../lib/export/pdf/sign/types.ts');
-  const { VZ, F } = await import('../lib/export/pdf/identity.ts');
   const { appearanceDocDefinition } = await import('../lib/export/pdf/sign/appearance.ts');
   const { DEFAULT_SIGNATURE_APPEARANCE } = await import('../lib/export/pdf/sign/types.ts');
 
-  eq(STAMP_STYLE.color.text, VZ.ink, 'the stamp\'s text colour is the identity Ink');
-  eq(STAMP_STYLE.color.muted, VZ.secondary, 'its muted colour is the identity Secondary');
-  eq(STAMP_STYLE.color.frame, VZ.rule, 'its frame colour is the identity Rule');
-  eq(STAMP_STYLE.color.paper, VZ.paper, 'its background is the identity Paper');
+  const rect = { x: 0, y: 0, width: 216, height: 92 };
+  const appearance = { ...DEFAULT_SIGNATURE_APPEARANCE, signerName: 'A Signer' };
 
-  // And the stamp is SET in the identity's typeface — a signature block in a
-  // different font reads as pasted onto the report rather than part of it.
-  const def = appearanceDocDefinition(
-    { x: 0, y: 0, width: 216, height: 76 },
-    { ...DEFAULT_SIGNATURE_APPEARANCE, signerName: 'A Signer' }
+  // No family named: pdfmake stays on its bundled Roboto. Naming one that the
+  // template does not load would fail deep inside the renderer, so "leave it
+  // alone" has to be the default rather than a guessed family name.
+  const plain = appearanceDocDefinition(rect, appearance);
+  eq(plain.defaultStyle?.font, undefined, 'with no family named the stamp stays on pdfmake\u2019s default');
+
+  const named = appearanceDocDefinition(rect, appearance, 'IBMPlexSans');
+  eq(named.defaultStyle?.font, 'IBMPlexSans', 'a template\u2019s named family reaches the stamp');
+  eq(
+    named.defaultStyle?.fontSize,
+    STAMP_STYLE.font.caption,
+    'and naming one changes nothing else about the styling'
   );
-  eq(def.defaultStyle?.font, F.sans, 'the stamp is set in the identity typeface');
 }
 
 // ---- the stamp fits its box ----
@@ -133,21 +139,36 @@ const { unsigned, signed, certificateDer, rect } = await buildFixture();
   const { DEFAULT_SIGNATURE_APPEARANCE } = await import('../lib/export/pdf/sign/types.ts');
   const { PDF_TEMPLATES } = await import('../lib/export/pdf/templates.ts');
 
-  const LONG_CN = 'Vojtěch Zicha, I.CA Qualified 2 CA/2016, Prague, Czech Republic';
-  for (const tpl of PDF_TEMPLATES.filter((t) => t.signatureWidget)) {
+  // The fixture's own signable template, plus any a configured pack contributes.
+  // The fixture one is what keeps this honest: a plain clone has no pack, and
+  // `PDF_TEMPLATES.filter(signatureWidget)` on its own would be an empty list
+  // that passes every assertion by making none.
+  const signable = [fixtureTemplate(), ...PDF_TEMPLATES.filter((t) => t.signatureWidget)];
+  ok(signable.length > 0, 'there is at least one signable template to check the stamp against');
+
+  const LONG_CN = 'A Signer, Some Qualified CA/2016, Prague, Czech Republic';
+  for (const tpl of signable) {
     for (const layout of ['image-above', 'image-left'] as const) {
       for (const locale of ['en', 'cs'] as const) {
         for (const reason of ['', 'Approval of the monthly timesheet']) {
-          const blob = await renderAppearance(tpl.signatureWidget!.rect, {
-            ...DEFAULT_SIGNATURE_APPEARANCE,
-            image: syntheticSignaturePng(),
-            signerName: 'A Signer With A Fairly Long Name',
-            certificateCN: LONG_CN,
-            signedAtMs: SIGNED_AT_MS,
-            layout,
-            locale,
-            reason,
-          });
+          // `tpl.loadFonts` is passed for the same reason signPdf passes it: a
+          // widget may NAME a family (SignatureWidget.fontFamily) that only the
+          // template's own loader puts in the VFS, and naming one without
+          // loading it fails inside pdfmake rather than here.
+          const blob = await renderAppearance(
+            tpl.signatureWidget!,
+            {
+              ...DEFAULT_SIGNATURE_APPEARANCE,
+              image: syntheticSignaturePng(),
+              signerName: 'A Signer With A Fairly Long Name',
+              certificateCN: LONG_CN,
+              signedAtMs: SIGNED_AT_MS,
+              layout,
+              locale,
+              reason,
+            },
+            tpl.loadFonts
+          );
           const stamp = await PDFDocument.load(new Uint8Array(await blob.arrayBuffer()));
           eq(
             stamp.getPageCount(),
@@ -215,17 +236,27 @@ const { unsigned, signed, certificateDer, rect } = await buildFixture();
   const { PDF_TEMPLATES } = await import('../lib/export/pdf/templates.ts');
   const { widgetRectToPdf, widgetRectFits } = await import('../lib/export/pdf/sign/widget.ts');
 
-  // The report is the document its ISSUER signs; the acceptance protocol's box
-  // belongs to the client countersigning it, so it declares no widget.
-  const signable = PDF_TEMPLATES.filter((t) => t.signatureWidget);
-  eq(
-    signable.map((t) => t.id).sort(),
-    ['report-cs', 'report-en'],
-    'both report languages are signable, and only they are'
-  );
-  for (const tpl of signable) {
+  // The invariant every widget must hold, whoever declared it. WHICH templates
+  // are signable is a pack's decision and is checked in the pack — the app has
+  // no opinion beyond "if you declare one, it has to fit".
+  for (const tpl of [fixtureTemplate(), ...PDF_TEMPLATES.filter((t) => t.signatureWidget)]) {
     const { rect: r, page } = tpl.signatureWidget!;
     ok(widgetRectFits(r, page), `${tpl.id}: the declared rect fits its declared page`);
+    ok(r.width > 0 && r.height > 0, `${tpl.id}: the rect has a real area`);
+  }
+
+  // A widget may name the family its stamp is set in, and that family has to be
+  // one the SAME template loads. Getting this wrong does not degrade gracefully:
+  // pdfmake throws "Font 'X' in style 'normal' is not defined in the font
+  // section" from inside the renderer, at signing time, after the PIN.
+  for (const tpl of PDF_TEMPLATES.filter((t) => t.signatureWidget?.fontFamily)) {
+    const family = tpl.signatureWidget!.fontFamily!;
+    ok(tpl.loadFonts, `${tpl.id}: names the stamp family ${family}, so it must load fonts`);
+    const pack = await tpl.loadFonts!();
+    ok(
+      Object.keys(pack.fonts).includes(family),
+      `${tpl.id}: its own loadFonts() declares ${family}`
+    );
   }
 
   // The conversion itself: pdfmake measures down from the top-left, PDF up from
@@ -765,7 +796,6 @@ const cms = (() => {
 // stand-in bridge supplies a chain the same way FortifyBridge will.
 {
   const sign = await import('../lib/export/pdf/sign/index.ts');
-  const { getTemplate } = await import('../lib/export/pdf/templates.ts');
   const asn1js = await import('asn1js');
   const pkijs = await import('pkijs');
 
@@ -791,7 +821,7 @@ const cms = (() => {
       },
     });
 
-  const template = getTemplate(TEMPLATE_ID);
+  const template = fixtureTemplate();
   // Copied rather than passed straight through: `unsigned` is typed off a
   // generic Uint8Array, and Blob's parameter insists on one backed by a plain
   // ArrayBuffer.

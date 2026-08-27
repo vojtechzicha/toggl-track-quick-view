@@ -6,49 +6,20 @@
 // Importing this module registers the loader hooks, so it has to be imported
 // BEFORE anything under lib/ — see the two scripts.
 
-import { registerHooks } from 'node:module';
 import fs from 'node:fs';
 import zlib from 'node:zlib';
 import { createPublicKey } from 'node:crypto';
+// Type only — the loader hooks installed below are what make the runtime
+// imports work, so nothing under lib/ may be imported for its VALUE up here.
+import type { PdfTemplate } from '../lib/export/pdf/types.ts';
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+const { installResolveHooks } = (await import('./resolve-hooks.mjs')) as any;
 
-const ROOT = new URL('../', import.meta.url);
-
-/**
- * The app is bundled by Next, which resolves extensionless relative imports,
- * the `@/` alias and package `exports` maps. Node resolves none of those the
- * same way, and one of them is load-bearing rather than cosmetic:
- *
- * `pdf-lib` is an ALIAS for @cantoo/pdf-lib (package.json), and its exports map
- * answers `require` with cjs/ and `import` with es/. @signpdf/placeholder-pdf-lib
- * requires it while lib/export/pdf/sign imports it, so the two halves would get
- * two module instances — two PDFName pools, two PDFDict classes — and pdf-lib
- * keys dictionaries by PDFName IDENTITY, so the placeholder's /AcroForm would be
- * invisible to the code that has to find it. Both specifiers are pinned to the
- * ES build here, exactly as next.config.js pins them for the bundle.
- */
-const PDF_LIB = new URL('node_modules/@cantoo/pdf-lib/es/index.js', ROOT).href;
-
-registerHooks({
-  resolve(specifier, context, next) {
-    if (specifier === 'pdf-lib' || specifier === '@cantoo/pdf-lib') {
-      return { url: PDF_LIB, shortCircuit: true };
-    }
-    // pdfmake's browser bundle, as lib/export/pdf/index.ts asks for it.
-    if (specifier.startsWith('pdfmake/build/') && !specifier.endsWith('.js')) {
-      return next(`${specifier}.js`, context);
-    }
-    if (specifier.startsWith('@/')) {
-      return { url: new URL(`${specifier.slice(2)}.ts`, ROOT).href, shortCircuit: true };
-    }
-    if (specifier.startsWith('.') && !/\.[a-z]+$/.test(specifier) && context.parentURL) {
-      for (const suffix of ['.ts', '.tsx', '/index.ts']) {
-        const url = new URL(specifier + suffix, context.parentURL);
-        if (fs.existsSync(url)) return { url: url.href, shortCircuit: true };
-      }
-    }
-    return next(specifier, context);
-  },
-});
+// The module resolution every check in this repository shares: `@/` aliases,
+// extensionless relative imports, the template-pack alias, and the single copy
+// of pdf-lib the signing stage depends on. Installed by importing this module,
+// which is why it has to be imported BEFORE anything under lib/.
+installResolveHooks();
 
 export const FIXTURES = new URL('fixtures/', import.meta.url);
 export const KEY_PEM = new URL('throwaway-signer-key.pem', FIXTURES);
@@ -72,7 +43,41 @@ export const SIGNER = {
 /** Fixed signing instant, so /M and the printed date are the same every run. */
 export const SIGNED_AT_MS = Date.UTC(2026, 7, 19, 10, 30);
 
-export const TEMPLATE_ID = 'report-en';
+/**
+ * The template the fixture signs.
+ *
+ * Defined here rather than taken from the registry, and that is the point: the
+ * app ships the signing machinery but no signable layout of its own — a
+ * signature widget is a GUARANTEE about where a block lands, and only a
+ * template that reserves the room can make it (see lib/export/pdf/types.ts).
+ * The layouts that do are in a private pack, which a clone of this repository
+ * does not have. A check that reached for one would test nothing at all on a
+ * plain clone, and would be testing someone's private design when it did.
+ *
+ * So the fixture brings its own: the smallest document that honours the
+ * contract — a page of flowed content, an invisible reserve node sized to the
+ * signature row, a `pageBreakBefore` rule keyed on it, and the box itself drawn
+ * at a fixed absolutePosition on what is therefore always the last page. Both
+ * halves of the guarantee, in miniature.
+ */
+const FIXTURE_PAGE = { width: 595.28, height: 841.89 };
+const FIXTURE_MARGIN = 48;
+const FIXTURE_BOX = { width: 216, height: 92 };
+/** Top of the reserved row, measured up from the bottom margin. */
+const FIXTURE_BOX_TOP = FIXTURE_PAGE.height - FIXTURE_MARGIN - 12 - FIXTURE_BOX.height;
+const FIXTURE_ANCHOR = 'fixture-signature-anchor';
+
+export const FIXTURE_SIGNATURE_WIDGET = {
+  rect: {
+    x: FIXTURE_MARGIN,
+    y: FIXTURE_BOX_TOP,
+    width: FIXTURE_BOX.width,
+    height: FIXTURE_BOX.height,
+  },
+  page: FIXTURE_PAGE,
+};
+
+export const TEMPLATE_ID = 'fixture-signable';
 
 /** The base64 body between a PEM's BEGIN/END markers, comments and all ignored. */
 const pemBody = (pem: string): Uint8Array => {
@@ -234,26 +239,99 @@ export interface BuiltFixture {
   rect: [number, number, number, number];
 }
 
+/**
+ * The fixture template itself. See FIXTURE_SIGNATURE_WIDGET for why it is here
+ * and not in the registry.
+ */
+export function fixtureTemplate(): PdfTemplate {
+  return {
+    id: TEMPLATE_ID,
+    name: 'Fixture (signable)',
+    description: 'The smallest document that honours the signature widget contract.',
+    signatureWidget: FIXTURE_SIGNATURE_WIDGET,
+    build: (doc) => ({
+      pageSize: 'A4',
+      pageMargins: [FIXTURE_MARGIN, FIXTURE_MARGIN, FIXTURE_MARGIN, FIXTURE_MARGIN],
+      content: [
+        { text: doc.title || 'Fixture timesheet', fontSize: 16, margin: [0, 0, 0, 12] },
+        { text: doc.personName || '—', fontSize: 10, margin: [0, 0, 0, 24] },
+        // Enough flow to be a real document rather than an empty page — and,
+        // on a long enough range, enough to reach the reserved band and prove
+        // the page break rule fires.
+        {
+          table: {
+            widths: ['*', 60],
+            body: [
+              ['Billing code', 'Seconds'],
+              ...(doc.view === 'summary'
+                ? doc.weeks.flatMap((week) => week.rows.map((row) => [row.label, String(row.total)]))
+                : doc.days.flatMap((day) => day.rows.map((row) => [row.code, String(row.hours)]))),
+            ],
+          },
+          layout: 'lightHorizontalLines',
+          fontSize: 8,
+        },
+        // First half of the guarantee: an invisible node exactly as tall as the
+        // signature row, so pdfmake's own fits-on-this-page arithmetic pushes
+        // it — and the row with it — onto a fresh page rather than letting the
+        // flow run into the reserved band. A real op with real extents, because
+        // pdfmake drops zero-extent nodes from the list its page-break rule
+        // walks, and a dropped anchor is a silent no-guarantee.
+        {
+          id: FIXTURE_ANCHOR,
+          canvas: [
+            {
+              type: 'rect',
+              x: 0,
+              y: 0,
+              w: 1,
+              h: FIXTURE_BOX.height + 12,
+              color: '#ffffff',
+              fillOpacity: 0,
+            },
+          ],
+        },
+        // The box, at a fixed position so its Y needs no text metrics.
+        {
+          absolutePosition: { x: FIXTURE_MARGIN, y: FIXTURE_BOX_TOP },
+          canvas: [
+            {
+              type: 'rect',
+              x: 0,
+              y: 0,
+              w: FIXTURE_BOX.width,
+              h: FIXTURE_BOX.height,
+              lineWidth: 0.5,
+              lineColor: '#999999',
+              dash: { length: 2.5, space: 2.5 },
+            },
+          ],
+        },
+      ],
+      // Second half: never let the flow reach into the band the box occupies.
+      pageBreakBefore: (node: { id?: string; startPosition: { top: number } }) =>
+        node.id === FIXTURE_ANCHOR && node.startPosition.top > FIXTURE_BOX_TOP,
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    }) as any,
+  };
+}
+
 /** Render and sign the fixture document with the committed throwaway key. */
 export async function buildFixture(): Promise<BuiltFixture> {
-  const { toPDF } = await import('../lib/export/pdf/index.ts');
-  const { getTemplate } = await import('../lib/export/pdf/templates.ts');
+  const { renderPdfMake } = await import('../lib/export/pdf/index.ts');
   const sign = await import('../lib/export/pdf/sign/index.ts');
 
-  const template = getTemplate(TEMPLATE_ID);
-  if (!template.signatureWidget) {
-    throw new Error(`Template ${TEMPLATE_ID} no longer declares a signature widget.`);
-  }
+  const template = fixtureTemplate();
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const blob = await toPDF(fixtureDoc() as any, TEMPLATE_ID);
+  const blob = await renderPdfMake(template.build(fixtureDoc() as any));
   const unsigned = new Uint8Array(await blob.arrayBuffer());
 
   const bridge = new sign.WebCryptoBridge({ ...SIGNER, keyPair: await loadFixtureKeyPair() });
   const [certificate] = await bridge.listCertificates();
 
   const signedBlob = await sign.signPdf(new Blob([unsigned], { type: 'application/pdf' }), {
-    widget: template.signatureWidget,
+    widget: template.signatureWidget!,
     appearance: {
       ...sign.DEFAULT_SIGNATURE_APPEARANCE,
       image: syntheticSignaturePng(),
@@ -272,7 +350,10 @@ export async function buildFixture(): Promise<BuiltFixture> {
     unsigned,
     signed: new Uint8Array(await signedBlob.arrayBuffer()),
     certificateDer: certificate.der,
-    rect: widgetRectToPdf(template.signatureWidget.rect, template.signatureWidget.page.height),
+    rect: widgetRectToPdf(
+      template.signatureWidget!.rect,
+      template.signatureWidget!.page.height
+    ),
   };
 }
 

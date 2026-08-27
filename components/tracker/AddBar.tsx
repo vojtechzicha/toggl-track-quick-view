@@ -8,7 +8,7 @@
 
 import { useEffect, useState } from 'react';
 import TagCombobox from './TagCombobox';
-import { fromLocalInput, prefixFor, toLocalInput, withBillingTag } from './util';
+import { billsByProject, fromLocalInput, prefixFor, toLocalInput, withBillingTag } from './util';
 import { billingTagOf, fmtClock, type TimeEntry } from '@/lib/calc';
 import type { EntryInput, StoreWorkspace } from '@/lib/source/standalone';
 
@@ -74,8 +74,13 @@ export default function AddBar({
     </select>
   );
 
+  // A workspace that bills by project has no billing tags: the tag box goes
+  // away and nothing tags what is created here.
+  const byProject = billsByProject(workspaces, wsId);
+
   if (running) {
     const runPrefix = prefixFor(workspaces, running.project_id);
+    const runByProject = billsByProject(workspaces, running.project_id);
     const elapsed = Math.max(0, (nowMs - Date.parse(running.start)) / 1000);
     return (
       <div className="addbar running">
@@ -94,15 +99,17 @@ export default function AddBar({
             if (e.key === 'Enter') (e.target as HTMLInputElement).blur();
           }}
         />
-        <TagCombobox
-          value={billingTagOf(running.tags, runPrefix)}
-          prefix={runPrefix}
-          onCommit={(t) =>
-            onEditRunning(running.id, {
-              tags: withBillingTag(running.tags, runPrefix, t),
-            })
-          }
-        />
+        {!runByProject && (
+          <TagCombobox
+            value={billingTagOf(running.tags, runPrefix)}
+            prefix={runPrefix}
+            onCommit={(t) =>
+              onEditRunning(running.id, {
+                tags: withBillingTag(running.tags, runPrefix, t),
+              })
+            }
+          />
+        )}
         <span className="addbar-clock">{fmtClock(elapsed)}</span>
         <button className="btn btn-stop" onClick={() => onStop(running.id)}>
           ■ Stop
@@ -111,8 +118,12 @@ export default function AddBar({
     );
   }
 
+  // A tag picked before switching to a bills-by-project workspace must not ride
+  // along — that workspace's entries carry no billing tag.
+  const tagsToSave = () => (tag && !byProject ? [tag] : []);
+
   const startTimer = () => {
-    onStart({ description: desc.trim(), tags: tag ? [tag] : [], workspaceId: wsId });
+    onStart({ description: desc.trim(), tags: tagsToSave(), workspaceId: wsId });
     setDesc('');
     setTag(null);
   };
@@ -132,7 +143,7 @@ export default function AddBar({
     setBusy(true);
     const ok = await onAdd({
       description: desc.trim(),
-      tags: tag ? [tag] : [],
+      tags: tagsToSave(),
       workspaceId: wsId,
       start: new Date(startMs).toISOString(),
       stop: new Date(stopMs).toISOString(),
@@ -165,7 +176,9 @@ export default function AddBar({
           if (e.key === 'Enter' && !manual) startTimer();
         }}
       />
-      <TagCombobox key={tag ?? ''} value={tag} prefix={prefixFor(workspaces, wsId)} onCommit={setTag} />
+      {!byProject && (
+        <TagCombobox key={tag ?? ''} value={tag} prefix={prefixFor(workspaces, wsId)} onCommit={setTag} />
+      )}
       {wsSelect}
       {manual ? (
         <>

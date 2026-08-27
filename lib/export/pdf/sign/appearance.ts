@@ -18,9 +18,8 @@
 // the user's own scan: never committed, never bundled (see lib/exportFields).
 
 import type { Content, TDocumentDefinitions } from 'pdfmake/interfaces';
-import type { SignatureWidget } from '../templates';
+import type { PdfFontPack, SignatureWidget } from '../types';
 import { renderPdfMake } from '../index';
-import { F } from '../identity';
 import {
   formatSignedAt,
   isEmbeddableSignatureImage,
@@ -46,7 +45,8 @@ const COLOR = STAMP_STYLE.color;
  */
 export function appearanceDocDefinition(
   rect: SignatureWidget['rect'],
-  appearance: SignatureAppearance
+  appearance: SignatureAppearance,
+  fontFamily?: string
 ): TDocumentDefinitions {
   const t = SIGNATURE_STRINGS[appearance.locale];
   const cn = appearance.certificateCN.trim() || t.unknownCert;
@@ -156,16 +156,35 @@ export function appearanceDocDefinition(
       },
       sigMeta: { fontSize: STAMP_STYLE.font.meta, color: COLOR.muted, margin: [0, 0.5, 0, 0] },
     },
-    // IBM Plex Sans, like the report the stamp is dropped into — a signature
-    // block set in a different typeface reads as pasted on.
-    defaultStyle: { font: F.sans, fontSize: STAMP_STYLE.font.caption, color: COLOR.text },
+    // The signed template's own family, because the stamp is dropped INTO its
+    // document and a block set in a different typeface reads as pasted on. The
+    // template names it (SignatureWidget.fontFamily) and loads it; the app has
+    // no typeface of its own to offer. Undefined leaves pdfmake on its bundled
+    // Roboto, which is what a template with no embedded fonts renders in
+    // anyway — so the stamp still matches.
+    defaultStyle: {
+      ...(fontFamily ? { font: fontFamily } : {}),
+      fontSize: STAMP_STYLE.font.caption,
+      color: COLOR.text,
+    },
   };
 }
 
-/** The stamp as a standalone one-page PDF — what ./prepare.ts embeds. */
+/**
+ * The stamp as a standalone one-page PDF — what ./prepare.ts embeds.
+ *
+ * `widget` rather than just its rect, because the widget is also where the
+ * template names the family to set the block in, and `loadFonts` is the same
+ * loader the template renders with — so the stamp and the page under it come
+ * out of one font configuration rather than two that could disagree.
+ */
 export function renderAppearance(
-  rect: SignatureWidget['rect'],
-  appearance: SignatureAppearance
+  widget: SignatureWidget,
+  appearance: SignatureAppearance,
+  loadFonts?: () => Promise<PdfFontPack>
 ): Promise<Blob> {
-  return renderPdfMake(appearanceDocDefinition(rect, appearance), 'identity');
+  return renderPdfMake(
+    appearanceDocDefinition(widget.rect, appearance, widget.fontFamily),
+    loadFonts
+  );
 }

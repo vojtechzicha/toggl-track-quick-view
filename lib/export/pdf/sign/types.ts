@@ -100,11 +100,15 @@ export const STAMP_STYLE = {
   minImageHeight: 16,
   font: { caption: 6, name: 9, meta: 5.5 },
   /**
-   * The identity palette (lib/export/pdf/identity.ts), repeated as literals
-   * rather than imported: this module is pulled into the export dialog for the
-   * preview, and identity.ts drags pdfmake's types and the rule-grammar helpers
-   * along with it. A copy of four hex values is the cheaper coupling — the
-   * check asserts the two agree.
+   * The stamp's own palette — a restrained neutral set, chosen so the block
+   * looks deliberate on a document the app has never seen.
+   *
+   * The app cannot take these from the template: a template pack is optional
+   * (see lib/export/pdf/pack.ts), and a deployment may have none at all, so
+   * there is nobody to ask. What a template CAN do is name the typeface, which
+   * carries most of the resemblance — see SignatureWidget.fontFamily. A pack
+   * whose own palette these should match is free to assert that in its own
+   * checks; the app has no opinion it could hold.
    */
   color: {
     text: '#1A1C1E',

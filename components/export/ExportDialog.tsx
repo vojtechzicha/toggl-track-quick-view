@@ -24,9 +24,8 @@ import {
   FORMAT_LABELS,
   runExport,
 } from '@/lib/export';
-import { PDF_TEMPLATES, DEFAULT_TEMPLATE_ID } from '@/lib/export/pdf';
+import { PDF_TEMPLATES, DEFAULT_TEMPLATE_ID, LOCALE_LABELS } from '@/lib/export/pdf';
 import SignatureBlockPreview from './SignatureBlockPreview';
-import { ENGAGEMENT_PLACEHOLDERS, ENGAGEMENT_LABELS } from '@/lib/export/pdf/report';
 import { HOURS_PER_MD } from '@/lib/export/pdf/money';
 // Types and defaults only — the signing stage itself (pdf-lib, PKI.js,
 // @signpdf) is dynamically imported, and only once the user turns signing on.
@@ -180,6 +179,8 @@ export interface ExportDialogProps {
   codeMappings: CodeMapping[];
   /** When true, billing codes export without their parenthetical groups. */
   stripCodeParens: boolean;
+  /** When true, the workspace bills by project instead of by billing code. */
+  billByProject: boolean;
   /** Document title (project / group name). */
   title: string;
   /** Person the timesheet is for (resolved name, may be empty). */
@@ -216,6 +217,7 @@ export default function ExportDialog({
   timeOffTag,
   codeMappings,
   stripCodeParens,
+  billByProject,
   title,
   personName,
   prefetched,
@@ -317,18 +319,21 @@ export default function ExportDialog({
   const [error, setError] = useState<string | null>(null);
   const [done, setDone] = useState<string | null>(null);
 
+  // The chosen template drives the rest of the dialog: which identity inputs
+  // appear, what they are prompted with, which language the notes are written
+  // in, and whether signing is offered at all. Nothing here knows any template
+  // by name (see lib/export/pdf/types).
+  const template = format === 'pdf' ? PDF_TEMPLATES.find((t) => t.id === templateId) : undefined;
   // Language the selected PDF template prints in — drives which engagement note
   // is shown and stored.
-  const tplLocale =
-    (format === 'pdf' ? PDF_TEMPLATES.find((t) => t.id === templateId)?.locale : undefined) ?? 'en';
+  const tplLocale = template?.locale ?? 'en';
   // Identity inputs (role / company) appear only when the chosen PDF template
   // actually prints them.
-  const templateFields =
-    format === 'pdf' ? PDF_TEMPLATES.find((t) => t.id === templateId)?.fields ?? [] : [];
+  const templateFields = template?.fields ?? [];
   // Only a template that reserves a signature area can carry a widget; for the
-  // rest the signing section is not offered at all.
-  const signatureWidget =
-    format === 'pdf' ? PDF_TEMPLATES.find((t) => t.id === templateId)?.signatureWidget : undefined;
+  // rest the signing section is not offered at all. This is the entire extent
+  // to which the dialog is template-aware about signing.
+  const signatureWidget = template?.signatureWidget;
 
   // The bridge objects themselves, built once per dialog rather than per
   // render: each one holds live state — the extension port and the certificates
@@ -595,6 +600,7 @@ export default function ExportDialog({
         timeOffTag,
         codeMappings,
         stripCodeParens,
+        billByProject,
         title,
         personName: name.trim(),
         // The template's own language, or the other one when it is empty — a
@@ -730,6 +736,7 @@ export default function ExportDialog({
 
   const viewLabel = view === 'summary' ? 'Summary' : 'Individual';
 
+
   return (
     <div className="overlay">
       <div className="panel">
@@ -859,13 +866,13 @@ export default function ExportDialog({
                 </option>
               ))}
             </select>
-            <p className="hint">{PDF_TEMPLATES.find((t) => t.id === templateId)?.description}</p>
+            <p className="hint">{template?.description}</p>
           </div>
         )}
 
         {templateFields.includes('role') && (
           <div className="field">
-            <label htmlFor="exp-role">Role ({ENGAGEMENT_LABELS[tplLocale]})</label>
+            <label htmlFor="exp-role">Role ({LOCALE_LABELS[tplLocale]})</label>
             <input
               id="exp-role"
               type="text"
@@ -976,13 +983,13 @@ export default function ExportDialog({
         {templateFields.includes('engagement') && (
           <div className="field">
             <label htmlFor="exp-engagement">
-              Engagement note ({ENGAGEMENT_LABELS[tplLocale]})
+              Engagement note ({LOCALE_LABELS[tplLocale]})
             </label>
             <textarea
               id="exp-engagement"
               rows={4}
               value={engagements[tplLocale]}
-              placeholder={ENGAGEMENT_PLACEHOLDERS[tplLocale]}
+              placeholder={template?.fieldHints?.engagement}
               onChange={(e) => {
                 const v = e.target.value;
                 setEngagements((prev) => ({ ...prev, [tplLocale]: v }));
@@ -993,12 +1000,12 @@ export default function ExportDialog({
               }}
             />
             <p className="hint">
-              Opens <strong>Basis of preparation</strong> on the last page, printed word for
-              word — so write it in {ENGAGEMENT_LABELS[tplLocale]}, with the contract, order
+              Printed word for word where the template puts its basis-of-preparation
+              wording — so write it in {LOCALE_LABELS[tplLocale]}, with the contract, order
               and end customer named however this engagement identifies them. Each language
               keeps its own text; switching template shows the other one. The standing
-              wording after it (billing codes, rounding, the man-day basis, confidentiality)
-              is added for you.
+              wording around it (billing codes, rounding, the man-day basis,
+              confidentiality) is added for you.
             </p>
           </div>
         )}

@@ -48,14 +48,32 @@ It fills the whole screen with no scrolling.
 ## Running locally
 
 ```bash
-npm install
-npm run dev      # http://localhost:3000
+pnpm install
+pnpm env:pull    # generates .env from .env.tpl via 1Password
+pnpm env:check   # says what is missing or contradictory
+pnpm dev         # starts MongoDB, then http://localhost:3000
 ```
 
-Then open Settings (⚙), paste your API token from
-[track.toggl.com/profile](https://track.toggl.com/profile) (bottom of the page),
-click **Connect**, pick your project, and optionally enable **Short Friday** or
+`pnpm dev` brings the local MongoDB up (`docker compose`, port 27018) before
+starting Next, and leaves it as it found it — Ctrl-C stops the container only
+if `pnpm dev` was what started it. `pnpm db` / `pnpm db:stop` run it on its own
+for a longer session.
+
+**Without 1Password**, skip `env:pull` and `cp .env.tpl .env` instead. Exactly
+one line in it is a placeholder — `TOGGL_API_TOKEN` — and blanking it is a
+valid choice: the app then asks for a token in Settings. Everything else in the
+template is already a working literal.
+
+Out of the box this is the plain Toggl dashboard — no password, no database.
+Open Settings (⚙), pick your project, and optionally enable **Short Friday** or
 adjust **Hours worked per week** (40h by default) for a part-time commitment.
+
+To work on **settings sync** or **standalone mode**, uncomment the block at the
+bottom of `.env.tpl` and set `APP_PASSWORD`; both together, since those routes
+write and refuse to without a gate.
+
+Full walkthrough of every variable, the 1Password layout and the Vercel
+environments: **[docs/ENVIRONMENT.md](docs/ENVIRONMENT.md)**.
 
 ## Deploying to Vercel
 
@@ -65,6 +83,26 @@ adjust **Hours worked per week** (40h by default) for a part-time commitment.
    entering the token in the UI. Otherwise the token stays in your browser.
 3. (Optional) Set `APP_PASSWORD` to put the whole dashboard behind a password —
    see below.
+
+Preview deployments are reachable at a stable **beta.track.zicha.dev**, which
+`.github/workflows/preview-alias.yml` re-points at the newest successful preview
+on every deployment. That matters because the password-gate session and the
+installed PWA are both tied to the origin — a per-deployment URL would ask for
+the preview password every time. It needs a `VERCEL_TOKEN` repository secret.
+
+If you are deploying your **own** instance, note that `DEPLOYMENT_TOPOLOGY` in
+`scripts/env-spec.mjs` lists what *this* repository's deployments must have —
+Toggl source, MongoDB sync, password gate. None of it is required by the app.
+Empty that object and every variable goes back to optional, including the
+zero-configuration bring-your-own-token deploy described above; the format
+checks and contradiction rules still apply, since those follow from the code.
+
+The build runs `pnpm env:check` before `next build` (the `vercel-build` script),
+so a variable the code needs but the Vercel project lacks fails the deployment
+rather than shipping a half-configured app. It also flags the combinations that
+quietly change what the deployment *is* — most importantly `MONGODB_URI`
+without `APP_MODE=toggl`, which switches a Toggl dashboard to standalone mode.
+See [docs/ENVIRONMENT.md](docs/ENVIRONMENT.md).
 
 ## Standalone mode (no Toggl)
 
@@ -381,6 +419,10 @@ The prefix is configurable under **Settings → Advanced → Billing tag prefix*
 (change it to `A`, say, to match `A123` tags). Its default lives in
 [`lib/calc.ts`](lib/calc.ts) as `DEFAULT_BILLING_TAG_PREFIX`.
 
+Everything in this section assumes the engagement bills by code. One that bills
+per project instead turns the whole layer off — see **Projects-only billing**
+below.
+
 ### Strip parentheses from billing codes
 
 A tag often carries a human-readable name in parentheses — `D123 (Phase 2)` —
@@ -395,6 +437,44 @@ lands as `D123`. Since the stripped code is what's *used* (not just shown),
 codes that differ only in the parenthetical — `D123 (a)` and `D123 (b)` —
 merge into one `D123` line, exactly like the marker twins do. It's a workspace
 setting, so each stored workspace remembers its own choice.
+
+### Projects-only billing (no billing codes)
+
+Not every engagement bills by code. Some are billed **per project** — the
+client's timesheet has one line per project and there is nothing finer to
+report. Turn on **Settings → Advanced → Bill by project** and this workspace
+stops using billing codes altogether: **every entry bills to its project**,
+whose name is the line.
+
+What follows from that:
+
+- **Nothing can be untagged.** The "No billing tag" and "Multiple billing tags"
+  warnings can't occur — an entry always has a project — so they never appear on
+  the timesheet, and the dashboard timeline drops its ⚠ missing-tag marker.
+- **Rows are projects.** The Summary view heads its first column **Project** and
+  gives each tracked project one row; the Individual view codes each line by its
+  project. Tracking several projects, the project-name prefix disappears — the
+  line already *is* the project, so prefixing would just repeat it. Exports
+  (CSV/XLSX/PDF) head that column **Project** to match.
+- **Adjacent same-project entries combine** in the Individual view, exactly as
+  same-code ones do (within an hour, capped at the billable limit).
+- **Every code-shaped input is inert**: a tag that looks like a billing tag, a
+  `[T-1234]` support-ticket bracket (the bracket stays in the description — it
+  isn't a code here), the `(X)` / `(!)` overtime markers, a parenthetical, and
+  linked billing codes. The settings that configure them — billing tag prefix,
+  strip parentheses, linked billing codes — are hidden while this is on. They
+  keep their stored values, so turning it back off restores the setup intact.
+- **Everything that isn't about codes still works**: rounding and the start
+  window, the description length limit, the billable-length cap, overlap
+  warnings, "Don't bill overtime" (with nothing marked `(X)`/`(!)`, the trim
+  simply spreads over the projects), and the **time off tag** — that's a plain
+  tag, not a billing code, so state holidays behave exactly as described above.
+- In **standalone mode** the tracker drops the billing-tag chip and its
+  autocomplete for such a workspace: there is no tag to set, and entries created
+  there carry none.
+
+It's a **workspace setting**, so one client can bill by project while another
+bills by code, each in its own stored workspace.
 
 ### Support tickets
 
@@ -462,16 +542,16 @@ client's company or rate can never end up on the other's PDF.
 Two of them deserve a word of their own:
 
 - **Role, per template language.** Like the engagement note, the role prints in
-  the document's language ("Integration architect" on the EN report,
-  "Integrační architekt" on the CZ one), so each language keeps its own text —
+  the document's language ("Integration architect" on an English template,
+  "Integrační architekt" on a Czech one), so each language keeps its own text —
   the box in the dialog shows the selected template's. A language left empty
   prints the other language's text, so a role that reads the same in both only
   has to be typed once.
 - **Workspace start date.** The first billable day of the engagement. The
   dialog's week and month presets are clipped to it, so an engagement that
   started Aug 16 exports Aug 16–31 as its first month — the period on the
-  document (and the acceptance protocol's day list and *Start date* line) says
-  so too, instead of claiming the whole of August. Hand-edited custom dates are
+  document — and any per-day list a template prints — says so too, instead of
+  claiming the whole of August. Hand-edited custom dates are
   never clipped, and once the engagement is past its first month the clip
   simply stops mattering.
 
@@ -604,36 +684,259 @@ to match the on-screen and CSV/XLSX text.
 
 ### PDF templates
 
-The export dialog's **PDF template** picker chooses the layout of the PDF:
+The export dialog's **PDF template** picker chooses the layout of the PDF. This
+repository ships one:
 
-- **Standard** — the default: your name, the period, and the per-week
-  (Summary) or per-day (Individual) tables exactly as shown on screen.
-- **Timesheet Acceptance Protocol (Full)** — a formal per-day acceptance sheet
-  meant to be countersigned by the client. A header block carries **Name, Role,
-  Company, Start/End date** and the period's total **man-days** (8h = 1 MD);
-  the table below has **one row for every calendar day** of the exported range
-  — including empty ones — with year / month / ISO week / date, the company,
-  the day's billing codes and descriptions, hours and man-days. A dashed
-  **signature area** at the bottom leaves room for a digital-signature stamp.
+- **Timesheet** — your name, the period, and the per-week (Summary) or per-day
+  (Individual) tables exactly as shown on screen. Deliberately plain: no logo,
+  no accent colour, no embedded typeface.
 
-  This template asks for two extra fields in the dialog, **Role** and
-  **Company**. Like the name, they're free text and are remembered for the next
-  export — with the **workspace** being billed (see "Export details are per
-  workspace" above), and across devices when settings sync is on — no
-  company-specific values ship with the app. It works from either view; the
-  Individual view carries the richest per-day text.
-- **Timesheet Acceptance Protocol (Compact)** — the same sheet, but each day's
-  **Project / Task** cell is one line: **every billing code** of the day
-  (ordered by descending hours, ticket-shaped codes like `ITSD-…` included,
-  with *a další* when a description mentions more tickets), then **one overall
-  description** — no per-entry or per-group times, the day's total is already
-  in the Hours/MD columns. The description is the day's dominant project
-  activity (or the top two joined with `+` when nothing reaches ~65%): it
-  merges near-duplicates (a description that is another one plus a tail folds
-  into the shorter), strips `Meeting | ` prefixes, and ignores meeting names
-  and ticket boilerplate. A day of only meetings and/or tickets still says so
-  (**schůzky**, **řešení tiketů**). The aggregation is presentational only —
-  the day's **Hours and MD figures are identical** to the Full variant.
+The picker only appears when there is more than one template to choose from, so
+a stock deployment simply exports that layout. Everything below is about adding
+your own.
+
+### Adding a PDF template
+
+A template is one object. It says what it is called, which extra details the
+export dialog should ask the user for, and how to turn an export document into
+a [pdfmake](https://pdfmake.github.io/docs/) document definition. Nothing else
+in the export pipeline is template-aware — the contract lives in
+`lib/export/pdf/types.ts`, and `lib/export/pdf/timesheet.ts` is a complete
+worked example to copy.
+
+```ts
+import type { PdfTemplate } from '@/lib/export/pdf/types';
+
+export const invoiceAnnex: PdfTemplate = {
+  id: 'invoice-annex',             // stable: it is what a device remembers
+  name: 'Invoice annex',           // shown in the picker
+  description: 'One line per day, totalled by billing code.',
+  fields: ['client', 'reference'], // which dialog inputs to show (see below)
+  locale: 'en',                    // language the document prints in
+  build: (doc) => ({ content: [ /* pdfmake */ ] }),
+};
+```
+
+Register it by adding it to `APP_TEMPLATES` in `lib/export/pdf/templates.ts`,
+or ship it in a pack (below).
+
+| Key | |
+| --- | --- |
+| `id` | Stable identifier. A device remembers its last pick by id, so renaming a template is free and changing its id is not. Lowercase, digits and dashes. |
+| `name` | What the picker shows. |
+| `description` | One or two sentences shown under the picker once the template is selected. |
+| `fields` | Identity details the dialog should collect for this template. Anything not listed is never asked for. |
+| `fieldHints` | Placeholder text per field, for one whose wording the user has to phrase themselves. |
+| `locale` | `'en'` or `'cs'` — the language the document prints in. It decides which of the per-language inputs (role, engagement note) the dialog shows and stores. |
+| `loadFonts` | Optional async loader for embedded fonts (below). Omit it and the document sets in pdfmake's bundled Roboto. |
+| `signatureWidget` | Optional. Declaring it makes the template **signable** — see "Making a template signable" below. Omit it and the export dialog offers no signing for this template at all. |
+| `build` | `(doc: ExportDoc) => TDocumentDefinitions`. Pure: same document in, same definition out. |
+
+`pnpm check:templates` asserts what has to hold for any template — unique ids,
+fields the dialog can actually offer, and that `build()` survives all four
+shapes a real export can take (Summary, Individual, an empty range, and a
+document with no rate).
+
+#### Making a template signable
+
+The app can sign a PDF export with a qualified certificate on a hardware token
+(`lib/export/pdf/sign`, and `docs/pdf-signing-v2.md` for the whole picture). All
+of that is the app's: the card, the CMS, the timestamp, the visible stamp. The
+only thing a template contributes is a promise about **where the stamp goes**:
+
+```ts
+signatureWidget: {
+  rect: { x: 62, y: 620, width: 216, height: 92 },  // pdfmake coords, from the TOP-left
+  page: { width: 595.28, height: 841.89 },          // what the rect is measured against
+  fontFamily: 'IBMPlexSans',                        // optional; must be one loadFonts() declares
+}
+```
+
+It is a **guarantee, not a report**. The signing stage is handed a finished PDF
+that says nothing about where a flowing block landed — its page and Y move with
+the number of table rows — so a template that declares a widget has to make the
+rectangle true rather than describe where it happened to end up. The rect must
+be free, on the **last page**, at exactly those coordinates.
+
+Two mechanisms together do it, and a template needs both:
+
+1. **Reserve the band.** Flow an invisible node exactly as tall as the signature
+   row at the end of the content, so pdfmake's own "does this still fit above
+   the bottom margin" arithmetic pushes it — and the row with it — onto a fresh
+   page as soon as the flow reaches the reserved band. It must be a real
+   drawing op with real extents: pdfmake drops zero-extent nodes from the list
+   its page-break rule walks, and a dropped anchor is a silent no-guarantee.
+2. **Say it directly too.** A `pageBreakBefore` rule keyed on that node's `id`,
+   so the contract does not rest on a measured height alone.
+
+Then draw the box itself at a fixed `absolutePosition`, so its Y needs no text
+metrics. Anything that would flow *after* the row has nowhere to go — put
+footnotes above it.
+
+`fontFamily` names the family the visible stamp is set in. The stamp is dropped
+into the template's own document, so a block set in a different typeface reads
+as pasted on; naming a family the template's `loadFonts()` does **not** declare
+fails inside pdfmake at signing time, after the PIN has been entered, so
+`pnpm check:signature` asserts the two agree.
+
+Leaving `signatureWidget` off is the right default. A stamp painted over a
+layout that reserved no room for it lands on top of the content.
+
+> The app ships no signable template of its own — the generic Timesheet does not
+> reserve a signature area. `pnpm check:signature` exercises the machinery
+> against a minimal signable template defined in `scripts/signatureFixture.ts`,
+> and against any a configured pack contributes.
+
+#### What the template gets
+
+`build()` receives an `ExportDoc` (`lib/export/model.ts`) — the timesheet
+already rounded, merged, capped, overtime-trimmed and billing-code-mapped
+exactly as the screen shows it. A template formats; it never recomputes.
+
+Every document carries the same header block:
+
+| Field | |
+| --- | --- |
+| `view` | `'summary'` or `'individual'` — which of the two shapes below this is. |
+| `title` | Project or group name. |
+| `personName` | Who the timesheet is for. |
+| `fromMs`, `toMs` | Half-open range in local-midnight epoch ms: `toMs` is **exclusive**, so the last day is `toMs - 1`. |
+| `multi` | True when several projects are exported together (billing codes then carry a project prefix). |
+| `billByProject` | True when the workspace bills by project rather than by billing code: every row's `billingCode` is its project's name (and equals `project`), and no code carries a prefix. A template that heads its billing column can say "Project" instead; one that ignores the flag still prints correct figures. |
+| `grandTotal` | Rounded seconds across the whole period. |
+| `role`, `company`, `client`, `approver`, `reference`, `engagement` | The identity fields, as typed by the user. Empty string = not given. |
+| `rate`, `rateBasis`, `currency` | `rate` is `null` for a time-only document; `rateBasis` is `'hourly'` or `'md'`. A template that prints money **must** handle the `null` case. |
+
+A **Summary** document (`view: 'summary'`) carries `weeks[]`, one block per week
+in the range:
+
+| | |
+| --- | --- |
+| `weekStart`, `label` | Start of the week, and its display label. |
+| `dayLabels[]`, `dayDates[]` | Header text and local-midnight ms for each visible day column. |
+| `rows[]` | One per billing code: `label` (prefixed with the project when `multi`), `billingCode`, `project`, `cells[]` (rounded seconds per day column), `dayDescs[]` (per-day description, aligned with `cells`), `desc` (the week's combined description), `total`, and `warn`. |
+| `dayTotals[]`, `grandTotal` | Column totals and the week total. |
+
+An **Individual** document (`view: 'individual'`) carries `days[]`, one block
+per day with time on it:
+
+| | |
+| --- | --- |
+| `dateMs`, `label`, `total` | The day, its label, and its rounded total. |
+| `rows[]` | One per entry group: `time` (a rendered range, or `null`), `startMs`/`endMs` (raw, for a template that formats in its own locale), `hours` (rounded **seconds**, despite the name), `code`, `billingCode`, `project`, `desc`, and `warn`. |
+
+Two things are worth knowing. Durations are **seconds** throughout —
+`secsToHoursLabel()` from `lib/export/model.ts` renders them the way the screen
+does. And `warn` marks a row the on-screen view flags (untagged or multi-tagged
+entries); a template that ignores it prints a line the user has been told is
+wrong.
+
+For money there is `lib/export/pdf/money.ts`: currency-aware formatting plus
+allocation helpers that guarantee every printed subtotal sums to the printed
+total at the precision it is printed in. Rounding each row on its own drifts —
+use `allocate()` rather than `toFixed()`.
+
+#### Identity fields
+
+`fields` lists what the export dialog collects for this template. Their values
+are always user-entered and are remembered with the **workspace** being billed
+(see "Export details are per workspace"), so no company name, client or rate
+ever ships with the app.
+
+| Field | What the dialog asks for | On the document |
+| --- | --- | --- |
+| `role` | The person's role, in the template's language | `doc.role` |
+| `company` | The supplier company | `doc.company` |
+| `client` | The client the sheet is billed to | `doc.client` |
+| `approver` | Who countersigns | `doc.approver` |
+| `reference` | Document reference, defaulted to `TS-YYYY-MM` | `doc.reference` |
+| `engagement` | A free-text note in the template's language, for a basis-of-preparation block | `doc.engagement` |
+| `rate` | A rate, its currency, and whether it is quoted per hour or per man-day | `doc.rate`, `doc.currency`, `doc.rateBasis` |
+
+`role` and `engagement` are stored **per language**, so a template with
+`locale: 'cs'` and one with `locale: 'en'` never overwrite each other's text.
+
+#### Fonts
+
+Without `loadFonts`, a template sets in pdfmake's bundled Roboto: nothing to
+ship, but Roboto's character map stops at Latin Extended — fine for Czech, not
+for Cyrillic or Greek. To embed your own cuts, return the pdfmake declarations
+and the font data together:
+
+```ts
+loadFonts: async () => {
+  const { vfs, fonts } = await import('./myFonts');
+  return { vfs, fonts };
+},
+```
+
+They travel together because pdfmake resolves a style to a *filename* and then
+looks that filename up in the virtual file system; a pair that disagrees fails
+deep inside the library, at render time, and only for documents that reach the
+missing glyph. `pnpm check:fonts` asserts they agree for every registered
+template, that the base64 decodes to a real font file, and that each embedded
+cut carries a full character map — pdfmake has no per-glyph fallback, so a
+subset renders user text as tofu rather than falling back to another face.
+
+The loader runs only when that template actually exports, so an embedded
+typeface never reaches a browser using a different one.
+
+### Private template packs
+
+Templates can also live in **their own repository**, outside this one. That is
+how a deployment keeps client-specific layouts — letterheads, acceptance
+protocols, anything carrying a real engagement's wording — out of a public
+repo while still building them into its own deployment.
+
+A pack is plain source, not a package. Its `index.ts` default-exports:
+
+```ts
+import type { TemplatePack } from '@/lib/export/pdf/types';
+
+export default {
+  name: 'my-templates',
+  templates: [ /* PdfTemplate[] */ ],
+  defaultTemplateId: 'my-headed-sheet',   // optional
+} satisfies TemplatePack;
+```
+
+Point `PDF_TEMPLATE_PACK_REPO` at that repository (plus
+`PDF_TEMPLATE_PACK_TOKEN` when it is private, and `PDF_TEMPLATE_PACK_REF` to
+pin a ref). Before `next dev` and `next build`, `scripts/sync-pack.mjs` checks
+it out into `pdf-templates/` — gitignored, never part of this repository — and
+the app resolves it through the `@pdf-template-pack` alias, falling back to
+`lib/export/pdf/emptyPack.ts` when there is nothing there. A pack's templates
+come first in the picker, and a pack may name the default. `pnpm pack:sync`
+does the checkout on its own; `pnpm check:pack` runs whatever checks the pack
+ships in `checks/`.
+
+Treat `pdf-templates/` as disposable: the sync step force-checks it out at the
+configured ref every time, so a pack is edited in a clone of its own repository
+and pushed, not in the app's copy.
+
+What is compiled in is decided by the **directory**, not by the variable — the
+variable only says what to fetch into it. So clearing `PDF_TEMPLATE_PACK_REPO`
+on a machine that has already synced stops the updates and keeps the pack;
+`rm -rf pdf-templates` is how you build without one. The sync step never
+deletes a checkout itself, because it cannot tell one it made from one you
+cloned by hand. A deployment starts from a fresh clone, so there the variable
+is the whole story.
+
+Two consequences worth stating plainly:
+
+- **A clone of this repository with no pack configured is a complete, working
+  app.** That is the default path, not a degraded one — you get the Timesheet
+  template and nothing is missing.
+- **A pack that is configured but cannot be fetched fails the build.** Building
+  without it would produce a green deployment whose export dialog had silently
+  lost every layout its documents are filed under. The exception is a laptop
+  that is merely offline: a checkout already on disk is kept.
+
+Deliberately **not** a git submodule: a submodule records the pack's URL in
+this repository's `.gitmodules`, and every clone and fork would then try — and,
+for a private pack, fail — to fetch a repository it has no business knowing
+about. Naming the pack in the environment keeps it a property of the
+deployment, which is what it is.
 
 ### Digital signature
 

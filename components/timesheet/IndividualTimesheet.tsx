@@ -32,6 +32,7 @@ export default function IndividualTimesheet({
   timeOffTag,
   codeMappings,
   stripCodeParens,
+  billByProject,
 }: TimesheetViewProps) {
   const week = useMemo(
     () =>
@@ -50,6 +51,7 @@ export default function IndividualTimesheet({
         timeOffTag,
         codeMappings,
         stripCodeParens,
+        billByProject,
       }),
     [
       entries,
@@ -66,6 +68,7 @@ export default function IndividualTimesheet({
       timeOffTag,
       codeMappings,
       stripCodeParens,
+      billByProject,
     ]
   );
 
@@ -105,7 +108,7 @@ export default function IndividualTimesheet({
                 <tr>
                   <th className="ind-th-time">Time</th>
                   <th className="ind-th-hours">Hours</th>
-                  <th className="ind-th-code">Billing</th>
+                  <th className="ind-th-code">{billByProject ? 'Project' : 'Billing'}</th>
                   <th className="ind-th-desc">Description</th>
                   <th className="ind-th-copy" aria-label="Copy" />
                 </tr>
@@ -135,7 +138,9 @@ export default function IndividualTimesheet({
                       </td>
                       <td className="ind-hours">{fmtHours(row.rounded)}</td>
                       <td className="ind-code">
-                        {multi && row.projId != null && (
+                        {/* Billing by project the code IS the project name, so
+                            the disambiguating prefix would just repeat it. */}
+                        {multi && !billByProject && row.projId != null && (
                           <span className="ts-proj">{nameById.get(row.projId) ?? ''}: </span>
                         )}
                         {row.code}
