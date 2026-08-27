@@ -642,11 +642,39 @@ a TSTInfo. Each of those is a check in `check:signature`, against a locally buil
 URL from the request body would be an SSRF hole with a timestamp-shaped excuse. Nothing
 about the document leaves; the request is a hash of the signature and nothing else.
 
-**Qualified vs not.** A QES with a *non-qualified* timestamp is still a QES, and a
-free TSA in the common trust stores (DigiCert, freetsa.org) is enough for the practical
-goal — surviving the certificate's expiry. A *qualified* timestamp (eIDAS art. 42) is a
-paid product from I.CA or PostSignum at a few CZK a stamp, and is only needed when the
-timestamp itself must be qualified. Switching is one environment variable.
+**Qualified vs not — and what the DSS validator actually said (2026-08-27).** The first
+timestamped file used DigiCert's free TSA. DSS's verdict on the timestamp:
+
+```
+Qualification:  N/A — Unable to build a certificate chain up to a trusted list!
+Indication:     INDETERMINATE / NO_CERTIFICATE_CHAIN_FOUND
+                The certificate chain for time-stamp is not trusted, it does not
+                contain a trust anchor.
+                The algorithm RSA with SHA1 with key size 2048 is no longer
+                considered reliable for timestamp's CA certificate!
+```
+
+Nothing is wrong with the token — the chain reaches DigiCert Trusted Root G4 and the
+production time is right. The problem is *which list*: DSS validates against the **EU
+Trust List**, and DigiCert is a US commercial CA that is not on it. `Adobe` would very
+likely accept the same token, because DigiCert's root IS in the AATL and in the OS
+stores. So "trusted" has no single answer here; it depends entirely on who is checking.
+The SHA-1 line is about a cross-signed path to `DigiCert Assured ID Root CA` and is not
+something this code chose.
+
+The practical consequence: **a free TSA does not give a DSS-clean, eIDAS-qualified
+result.** For that the TSA must itself be a qualified trust service provider on the EUTL,
+which in the Czech context means buying stamps from I.CA or PostSignum (a few CZK each).
+A QES with a non-qualified timestamp is still a QES and is still better than none — the
+timestamp survives the certificate's expiry for any validator that trusts the TSA — but
+if the DSS report is the thing that has to come back clean, the free option will not do
+it. Switching is one environment variable and no code.
+
+**Worth checking before shipping a non-qualified timestamp:** whether an untrusted
+timestamp *lowers* the signature-level verdict in DSS compared with plain B-B. An
+INDETERMINATE timestamp attached to a signature that passed on its own may be worse than
+no timestamp at all, in which case the honest choice is B-B until a qualified TSA is
+bought.
 
 ## Legal notes
 
