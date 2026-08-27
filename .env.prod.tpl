@@ -91,3 +91,23 @@ PDF_TEMPLATE_PACK_REF=
 # checkout with a 403 is the first sign.
 
 PDF_TEMPLATE_PACK_TOKEN=op://Development/toggl-track-quick-view-prod/PDF_TEMPLATE_PACK_TOKEN
+
+# -- Signing ------------------------------------------------------------------
+# RFC 3161 timestamp authority, proxied by /api/timestamp. With one set, a
+# signed PDF export is PAdES-B-T instead of B-B, so a signature keeps verifying
+# after the signing certificate expires rather than dying with it on the
+# renewal date.
+#
+# BLANK until qualified stamps are bought. A free authority (DigiCert,
+# freetsa.org) would work for Adobe but not for the EU DSS validator, which only
+# trusts the EUTL — so an export would carry a timestamp that the one validator
+# that matters here reports as INDETERMINATE. I.CA and PostSignum sell qualified
+# stamps at a few CZK each; the endpoint comes with the account. Setting this
+# variable is the whole change. See docs/pdf-signing-v2.md.
+
+TSA_URL=
+
+# HTTP Basic credentials (user:password), if the authority wants them. Mark it
+# Sensitive in Vercel.
+
+TSA_CREDENTIALS=

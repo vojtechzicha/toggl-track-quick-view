@@ -50,6 +50,14 @@ const mustBeGitRemote = (value) => {
 
 const isSshRemote = (value) => !value.startsWith('https://');
 
+// An RFC 3161 timestamp authority. http is normal and not a mistake: the
+// protocol signs its own answers, so the transport adds nothing a validator
+// relies on, and several public TSAs are http-only.
+const mustBeTsaUrl = (value) => {
+  if (/\s/.test(value)) return 'must not contain whitespace';
+  return /^https?:\/\/\S+/.test(value) ? null : 'must be an http(s) URL to an RFC 3161 endpoint';
+};
+
 /** Mirrors cacheIntervalSec() in lib/serverCache.ts. */
 const BOOLISH = /^(1|true|on|yes)$/i;
 
@@ -181,6 +189,23 @@ export const ENV_SPEC = [
       'Token that can read PDF_TEMPLATE_PACK_REPO over https — a GitHub fine-grained PAT with Contents: Read on that one repository is enough. Only needed for a PRIVATE pack, and only where the checkout has no other credentials (i.e. every deployment).',
     check: (value) =>
       /\s/.test(value) ? 'must not contain whitespace (a stray newline from a copy-paste is the usual cause)' : null,
+  },
+
+  // -- Signing ----------------------------------------------------------------
+  {
+    name: 'TSA_URL',
+    scope: 'server',
+    description:
+      'RFC 3161 timestamp authority, proxied by /api/timestamp. Set it and a signed PDF export becomes PAdES-B-T instead of B-B, which is what keeps the signature verifying after the signing certificate expires. Blank disables timestamping entirely — no third party is contacted and signing still works, one level lower. Only a TSA on the EU Trust List gives a clean DSS report; see docs/pdf-signing-v2.md.',
+    check: mustBeTsaUrl,
+  },
+  {
+    name: 'TSA_CREDENTIALS',
+    scope: 'server',
+    description:
+      'HTTP Basic credentials for a commercial timestamp authority, as user:password. Free authorities need none. Ignored without TSA_URL.',
+    check: (value) =>
+      value.includes(':') ? null : 'must be user:password',
   },
 ];
 

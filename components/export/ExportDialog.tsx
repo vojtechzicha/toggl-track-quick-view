@@ -1,11 +1,13 @@
 'use client';
 
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import type { SelectedProject } from '@/components/SettingsPanel';
 import type { TimesheetMode } from '@/components/SettingsPanel';
 import type { TimeEntry } from '@/lib/calc';
 import type { FetchedEntries } from '@/lib/source/types';
 import { isAuthRequired, isRateLimit } from '@/lib/source/errors';
+import { getConfig } from '@/lib/source/config';
+import { loadAuth } from '@/lib/source/auth';
 import {
   type ExportPreset,
   PRESET_LABELS,
@@ -18,18 +20,40 @@ import { buildExportDoc } from '@/lib/export/model';
 import type { CodeMapping } from '@/lib/timesheet/mapping';
 import {
   type ExportFormat,
+  type SignRequest,
   FORMAT_LABELS,
   runExport,
 } from '@/lib/export';
 import { PDF_TEMPLATES, DEFAULT_TEMPLATE_ID, LOCALE_LABELS } from '@/lib/export/pdf';
+import SignatureBlockPreview from './SignatureBlockPreview';
 import { HOURS_PER_MD } from '@/lib/export/pdf/money';
+// Types and defaults only — the signing stage itself (pdf-lib, PKI.js,
+// @signpdf) is dynamically imported, and only once the user turns signing on.
+import {
+  DEFAULT_SIGNATURE_APPEARANCE,
+  isEmbeddableSignatureImage,
+  SIGNATURE_IMAGE_ACCEPT,
+  type SignatureAppearance,
+  type SignatureLayout,
+} from '@/lib/export/pdf/sign/types';
+// The bridge contract, types only — ./tokenBridge carries no implementation and
+// so drags neither the signing stack nor PKI.js into this bundle.
+import type {
+  BridgeReadiness,
+  TokenBridge,
+  TokenCertificate,
+} from '@/lib/export/pdf/sign/tokenBridge';
 
 // Identity fields some PDF templates print (role / company / client / approver /
 // rate). Their values are user-entered and handed in by the page: they are
 // remembered with the workspace being billed (see lib/exportFields), and carried
 // to other devices by settings sync when the deployment has one. The app itself
 // ships no company names or rates.
-import { engagementKey, type ExportFieldValues } from '@/lib/exportFields';
+import {
+  engagementKey,
+  MAX_SIGNATURE_IMAGE_CHARS,
+  type ExportFieldValues,
+} from '@/lib/exportFields';
 
 /**
  * Default document reference for a range — the year and month it starts in.
@@ -45,6 +69,78 @@ const defaultReference = (fromMs: number): string => {
 const parseRate = (s: string): number | null => {
   const n = parseFloat(s.replace(/\s/g, '').replace(',', '.'));
   return Number.isFinite(n) && n > 0 ? n : null;
+};
+
+/**
+ * Recorded as the signature dictionary's /Reason, which is what a viewer's
+ * signature panel shows. Fixed rather than a field: this document has exactly
+ * one reason to be signed, and an empty or improvised one reads worse than none.
+ */
+/**
+ * One sentence for whatever is stopping the hardware bridge.
+ *
+ * Each state has a different fix, which is the whole reason the bridge reports
+ * a state rather than a boolean: "install the extension", "install the helper"
+ * and "put the card in" are not interchangeable, and a single "unavailable"
+ * sends people to the wrong one.
+ */
+function describeReadiness(readiness: BridgeReadiness | null): React.ReactNode {
+  if (!readiness || readiness.state === 'ready') return null;
+  switch (readiness.state) {
+    case 'unsupported':
+      return readiness.reason;
+    case 'extension-missing':
+      return (
+        <>
+          The <a href={readiness.installUrl} target="_blank" rel="noreferrer">Sign Bridge
+          extension</a> is not installed in this browser.
+        </>
+      );
+    case 'helper-missing':
+      return (
+        <>
+          The extension is here but its <a href={readiness.installUrl} target="_blank" rel="noreferrer">
+          helper app</a> is not — both halves are needed.
+        </>
+      );
+    case 'helper-outdated':
+      return (
+        <>
+          The helper is version {readiness.have} and this build needs {readiness.need} —{' '}
+          <a href={readiness.installUrl} target="_blank" rel="noreferrer">update it</a>.
+        </>
+      );
+    case 'not-paired':
+      return 'Sign Bridge will ask you to approve this site the first time you connect.';
+    case 'no-token':
+      return readiness.reason;
+  }
+}
+
+/**
+ * One line naming a certificate in the picker.
+ *
+ * The CN alone is not enough to choose by: a TWINS card carries two
+ * certificates issued to the same person, differing only in what they are for,
+ * and a machine with a token plugged in also has whatever sits in its software
+ * key store. So the line says who, where, and whether it is the qualified one.
+ */
+function describeCertificate(c: TokenCertificate): string {
+  const kind = c.qualified ? 'qualified' : c.forSignature ? 'signing' : 'authentication';
+  const expires = new Date(c.notAfterMs).toLocaleDateString(undefined, {
+    year: 'numeric',
+    month: 'short',
+    day: 'numeric',
+  });
+  // Kind before provider, and right after the name: a native <select> truncates,
+  // and on a card holding two certificates for the same person the CN is
+  // identical — what tells them apart has to appear at the first difference.
+  return `${c.subjectCN} (${kind}) — ${c.providerName}, to ${expires}`;
+}
+
+const SIGN_REASON: Record<'en' | 'cs', string> = {
+  en: 'Approval of the timesheet',
+  cs: 'Schválení výkazu práce',
 };
 
 // The presets offered in the dropdown, in order. "custom" is added automatically
@@ -180,9 +276,253 @@ export default function ExportDialog({
     fields.rateBasis === 'md' ? 'md' : 'hourly'
   );
   const [currency, setCurrency] = useState(fields.currency);
+  // Digital signature (see lib/export/pdf/sign). Off by default and offered
+  // only by templates that reserve an area for the widget: an export nobody
+  // asked to sign has to come out exactly as it always did.
+  const [signing, setSigning] = useState(false);
+  // Whether this deployment has a TSA configured (TSA_URL). Null until asked.
+  // Timestamping is not offered as a choice: when the server can do it, every
+  // signature gets one, because a signature that outlives its certificate is
+  // strictly better and there is no reason anyone would want the weaker file.
+  const [canTimestamp, setCanTimestamp] = useState<boolean | null>(null);
+  // A remembered scan is only usable if pdfmake can embed it. One stored by an
+  // earlier build (the picker used to accept WebP) is dropped rather than
+  // carried into an export that would fail on it.
+  const rememberedImage = isEmbeddableSignatureImage(fields.signatureImage)
+    ? fields.signatureImage
+    : '';
+  const [signatureImage, setSignatureImage] = useState(rememberedImage);
+  const [signatureLayout, setSignatureLayout] = useState<SignatureLayout>(
+    fields.signatureLayout === 'image-left' ? 'image-left' : 'image-above'
+  );
+  const [signatureNote, setSignatureNote] = useState<string | null>(
+    fields.signatureImage && !rememberedImage
+      ? 'The remembered signature scan is not a PNG or a JPEG and cannot be embedded — pick the file again.'
+      : null
+  );
+  // Where the signature comes from, and which certificate on it. Discovered
+  // when signing is switched on; the certificate is chosen, never assumed —
+  // I.CA's TWINS card carries a qualified signing certificate AND a commercial
+  // authentication one, and picking the second produces a file that verifies
+  // and is not a qualified signature.
+  const [bridgeChoices, setBridgeChoices] = useState<{ id: string; label: string }[] | null>(null);
+  const [bridgeId, setBridgeId] = useState('');
+  const [certificates, setCertificates] = useState<TokenCertificate[] | null>(null);
+  const [certificateId, setCertificateId] = useState('');
+  const [pairingCode, setPairingCode] = useState<string | null>(null);
+  const [connecting, setConnecting] = useState(false);
+  // What is stopping the preferred bridge, when nothing is offered. Drives one
+  // sentence and one link rather than an error: signing is optional, so a
+  // missing helper is an explanation and never an interruption.
+  const [readiness, setReadiness] = useState<BridgeReadiness | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [done, setDone] = useState<string | null>(null);
+
+  // The chosen template drives the rest of the dialog: which identity inputs
+  // appear, what they are prompted with, which language the notes are written
+  // in, and whether signing is offered at all. Nothing here knows any template
+  // by name (see lib/export/pdf/types).
+  const template = format === 'pdf' ? PDF_TEMPLATES.find((t) => t.id === templateId) : undefined;
+  // Language the selected PDF template prints in — drives which engagement note
+  // is shown and stored.
+  const tplLocale = template?.locale ?? 'en';
+  // Identity inputs (role / company) appear only when the chosen PDF template
+  // actually prints them.
+  const templateFields = template?.fields ?? [];
+  // Only a template that reserves a signature area can carry a widget; for the
+  // rest the signing section is not offered at all. This is the entire extent
+  // to which the dialog is template-aware about signing.
+  const signatureWidget = template?.signatureWidget;
+
+  // The bridge objects themselves, built once per dialog rather than per
+  // render: each one holds live state — the extension port and the certificates
+  // it listed, or the throwaway key whose CN is already in the preview — and
+  // rebuilding it would silently throw that away mid-flow.
+  const bridgesRef = useRef<TokenBridge[] | null>(null);
+  const loadBridges = async (): Promise<TokenBridge[]> => {
+    if (!bridgesRef.current) {
+      const { availableBridges } = await import('@/lib/export/pdf/sign/bridge');
+      bridgesRef.current = availableBridges({
+        signBridge: { onPairingCode: setPairingCode },
+      });
+    }
+    return bridgesRef.current;
+  };
+
+  const selectedBridge = bridgesRef.current?.find((b) => b.id === bridgeId) ?? null;
+  const certificate = certificates?.find((c) => c.id === certificateId) ?? null;
+
+  /**
+   * The signature block's design, as previewed and as signed. The date is
+   * filled in at the moment of signing so the printed date and the signature
+   * dictionary's /M agree; the preview uses the page's clock instead.
+   */
+  const appearance: SignatureAppearance = useMemo(
+    () => ({
+      ...DEFAULT_SIGNATURE_APPEARANCE,
+      image: signatureImage || null,
+      signerName: name.trim() || personName,
+      certificateCN: certificate?.subjectCN ?? '',
+      layout: signatureLayout,
+      locale: tplLocale,
+    }),
+    [signatureImage, name, personName, certificate, signatureLayout, tplLocale]
+  );
+
+  // Switching signing on is what pulls the signing stage into the page, and
+  // what asks the machine what it can sign with. Nothing is connected here:
+  // discovery must not put a pairing window or a PIN prompt in front of anyone.
+  useEffect(() => {
+    if (!signing || !signatureWidget) return;
+    let cancelled = false;
+    (async () => {
+      const bridges = await loadBridges();
+      const offered: { id: string; label: string }[] = [];
+      let firstProblem: BridgeReadiness | null = null;
+      for (const bridge of bridges) {
+        if (await bridge.isAvailable()) {
+          offered.push({ id: bridge.id, label: bridge.label });
+          continue;
+        }
+        // Why the PREFERRED bridge is missing, not the last one: the throwaway
+        // key is always available, so the last answer is never interesting.
+        if (!firstProblem && bridge.readiness) firstProblem = await bridge.readiness();
+      }
+      if (cancelled) return;
+      setReadiness(firstProblem);
+      setBridgeChoices(offered);
+      setBridgeId((current) => (offered.some((b) => b.id === current) ? current : offered[0]?.id ?? ''));
+    })().catch((e: unknown) => {
+      if (cancelled) return;
+      setBridgeChoices([]);
+      setError(e instanceof Error ? e.message : 'Could not look for a signing device.');
+    });
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [signing, signatureWidget]);
+
+  // Asked once, when signing is switched on rather than on mount: a dialog
+  // opened to export an XLSX has no business calling /api/config.
+  useEffect(() => {
+    if (!signing || canTimestamp !== null) return;
+    let cancelled = false;
+    getConfig().then(
+      (config) => {
+        if (!cancelled) setCanTimestamp(config.timestamp.enabled);
+      },
+      () => {
+        // A config that will not load means no timestamp rather than a broken
+        // dialog: signing still works, at B-B.
+        if (!cancelled) setCanTimestamp(false);
+      }
+    );
+    return () => {
+      cancelled = true;
+    };
+  }, [signing, canTimestamp]);
+
+  // A bridge that lists without asking anything is listed straight away — the
+  // throwaway key, whose CN the preview then shows. An interactive one waits
+  // for the button below.
+  useEffect(() => {
+    setCertificates(null);
+    setCertificateId('');
+    setPairingCode(null);
+    const bridge = bridgesRef.current?.find((b) => b.id === bridgeId);
+    if (!bridge || bridge.interactive) return;
+    let cancelled = false;
+    bridge.listCertificates().then(
+      (list) => {
+        if (cancelled) return;
+        setCertificates(list);
+        setCertificateId(list[0]?.id ?? '');
+      },
+      (e: unknown) => {
+        if (cancelled) return;
+        setError(e instanceof Error ? e.message : 'Could not prepare a signing key.');
+      }
+    );
+    return () => {
+      cancelled = true;
+    };
+  }, [bridgeId]);
+
+  /** Pair, unlock and list — the step that is allowed to prompt. */
+  const connectBridge = async () => {
+    const bridge = bridgesRef.current?.find((b) => b.id === bridgeId);
+    if (!bridge) return;
+    setConnecting(true);
+    setError(null);
+    setDone(null);
+    try {
+      const all = await bridge.listCertificates();
+      // Only what this device can actually sign with. A card reports its
+      // issuer's CA certificates alongside its own — around thirty of them on
+      // an I.CA card — and every one is a certificate with no private key here.
+      // Offering them is offering a PIN prompt that ends in "no private key",
+      // so they are counted and dropped rather than listed.
+      const list = all.filter((c) => c.hasKey);
+      setCertificates(list);
+      // Preselect what the document actually needs: a qualified certificate
+      // whose key usage allows non-repudiation. The alternative — first in the
+      // list — is how the authentication half of a TWINS card ends up signing
+      // an acceptance sheet.
+      const preferred =
+        list.find((c) => c.qualified && c.forSignature) ??
+        list.find((c) => c.forSignature) ??
+        list[0];
+      setCertificateId(preferred?.id ?? '');
+      if (!list.length) {
+        setError(
+          all.length
+            ? `That device carries ${all.length} certificate${all.length === 1 ? '' : 's'} and the ` +
+                'private key of none of them — which is what a card looks like before its own ' +
+                'certificate has been issued onto it.'
+            : 'That device holds no usable certificate. A card with no certificate on it yet, ' +
+                'or one whose certificates have expired, both look like this.'
+        );
+      }
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Could not reach the signing device.');
+    } finally {
+      setPairingCode(null);
+      setConnecting(false);
+    }
+  };
+
+  /** Read a picked scan into a data: URL — it never leaves the browser. */
+  const pickSignatureImage = async (file: File | null) => {
+    if (!file) return;
+    setDone(null);
+    const dataUrl = await new Promise<string>((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(String(reader.result));
+      reader.onerror = () => reject(reader.error);
+      reader.readAsDataURL(file);
+    });
+    // Judged by the file's own bytes, not by the type it claims: PDFKit — which
+    // is what pdfmake embeds images through — reads PNG and JPEG and nothing
+    // else, and a browser will display a WebP quite happily right up to the
+    // point where the export cannot be produced.
+    if (!isEmbeddableSignatureImage(dataUrl)) {
+      setError(
+        'The signature has to be a PNG or a JPEG — those are the formats a PDF can carry. ' +
+          'A WebP or HEIC will need converting first.'
+      );
+      return;
+    }
+    setError(null);
+    setSignatureImage(dataUrl);
+    setSignatureNote(
+      dataUrl.length > MAX_SIGNATURE_IMAGE_CHARS
+        ? 'This scan is too large to remember with the workspace — it will be used for ' +
+            'this export only. A trimmed PNG under ~190 kB is remembered.'
+        : null
+    );
+  };
 
   const applyPreset = (p: ExportPreset, start = startDate) => {
     setPreset(p);
@@ -294,20 +634,100 @@ export default function ExportDialog({
         reference: refEdited ? reference.trim() : '',
         engagementEn: engagements.en.trim(),
         engagementCs: engagements.cs.trim(),
+        // A scan too large to sync is used for this export and not stored —
+        // whatever was remembered before stays remembered.
+        signatureImage:
+          signatureImage.length <= MAX_SIGNATURE_IMAGE_CHARS
+            ? signatureImage
+            : fields.signatureImage,
+        signatureLayout,
       });
-      const ok = await runExport(doc, format, templateId);
+
+      // Signing is the last thing that happens and the only optional one: with
+      // it off, `runExport` downloads exactly the blob the template rendered.
+      //
+      // The level is reported back out of the signer rather than returned,
+      // because a timestamp can fail after the card has already signed — the
+      // file still ships, one level lower, and saying so is the whole point of
+      // tracking it (see lib/export/pdf/sign/signer.ts).
+      // An object rather than two `let`s so the compiler keeps the union:
+      // nothing assigns to them in a straight line, only the callback does, and
+      // control-flow analysis narrows a `let` to its initialiser regardless.
+      const outcome: { level: 'B-B' | 'B-T'; timestampError: Error | null } = {
+        level: 'B-B',
+        timestampError: null,
+      };
+      let signRequest: SignRequest | null = null;
+      if (format === 'pdf' && signing && signatureWidget) {
+        if (!selectedBridge || !certificate) {
+          setError('Choose the certificate to sign with before exporting.');
+          return;
+        }
+        signRequest = {
+          bridge: selectedBridge,
+          certificate,
+          appearance: {
+            ...appearance,
+            certificateCN: certificate.subjectCN,
+            // One clock for the printed date and the /M entry.
+            signedAtMs: Date.now(),
+          },
+          reason: SIGN_REASON[tplLocale],
+          // The session token, because the timestamp route is gated the way the
+          // Toggl proxy is. Absent on a deployment with no password gate.
+          timestamp: canTimestamp ? { appAuth: loadAuth()?.token ?? null } : false,
+          onLevel: (level, timestampError) => {
+            outcome.level = level;
+            outcome.timestampError = timestampError;
+          },
+        };
+      }
+
+      const ok = await runExport(doc, format, templateId, signRequest);
       if (!ok) {
         setError('No entries in this range — nothing to export.');
         return;
       }
-      setDone(`Exported as ${FORMAT_LABELS[format]}.`);
+      if (!signRequest) {
+        setDone(`Exported as ${FORMAT_LABELS[format]}.`);
+      } else if (outcome.level === 'B-T') {
+        setDone(
+          `Exported as ${FORMAT_LABELS[format]}, digitally signed and timestamped ` +
+            '(PAdES-B-T) — it stays verifiable after the certificate expires.'
+        );
+      } else if (outcome.timestampError) {
+        // Not an error: the signature is real and the file is downloaded. But
+        // it is a level lower than was asked for, and only saying "signed"
+        // would be telling someone they have a timestamp they do not have.
+        setDone(
+          `Exported as ${FORMAT_LABELS[format]}, digitally signed (PAdES-B-B). The ` +
+            `timestamp could not be obtained, so this signature stops verifying when the ` +
+            `certificate expires — ${outcome.timestampError.message}`
+        );
+      } else {
+        setDone(`Exported as ${FORMAT_LABELS[format]}, digitally signed (PAdES-B-B).`);
+      }
     } catch (e) {
-      if (isAuthRequired(e)) {
+      if (e instanceof Error && e.name === 'TokenBridgeUnavailableError') {
+        setError(e.message);
+      } else if (isAuthRequired(e)) {
         setError('Session expired — return to the timesheet to sign in again, then retry.');
       } else if (isRateLimit(e)) {
         setError('Toggl rate limit reached — wait a moment, then try again.');
       } else {
-        setError('Could not load this range from Toggl. Try again.');
+        // Everything else, said as it happened rather than guessed at. This
+        // branch used to blame Toggl for anything it did not recognise, which
+        // covers the whole render-and-sign half of the pipeline too: a font
+        // that would not load, a widget that would not fit, a card pulled
+        // mid-signature all reported themselves as a failed download, and the
+        // only honest next step was the console.
+        console.error('Export failed', e);
+        const detail = e instanceof Error ? e.message : String(e);
+        setError(
+          detail
+            ? `The export failed: ${detail}`
+            : 'The export failed, and gave no reason. The browser console has the error.'
+        );
       }
     } finally {
       setBusy(false);
@@ -315,16 +735,7 @@ export default function ExportDialog({
   };
 
   const viewLabel = view === 'summary' ? 'Summary' : 'Individual';
-  // The chosen template drives the rest of the dialog: which identity inputs
-  // appear, what they are prompted with, and which language the notes are
-  // written in. Nothing here knows any template by name (see lib/export/pdf/types).
-  const template = format === 'pdf' ? PDF_TEMPLATES.find((t) => t.id === templateId) : undefined;
-  // Language the selected PDF template prints in — drives which engagement note
-  // is shown and stored.
-  const tplLocale = template?.locale ?? 'en';
-  // Identity inputs (role / company) appear only when the chosen PDF template
-  // actually prints them.
-  const templateFields = template?.fields ?? [];
+
 
   return (
     <div className="overlay">
@@ -651,6 +1062,202 @@ export default function ExportDialog({
                   }}
                 />
               </div>
+            </div>
+          </>
+        )}
+
+        {signatureWidget && (
+          <div className="field">
+            <label htmlFor="exp-signing">Digital signature</label>
+            <select
+              id="exp-signing"
+              value={signing ? 'on' : 'off'}
+              onChange={(e) => {
+                setSigning(e.target.value === 'on');
+                setDone(null);
+              }}
+            >
+              <option value="off">Leave the signature box empty</option>
+              <option value="on">Sign the PDF</option>
+            </select>
+            <p className="hint">
+              The <strong>Prepared by</strong> box on the sign-off page becomes a real
+              signature field — the issuer&apos;s box; the client&apos;s stays blank for them
+              to sign. The handwritten image is cosmetic: what makes the document signed is
+              the certificate, so an export with signing off stays exactly the document it
+              has always been.
+            </p>
+          </div>
+        )}
+
+        {signatureWidget && signing && (
+          <>
+            <div className="field">
+              <label htmlFor="exp-sign-bridge">Sign with</label>
+              <select
+                id="exp-sign-bridge"
+                value={bridgeId}
+                disabled={!bridgeChoices?.length}
+                onChange={(e) => {
+                  setBridgeId(e.target.value);
+                  setDone(null);
+                }}
+              >
+                {bridgeChoices === null && <option value="">Looking for a signing device…</option>}
+                {bridgeChoices?.length === 0 && (
+                  <option value="">Nothing on this device can sign</option>
+                )}
+                {bridgeChoices?.map((b) => (
+                  <option key={b.id} value={b.id}>
+                    {b.label}
+                  </option>
+                ))}
+              </select>
+              <p className="hint">
+                The private key never leaves the token, so the browser cannot reach it on its
+                own — <strong>Sign Bridge</strong> is the extension and helper that carry the
+                request to the card and back. {describeReadiness(readiness)}
+              </p>
+            </div>
+
+            <div className="field">
+              <label htmlFor="exp-sign-cert">Certificate</label>
+              {certificates === null ? (
+                <div className="sig-row">
+                  <button
+                    type="button"
+                    className="btn"
+                    disabled={!bridgeId || connecting}
+                    onClick={() => void connectBridge()}
+                  >
+                    {connecting ? 'Connecting…' : 'Connect and list certificates'}
+                  </button>
+                </div>
+              ) : (
+                <select
+                  id="exp-sign-cert"
+                  value={certificateId}
+                  disabled={!certificates.length}
+                  onChange={(e) => {
+                    setCertificateId(e.target.value);
+                    setDone(null);
+                  }}
+                >
+                  {!certificates.length && <option value="">No certificate to sign with</option>}
+                  {certificates.map((c) => (
+                    <option key={c.id} value={c.id}>
+                      {describeCertificate(c)}
+                    </option>
+                  ))}
+                </select>
+              )}
+              {pairingCode && (
+                <p className="hint">
+                  Approve the window that just appeared <strong>only</strong> if it shows the
+                  code <strong>{pairingCode}</strong>. Matching them is what tells you the
+                  window belongs to this page and not to something else.
+                </p>
+              )}
+              {certificate && !certificate.qualified && (
+                <p className="hint">
+                  This certificate does not claim to be a qualified one on a qualified device,
+                  so the export will carry a valid signature that is <strong>not</strong> a
+                  QES — fine for testing the pipeline, not for a document anyone signs off.
+                </p>
+              )}
+              {certificate && !certificate.forSignature && (
+                <p className="hint">
+                  This certificate&apos;s key usage does not include non-repudiation, which
+                  makes it an <strong>authentication</strong> certificate rather than a signing
+                  one. On a TWINS card the other entry is the one to pick.
+                </p>
+              )}
+              {selectedBridge?.interactive && !pairingCode && (
+                <p className="hint">
+                  Connecting asks {selectedBridge.label.includes('Sign Bridge') ? 'Sign Bridge' : 'the helper'}{' '}
+                  to approve this site once. Signing then asks for the token PIN in its own
+                  window — that prompt is the signature being made, and the PIN is never typed
+                  into this page.
+                </p>
+              )}
+            </div>
+
+            <div className="field">
+              <label htmlFor="exp-signature-image">Handwritten signature</label>
+              <div className="sig-row">
+                <input
+                  id="exp-signature-image"
+                  type="file"
+                  accept={SIGNATURE_IMAGE_ACCEPT}
+                  onChange={(e) => {
+                    void pickSignatureImage(e.target.files?.[0] ?? null);
+                    // Let the same file be picked again after a mistake.
+                    e.target.value = '';
+                  }}
+                />
+                {signatureImage && (
+                  <button
+                    type="button"
+                    className="btn"
+                    onClick={() => {
+                      setSignatureImage('');
+                      setSignatureNote(null);
+                    }}
+                  >
+                    Remove
+                  </button>
+                )}
+              </div>
+              {signatureImage && (
+                // A file input cannot be given a value, so it says "No file
+                // chosen" even when a remembered scan is in use and showing in
+                // the preview below — which reads as "nothing is set" next to a
+                // Remove button that plainly disagrees. Said in words instead.
+                <p className="hint sig-in-use">
+                  A signature scan is in use — it is the one in the preview below. Choosing a
+                  file replaces it; <strong>Remove</strong> clears it.
+                </p>
+              )}
+              <p className="hint">
+                Your own scan as a <strong>PNG or JPEG</strong>, on a transparent or white
+                background. It is embedded into the signature block of this export and
+                remembered with{' '}
+                {fieldsScope ? <strong>{fieldsScope}</strong> : 'this device'} so you need not
+                pick it again — which means that, like the other export details, it is
+                uploaded to your deployment and travels between your devices when settings
+                sync is on. The app ships no signature image, and none is ever committed to
+                the repository.
+              </p>
+            </div>
+
+            <div className="field">
+              <label htmlFor="exp-signature-layout">Signature block layout</label>
+              <select
+                id="exp-signature-layout"
+                value={signatureLayout}
+                onChange={(e) => {
+                  setSignatureLayout(e.target.value as SignatureLayout);
+                  setDone(null);
+                }}
+              >
+                <option value="image-above">Signature above the details</option>
+                <option value="image-left">Signature beside the details</option>
+              </select>
+            </div>
+
+            <div className="field">
+              <label>Preview</label>
+              <div className="sig-preview-frame">
+                <SignatureBlockPreview
+                  rect={signatureWidget.rect}
+                  appearance={{ ...appearance, signedAtMs: nowMs }}
+                />
+              </div>
+              <p className="hint">
+                The signature block at its printed size, {Math.round(signatureWidget.rect.width)}
+                &nbsp;&times;&nbsp;{Math.round(signatureWidget.rect.height)}&nbsp;pt — it fills the
+                dashed box on the last page. {signatureNote}
+              </p>
             </div>
           </>
         )}

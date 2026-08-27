@@ -729,12 +729,63 @@ or ship it in a pack (below).
 | `fieldHints` | Placeholder text per field, for one whose wording the user has to phrase themselves. |
 | `locale` | `'en'` or `'cs'` — the language the document prints in. It decides which of the per-language inputs (role, engagement note) the dialog shows and stores. |
 | `loadFonts` | Optional async loader for embedded fonts (below). Omit it and the document sets in pdfmake's bundled Roboto. |
+| `signatureWidget` | Optional. Declaring it makes the template **signable** — see "Making a template signable" below. Omit it and the export dialog offers no signing for this template at all. |
 | `build` | `(doc: ExportDoc) => TDocumentDefinitions`. Pure: same document in, same definition out. |
 
 `pnpm check:templates` asserts what has to hold for any template — unique ids,
 fields the dialog can actually offer, and that `build()` survives all four
 shapes a real export can take (Summary, Individual, an empty range, and a
 document with no rate).
+
+#### Making a template signable
+
+The app can sign a PDF export with a qualified certificate on a hardware token
+(`lib/export/pdf/sign`, and `docs/pdf-signing-v2.md` for the whole picture). All
+of that is the app's: the card, the CMS, the timestamp, the visible stamp. The
+only thing a template contributes is a promise about **where the stamp goes**:
+
+```ts
+signatureWidget: {
+  rect: { x: 62, y: 620, width: 216, height: 92 },  // pdfmake coords, from the TOP-left
+  page: { width: 595.28, height: 841.89 },          // what the rect is measured against
+  fontFamily: 'IBMPlexSans',                        // optional; must be one loadFonts() declares
+}
+```
+
+It is a **guarantee, not a report**. The signing stage is handed a finished PDF
+that says nothing about where a flowing block landed — its page and Y move with
+the number of table rows — so a template that declares a widget has to make the
+rectangle true rather than describe where it happened to end up. The rect must
+be free, on the **last page**, at exactly those coordinates.
+
+Two mechanisms together do it, and a template needs both:
+
+1. **Reserve the band.** Flow an invisible node exactly as tall as the signature
+   row at the end of the content, so pdfmake's own "does this still fit above
+   the bottom margin" arithmetic pushes it — and the row with it — onto a fresh
+   page as soon as the flow reaches the reserved band. It must be a real
+   drawing op with real extents: pdfmake drops zero-extent nodes from the list
+   its page-break rule walks, and a dropped anchor is a silent no-guarantee.
+2. **Say it directly too.** A `pageBreakBefore` rule keyed on that node's `id`,
+   so the contract does not rest on a measured height alone.
+
+Then draw the box itself at a fixed `absolutePosition`, so its Y needs no text
+metrics. Anything that would flow *after* the row has nowhere to go — put
+footnotes above it.
+
+`fontFamily` names the family the visible stamp is set in. The stamp is dropped
+into the template's own document, so a block set in a different typeface reads
+as pasted on; naming a family the template's `loadFonts()` does **not** declare
+fails inside pdfmake at signing time, after the PIN has been entered, so
+`pnpm check:signature` asserts the two agree.
+
+Leaving `signatureWidget` off is the right default. A stamp painted over a
+layout that reserved no room for it lands on top of the content.
+
+> The app ships no signable template of its own — the generic Timesheet does not
+> reserve a signature area. `pnpm check:signature` exercises the machinery
+> against a minimal signable template defined in `scripts/signatureFixture.ts`,
+> and against any a configured pack contributes.
 
 #### What the template gets
 
@@ -886,6 +937,69 @@ this repository's `.gitmodules`, and every clone and fork would then try — and
 for a private pack, fail — to fetch a repository it has no business knowing
 about. Naming the pack in the environment keeps it a property of the
 deployment, which is what it is.
+
+### Digital signature
+
+The **Timesheet Report**'s *Prepared by* box — the issuer's, on the sign-off
+page — can be a **real signature field** rather than a space to print and sign.
+Pick **Sign the PDF** under *Digital signature* in the export dialog and the
+exported file carries a PAdES signature over the whole document, with the
+visible block sitting exactly inside that box.
+
+The option appears for the two report templates only. The *Approved by* box
+beside it, and the acceptance protocol's box, belong to the **client**
+countersigning — they stay blank for whoever signs them, by hand or in their own
+reader, and carry a date prompt for that.
+
+What you can set:
+
+- **Sign with** — where the private key is. A **hardware token** appears here
+  only while [Fortify](https://fortifyapp.com/) is running: a browser has no way
+  to reach a smart card on its own, and Fortify is the local app that
+  republishes the card to the page. The **throwaway key** below it is always
+  offered and is what the pipeline was built against — see the note at the end
+  of this section.
+- **Certificate** — which certificate on that device signs. Nothing is
+  connected until you ask: *Connect and list certificates* is what pairs with
+  Fortify (approve the code it shows, and check it matches the one on the page)
+  and asks the card for its PIN. The list names each certificate by holder,
+  the token it sits on, whether it is a **qualified** one, and when it expires.
+  This is a choice rather than a default because a single card commonly carries
+  two certificates issued to the same person — a qualified one for signing and a
+  commercial one for authentication — and signing with the second produces a
+  file that verifies perfectly and is not a qualified signature. The dialog says
+  so under the picker when the chosen certificate is either of the wrong kinds.
+- **Handwritten signature** — your own scan, picked from the file system. It
+  has to be a **PNG or a JPEG**: those are the formats a PDF can carry, and a
+  WebP or HEIC is rejected when you pick it rather than at export time. The
+  image is embedded into the signature block of the export and remembered with
+  the **workspace**, like the other export details — which means it is stored
+  in your own deployment and travels between your devices when settings sync is
+  on (see "Settings sync across devices"). It goes nowhere else. Nothing of the
+  sort ships with the app and no signature image is in this repository — a
+  signature image in a public repo is a signature anyone can paste. A scan
+  larger than ~256 kB is used for the export at hand and not remembered, so it
+  never bloats the synced settings; trimming the PNG to the ink is worth the
+  minute.
+- **Signature block layout** — the handwriting above the certificate details,
+  or beside them. The **preview** below shows the block at its printed size —
+  the *Prepared by* box on the report's sign-off page — set in the same IBM Plex
+  Sans as the report itself.
+
+The handwritten image is cosmetic. What makes the document *signed* is the
+certificate, so an export with signing switched off is exactly the document it
+has always been — the same bytes the template produced.
+
+**The throwaway key** is a key generated in the browser and discarded when the
+tab closes. Signatures made with it are cryptographically real — the file
+validates as `PAdES-BASELINE-B` and any viewer can check the document has not
+been altered since signing — and they are not *trusted*: no viewer shows a green
+banner, because the key chains to nothing. It exists so the whole pipeline runs
+without a card in the machine, and the dialog says plainly that what it produces
+is not a qualified signature. Signing with a qualified certificate on its
+hardware token goes through exactly the same pipeline and differs only in where
+the key is; see [docs/pdf-signing-v2.md](docs/pdf-signing-v2.md) for the design
+and where it stands.
 
 ### Linked billing codes (subcontracting)
 

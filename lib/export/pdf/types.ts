@@ -47,6 +47,43 @@ export interface PdfFontPack {
   fonts: FontDecl;
 }
 
+/**
+ * Where a signable template puts its signature widget.
+ *
+ * This is the whole interface between a template and the signing stage, and it
+ * is deliberately DATA — a rectangle, a page size, a font name. Everything that
+ * makes a signature a signature (the card, the CMS, the timestamp, the visible
+ * stamp) is the app's, in lib/export/pdf/sign; a template neither performs nor
+ * knows about any of it. That split is what lets a pack be a private repository
+ * of layouts rather than a second implementation of PAdES.
+ *
+ * The rectangle is in pdfmake's coordinates — points from the page's TOP-left
+ * corner — and must be free on the document's LAST page. The signing stage
+ * converts it to the PDF's bottom-left origin against the page it actually
+ * finds (lib/export/pdf/sign/widget.ts).
+ *
+ * It is a GUARANTEE, not a report. A finished blob carries no metadata about
+ * where a flowing signature block landed — its page and Y vary with the number
+ * of table rows — so a template that declares this must place its block at a
+ * fixed position and keep the flow out of that band. The pack's report template
+ * shows the two halves of that: an invisible reserve node sized to the row,
+ * plus a `pageBreakBefore` rule keyed on its id.
+ */
+export interface SignatureWidget {
+  rect: { x: number; y: number; width: number; height: number };
+  /** Page size the rect is expressed against; a mismatch means a wrong contract. */
+  page: { width: number; height: number };
+  /**
+   * pdfmake font family the visible stamp sets its text in.
+   *
+   * Named by the template because the stamp is dropped INTO its document and
+   * should read as part of it rather than pasted on. Must be a family the
+   * template's own `loadFonts()` declares. Omitted falls back to pdfmake's
+   * bundled Roboto, which is also what a template with no `loadFonts` gets.
+   */
+  fontFamily?: string;
+}
+
 export interface PdfTemplate {
   /**
    * Stable identifier. It is what a device remembers as its last pick, so
@@ -82,6 +119,13 @@ export interface PdfTemplate {
    * stay on pdfmake's bundled Roboto leave it out.
    */
   loadFonts?: () => Promise<PdfFontPack>;
+  /**
+   * Present when the template reserves a signature area — and the only thing
+   * that makes a template signable. Absent means the export dialog offers no
+   * signing for it at all, which is the right default: a signature stamped
+   * over a layout that reserved no room for it lands on top of the content.
+   */
+  signatureWidget?: SignatureWidget;
   /** Turn the export document into a pdfmake document definition. */
   build: (doc: ExportDoc) => TDocumentDefinitions;
 }

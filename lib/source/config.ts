@@ -13,6 +13,13 @@ export interface AppConfig {
   cache: { enabled: boolean; intervalSec: number | null };
   /** Cross-device settings sync availability (see app/api/sync). */
   sync: { enabled: boolean; misconfigured: string | null };
+  /**
+   * Whether a timestamp authority is configured (TSA_URL), i.e. whether a
+   * signed export can be PAdES-B-T. False on a deployment that has none, and
+   * on any server too old to report it — which is why the fallback matters:
+   * claiming a timestamp that never happens is worse than not offering one.
+   */
+  timestamp: { enabled: boolean };
 }
 
 const CONFIG_FALLBACK: AppConfig = {
@@ -22,6 +29,7 @@ const CONFIG_FALLBACK: AppConfig = {
   misconfigured: null,
   cache: { enabled: false, intervalSec: null },
   sync: { enabled: false, misconfigured: null },
+  timestamp: { enabled: false },
 };
 
 export async function getConfig(): Promise<AppConfig> {

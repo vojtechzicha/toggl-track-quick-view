@@ -70,7 +70,29 @@ export interface ExportFieldValues {
    * claiming the whole of August.
    */
   startDate: string;
+  /**
+   * The handwritten signature scan, as a `data:image/png;base64,…` URL, for the
+   * visible block of a signed PDF (see lib/export/pdf/sign). Empty = none, and
+   * the export dialog's file picker can always supply one for a single export
+   * without storing it.
+   *
+   * This is user data of the same kind as the rest of this file — nothing here
+   * ships with the app, and the image is never committed to the repo. It is
+   * remembered per workspace like every other field, which also means it
+   * travels through settings sync: a scan is a few tens of kilobytes as
+   * base64, so the dialog caps what it will store rather than letting a
+   * multi-megabyte photo into a document that syncs on every settings change.
+   */
+  signatureImage: string;
+  /**
+   * How the signature block arranges the image and the certificate details:
+   * 'image-above' (the default) or 'image-left'. Empty = the default.
+   */
+  signatureLayout: string;
 }
+
+/** Largest signature scan the dialog will remember, as base64 characters. */
+export const MAX_SIGNATURE_IMAGE_CHARS = 256 * 1024;
 
 export const EMPTY_EXPORT_FIELDS: ExportFieldValues = {
   role: '',
@@ -85,6 +107,8 @@ export const EMPTY_EXPORT_FIELDS: ExportFieldValues = {
   engagementEn: '',
   engagementCs: '',
   startDate: '',
+  signatureImage: '',
+  signatureLayout: '',
 };
 
 /** Which engagement note a PDF template's language uses. */
@@ -114,6 +138,8 @@ export function normalizeExportFields(
     engagementEn: str(v.engagementEn),
     engagementCs: str(v.engagementCs),
     startDate: str(v.startDate),
+    signatureImage: str(v.signatureImage),
+    signatureLayout: str(v.signatureLayout),
   };
 }
 
@@ -160,6 +186,8 @@ export function readLegacyExportFields(): ExportFieldValues | null {
     engagementEn: read(LEGACY_KEYS.engagementEn),
     engagementCs: read(LEGACY_KEYS.engagementCs),
     startDate: '',
+    signatureImage: '',
+    signatureLayout: '',
   };
   return found ? values : null;
 }

@@ -973,6 +973,31 @@ body {
   font-size: 13px;
   font-weight: 600;
 }
+/* The signature block preview. The block itself is sized in points and drawn at
+   1pt = 1px (components/export/SignatureBlockPreview), so it appears at its
+   printed size; the frame around it just gives it the white page it will be
+   printed on and lets a wide block scroll rather than overflow the panel. */
+.sig-preview-frame {
+  overflow-x: auto;
+  border: 1px solid var(--line, #333);
+  border-radius: 6px;
+  padding: 8px;
+  background: #f8fafc;
+}
+.sig-preview {
+  box-sizing: border-box;
+  background: #fff;
+  /* The exported stamp is set in IBM Plex Sans, like the report it lands in.
+     Preferred here so the preview matches on a machine that has it; nothing is
+     downloaded for a preview, so elsewhere the system sans stands in. */
+  font-family: 'IBM Plex Sans', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+}
+.sig-row {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  flex-wrap: wrap;
+}
 
 /* ---------- Centered loading ---------- */
 .center-msg {
@@ -2454,4 +2479,10 @@ body:has(.imp-page) {
   .imp-maparrow {
     display: none;
   }
+}
+
+/* The "a scan is in use" note sits directly under the file row it corrects, so
+   it reads as part of that control rather than as another paragraph of help. */
+.sig-in-use {
+  margin-top: 4px;
 }

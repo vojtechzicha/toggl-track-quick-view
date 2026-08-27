@@ -95,3 +95,26 @@ PDF_TEMPLATE_PACK_REPO=git@github.com:vojtechzicha/toggl-track-quick-view-pdf-te
 # pin it only to reproduce a specific build.
 
 PDF_TEMPLATE_PACK_REF=
+
+# -- Signing ------------------------------------------------------------------
+# RFC 3161 timestamp authority, proxied by /api/timestamp. With one set, a
+# signed PDF export is PAdES-B-T instead of B-B — which is what keeps the
+# signature verifying after the signing certificate expires (they are issued for
+# a year). Nothing about the document is sent: the request is a hash of the
+# signature and nothing else.
+#
+# BLANK locally on purpose. Timestamping is off, exports are B-B, and no third
+# party is contacted while developing. Free authorities to try when you want to
+# exercise the path: http://timestamp.digicert.com or http://freetsa.org/tsr.
+#
+# Note that neither is on the EU Trust List, so the DSS validator reports their
+# timestamps as INDETERMINATE even though Adobe accepts them. A clean DSS report
+# needs a QUALIFIED authority — I.CA or PostSignum, paid per stamp. See
+# docs/pdf-signing-v2.md.
+
+TSA_URL=
+
+# HTTP Basic credentials (user:password) for a commercial authority. Free ones
+# need none. Ignored without TSA_URL.
+
+TSA_CREDENTIALS=

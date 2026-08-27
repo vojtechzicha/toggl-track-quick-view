@@ -5,6 +5,9 @@
 // `@pdf-template-pack` alias with its fallback list (see lib/export/pdf/pack.ts).
 // Node resolves none of those on its own, so they are patched in here — once,
 // and identically for the app's checks and for a template pack's own.
+//
+// pdf-lib is pinned here too, and that one is load-bearing rather than
+// cosmetic: see PDF_LIB below.
 
 import { registerHooks } from 'node:module';
 import fs from 'node:fs';
@@ -16,6 +19,21 @@ const ROOT_URL = pathToFileURL(root + path.sep);
 
 /** Same pair, in the same order, as tsconfig.json and next.config.js. */
 const PACK_CANDIDATES = ['pdf-templates/index.ts', 'lib/export/pdf/emptyPack.ts'];
+
+/**
+ * ONE copy of pdf-lib, for the signing checks.
+ *
+ * `pdf-lib` is an ALIAS for @cantoo/pdf-lib (package.json), and its exports map
+ * answers `require` with cjs/ and `import` with es/. @signpdf/placeholder-pdf-lib
+ * requires it while lib/export/pdf/sign imports it, so the two halves would get
+ * two module instances — two PDFName pools, two PDFDict classes — and pdf-lib
+ * keys dictionaries by PDFName IDENTITY, so the placeholder's /AcroForm would be
+ * invisible to the code that has to find it. It fails silently, at the point
+ * where the appearance is attached. next.config.js pins the bundle the same way.
+ */
+const PDF_LIB = pathToFileURL(
+  path.join(root, 'node_modules/@cantoo/pdf-lib/es/index.js')
+).href;
 
 /** Absolute path of the template pack entry a check will actually load. */
 export function packEntry() {
@@ -37,6 +55,13 @@ export function installResolveHooks({ stubs = {} } = {}) {
       if (stubs[specifier]) {
         return { url: `stub:${specifier}`, format: 'module', shortCircuit: true };
       }
+      if (specifier === 'pdf-lib' || specifier === '@cantoo/pdf-lib') {
+        return { url: PDF_LIB, shortCircuit: true };
+      }
+      // pdfmake's browser bundle, as lib/export/pdf/index.ts asks for it.
+      if (specifier.startsWith('pdfmake/build/') && !specifier.endsWith('.js')) {
+        return next(`${specifier}.js`, context);
+      }
       if (specifier === '@pdf-template-pack') {
         const entry = packEntry();
         if (entry) return { url: pathToFileURL(entry).href, shortCircuit: true };
@@ -46,7 +71,7 @@ export function installResolveHooks({ stubs = {} } = {}) {
       }
       // Next resolves extensionless relative imports; node needs them spelled out.
       if (specifier.startsWith('.') && !/\.[a-z]+$/.test(specifier) && context.parentURL) {
-        for (const ext of ['.ts', '.tsx']) {
+        for (const ext of ['.ts', '.tsx', '/index.ts']) {
           const u = new URL(specifier + ext, context.parentURL);
           if (fs.existsSync(u)) return { url: u.href, shortCircuit: true };
         }

@@ -13,6 +13,9 @@
 //  - sync: whether cross-device settings sync is available (MONGODB_URI +
 //    APP_PASSWORD, any mode — Toggl mode keeps its source with APP_MODE=toggl),
 //    plus a sync-specific misconfiguration message when applicable.
+//  - timestamp: whether an RFC 3161 timestamp authority is configured (TSA_URL),
+//    which is what lets a signed export be PAdES-B-T instead of B-B. The URL
+//    itself is never sent — only whether there is one.
 //  - misconfigured: a human-readable problem the operator must fix (currently
 //    only: standalone mode without APP_PASSWORD — the store routes are writes,
 //    so they refuse to serve until one is set).
@@ -23,6 +26,7 @@ import { cacheIntervalSec } from '@/lib/serverCache';
 import { gateEnabled } from '@/lib/serverAuth';
 import { standaloneEnabled } from '@/lib/store/mongo';
 import { syncEnabled, syncMisconfigured } from '@/lib/sync/server';
+import { tsaUrl } from '@/lib/serverTimestamp';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -48,5 +52,6 @@ export async function GET() {
       enabled: syncEnabled(),
       misconfigured: syncMisconfigured(),
     },
+    timestamp: { enabled: tsaUrl() !== null },
   });
 }
