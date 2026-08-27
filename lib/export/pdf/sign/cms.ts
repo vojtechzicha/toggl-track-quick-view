@@ -14,11 +14,15 @@
 //   message-digest          SHA-256 over the PDF's signed byte range
 //   signing-certificate-v2  SHA-256 over the signer's certificate
 //
-// Nothing else. No signing-time, no content hints, no timestamp (that is B-T,
-// and it goes in as an UNSIGNED attribute when it is added).
+// Nothing else. No signing-time, no content hints. The timestamp that makes a
+// B-T signature is here, but as an UNSIGNED attribute — which is the only place
+// it could go: it covers the signature value, so it cannot exist until after
+// the card has signed, and putting it among the signed attributes would mean
+// signing something that does not exist yet.
 
 import * as asn1js from 'asn1js';
 import * as pkijs from 'pkijs';
+import { SIGNATURE_TIMESTAMP_OID } from './timestamp';
 import { AsnConvert, OctetString } from '@peculiar/asn1-schema';
 import { ESSCertIDv2, IssuerSerial, SigningCertificateV2 } from '@peculiar/asn1-ess';
 import { Certificate as AsnCertificate, GeneralName, GeneralNames } from '@peculiar/asn1-x509';
@@ -53,6 +57,21 @@ export interface BuildCmsInput {
    * phase 2, WebCrypto) does its work; see ./bridge.ts.
    */
   sign: (toBeSigned: Uint8Array) => Promise<Uint8Array>;
+  /**
+   * Fetch an RFC 3161 token over the signature value, turning this into a
+   * PAdES-B-T signature. Omitted leaves it at B-B.
+   *
+   * Takes the signature rather than being handed a finished token, because the
+   * value to timestamp only exists in the middle of this function — after the
+   * card has signed and before the SignerInfo is assembled.
+   *
+   * Returning null yields a B-B signature. That is the contract rather than
+   * "throw on failure" for one reason: by the time this is called the card has
+   * already signed, and there is no way to un-spend that. Whether a missing
+   * timestamp is worth abandoning a real signature over is the caller's
+   * judgement, so the caller is the one that gets to decide — see ./signer.ts.
+   */
+  timestamp?: (signature: Uint8Array) => Promise<Uint8Array | null>;
 }
 
 const toArrayBuffer = (u8: Uint8Array): ArrayBuffer =>
@@ -190,6 +209,13 @@ export async function buildCms(input: BuildCmsInput): Promise<Uint8Array> {
   );
   const signature = await input.sign(toBeSigned);
 
+  // The timestamp covers the signature VALUE — RFC 3161 via
+  // id-aa-signatureTimeStampToken, the definition of PAdES-B-T. Fetched here
+  // because this is the first moment the value exists, and stored unsigned
+  // because the card has already put its name to the bytes above and must not
+  // be asked again.
+  const timestampToken = input.timestamp ? await input.timestamp(signature) : null;
+
   const signerInfo = new pkijs.SignerInfo({
     version: 1,
     sid: new pkijs.IssuerAndSerialNumber({
@@ -206,6 +232,19 @@ export async function buildCms(input: BuildCmsInput): Promise<Uint8Array> {
       algorithmParams: new asn1js.Null(),
     }),
     signature: new asn1js.OctetString({ valueHex: toArrayBuffer(signature) }),
+    ...(timestampToken
+      ? {
+          unsignedAttrs: new pkijs.SignedAndUnsignedAttributes({
+            type: 1,
+            attributes: [
+              new pkijs.Attribute({
+                type: SIGNATURE_TIMESTAMP_OID,
+                values: [parseAsn1(timestampToken)],
+              }),
+            ],
+          }),
+        }
+      : {}),
   });
 
   const signedData = new pkijs.SignedData({

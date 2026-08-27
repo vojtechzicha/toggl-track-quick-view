@@ -317,3 +317,123 @@ export async function chainFixtureCertificate(subjectCN: string, issuerCN: strin
   await certificate.sign(keyPair.privateKey, 'SHA-256');
   return new Uint8Array(certificate.toSchema(true).toBER(false));
 }
+
+export interface FakeTimestampOptions {
+  /** SHA-256 the token should claim to cover. Defaults to the real one. */
+  imprint?: Uint8Array;
+  /** Nonce to echo. Null omits it entirely, which is a rejection case. */
+  nonce?: Uint8Array | null;
+  /** PKIStatus. 0 granted, 1 grantedWithMods, 2 rejection. */
+  status?: number;
+  /** Emit a token whose eContent is not a TSTInfo. */
+  wrongContentType?: boolean;
+  /** Answer with a granted status and no token at all. */
+  omitToken?: boolean;
+}
+
+/**
+ * A TimeStampResp built here, so the timestamp checks need no TSA.
+ *
+ * Every rejection the client is supposed to make needs a response that is
+ * well-formed apart from the one thing being tested — a malformed blob would
+ * be caught by the parser and prove nothing about the checks that matter.
+ * So this builds a real, signed RFC 3161 token and lets each field be spoiled
+ * individually.
+ */
+export async function fakeTimestampResponse(
+  signature: Uint8Array,
+  options: FakeTimestampOptions = {}
+): Promise<Uint8Array> {
+  const asn1js = await import('asn1js');
+  const pkijs = await import('pkijs');
+  const { ensureCryptoEngine } = await import('../lib/export/pdf/sign/throwaway.ts');
+  ensureCryptoEngine();
+
+  const imprint =
+    options.imprint ??
+    new Uint8Array(
+      await globalThis.crypto.subtle.digest(
+        'SHA-256',
+        signature.buffer.slice(signature.byteOffset, signature.byteOffset + signature.byteLength) as ArrayBuffer
+      )
+    );
+
+  const status = new pkijs.PKIStatusInfo({ status: options.status ?? 0 });
+  if (options.omitToken) {
+    return new Uint8Array(new pkijs.TimeStampResp({ status }).toSchema().toBER(false));
+  }
+
+  const keyPair = (await globalThis.crypto.subtle.generateKey(
+    { name: 'RSASSA-PKCS1-v1_5', modulusLength: 2048, publicExponent: new Uint8Array([1, 0, 1]), hash: 'SHA-256' },
+    true,
+    ['sign', 'verify']
+  )) as CryptoKeyPair;
+
+  const certificate = new pkijs.Certificate();
+  certificate.version = 2;
+  certificate.serialNumber = new asn1js.Integer({ value: 7 });
+  const name = new pkijs.RelativeDistinguishedNames({
+    typesAndValues: [
+      new pkijs.AttributeTypeAndValue({ type: '2.5.4.3', value: new asn1js.Utf8String({ value: 'Fixture TSA' }) }),
+    ],
+  });
+  certificate.issuer = name;
+  certificate.subject = name;
+  certificate.notBefore.value = new Date(SIGNED_AT_MS - 86_400_000);
+  certificate.notAfter.value = new Date(SIGNED_AT_MS + 86_400_000);
+  await certificate.subjectPublicKeyInfo.importKey(keyPair.publicKey);
+  await certificate.sign(keyPair.privateKey, 'SHA-256');
+
+  const tstInfo = new pkijs.TSTInfo({
+    version: 1,
+    policy: '1.3.6.1.4.1.99999.1',
+    messageImprint: new pkijs.MessageImprint({
+      hashAlgorithm: new pkijs.AlgorithmIdentifier({ algorithmId: '2.16.840.1.101.3.4.2.1' }),
+      hashedMessage: new asn1js.OctetString({
+        valueHex: imprint.buffer.slice(imprint.byteOffset, imprint.byteOffset + imprint.byteLength) as ArrayBuffer,
+      }),
+    }),
+    serialNumber: new asn1js.Integer({ value: 42 }),
+    genTime: new Date(SIGNED_AT_MS),
+    ...(options.nonce === null
+      ? {}
+      : {
+          nonce: new asn1js.Integer({
+            valueHex: (options.nonce ?? new Uint8Array([1, 2, 3, 4])).slice().buffer as ArrayBuffer,
+          }),
+        }),
+  });
+
+  const eContentType = options.wrongContentType ? '1.2.840.113549.1.7.1' : '1.2.840.113549.1.9.16.1.4';
+  const signedData = new pkijs.SignedData({
+    version: 3,
+    encapContentInfo: new pkijs.EncapsulatedContentInfo({
+      eContentType,
+      eContent: new asn1js.OctetString({ valueHex: tstInfo.toSchema().toBER(false) }),
+    }),
+    signerInfos: [
+      new pkijs.SignerInfo({
+        version: 1,
+        sid: new pkijs.IssuerAndSerialNumber({
+          issuer: certificate.issuer,
+          serialNumber: certificate.serialNumber,
+        }),
+      }),
+    ],
+    certificates: [certificate],
+  });
+  await signedData.sign(keyPair.privateKey, 0, 'SHA-256');
+
+  const token = new pkijs.ContentInfo({
+    contentType: '1.2.840.113549.1.7.2',
+    content: signedData.toSchema(true),
+  });
+  return new Uint8Array(
+    new pkijs.TimeStampResp({
+      status,
+      timeStampToken: new pkijs.ContentInfo({ schema: token.toSchema() }),
+    })
+      .toSchema()
+      .toBER(false)
+  );
+}

@@ -77,6 +77,10 @@ export interface SignRequest {
   location?: string;
   /** Shown by a bridge that asks before it signs; see ./pdf/sign. */
   documentName?: string;
+  /** Ask the configured TSA for an RFC 3161 token (PAdES-B-T); see ./pdf/sign/timestamp. */
+  timestamp?: import('./pdf/sign/timestamp').TimestampOptions | false;
+  /** Told which level was actually produced, since a timestamp may fail after signing. */
+  onLevel?: (level: 'B-B' | 'B-T', timestampError: Error | null) => void;
 }
 
 /**
@@ -110,6 +114,8 @@ async function maybeSign(
     reason: request.reason,
     location: request.location,
     documentName: request.documentName,
+    timestamp: request.timestamp,
+    onLevel: request.onLevel,
   });
 }
 

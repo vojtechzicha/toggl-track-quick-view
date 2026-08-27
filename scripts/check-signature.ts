@@ -35,6 +35,7 @@ import { createHash, createVerify, X509Certificate } from 'node:crypto';
 import {
   buildFixture,
   chainFixtureCertificate,
+  fakeTimestampResponse,
   CERT_PEM,
   SIGNED_AT_MS,
   SIGNED_PDF,
@@ -421,6 +422,206 @@ const cms = (() => {
     1,
     'the signing certificate is embedded (no chain: the throwaway key is self-signed)'
   );
+}
+
+// ---- timestamps (PAdES-B-T) ----
+//
+// A signature carries no trustworthy time of its own, so a certificate's expiry
+// silently takes every signature made under it with it. The RFC 3161 token is
+// what prevents that — and a token nobody verified prevents nothing, because a
+// well-formed token over the WRONG thing parses exactly as cleanly as a right
+// one. So the checks here are almost all about rejection.
+{
+  const { readToken, requestTimestamp, TimestampError, SIGNATURE_TIMESTAMP_OID, buildCms } =
+    await import('../lib/export/pdf/sign/index.ts');
+
+  const signature = new Uint8Array(256).fill(0xab);
+  const imprint = new Uint8Array(
+    await crypto.subtle.digest('SHA-256', signature.buffer.slice(0) as ArrayBuffer)
+  );
+  const nonce = new Uint8Array([1, 2, 3, 4]);
+
+  const good = await fakeTimestampResponse(signature, { nonce });
+  const token = readToken(good, imprint, nonce);
+  ok(token.length > 300, 'a granted response yields a token of a plausible size');
+  eq(token[0], 0x30, 'and the token is the DER ContentInfo the attribute carries');
+
+  const rejects = async (raw: Uint8Array, why: string) => {
+    checks++;
+    await assert.rejects(
+      async () => readToken(raw, imprint, nonce),
+      (e: unknown) => e instanceof TimestampError,
+      why
+    );
+  };
+  // readToken is synchronous; assert.rejects needs a promise, so each case is
+  // wrapped. The point of each is the same: a response that parses fine.
+  const refuses = (raw: Uint8Array, why: string) => {
+    checks++;
+    assert.throws(() => readToken(raw, imprint, nonce), { name: 'TimestampError' }, why);
+  };
+
+  refuses(
+    await fakeTimestampResponse(signature, { nonce, status: 2 }),
+    'a rejection status is a rejection, however well-formed the rest is'
+  );
+  refuses(
+    await fakeTimestampResponse(signature, { nonce, omitToken: true }),
+    'a granted status with no token is refused rather than treated as success'
+  );
+  refuses(
+    await fakeTimestampResponse(signature, { nonce, imprint: new Uint8Array(32).fill(0x11) }),
+    'a token over a different digest is a true statement about someone else\u2019s data'
+  );
+  refuses(
+    await fakeTimestampResponse(signature, { nonce: new Uint8Array([9, 9, 9, 9]) }),
+    'a token echoing another nonce answers another request'
+  );
+  refuses(
+    await fakeTimestampResponse(signature, { nonce: null }),
+    'a token with no nonce cannot be tied to this request, so it may be a replay'
+  );
+  refuses(
+    await fakeTimestampResponse(signature, { nonce, wrongContentType: true }),
+    'a token whose eContent is not a TSTInfo is not a timestamp'
+  );
+  refuses(new Uint8Array([0x30, 0x03, 0x02, 0x01, 0x00]), 'a truncated response is refused');
+
+  // The transport, with the network stubbed. What is being checked is that the
+  // request is a DER TimeStampReq carrying the right imprint, and that the
+  // nonce the client generated is the one it then demands back — the fake TSA
+  // echoes whatever it is sent, so a client that failed to check would pass
+  // every case above and still be wrong here.
+  {
+    let sentTo = '';
+    let sentBody = new Uint8Array();
+    const stub = (async (url: string, init: { body: Uint8Array }) => {
+      sentTo = String(url);
+      sentBody = new Uint8Array(init.body);
+      const pkijs = await import('pkijs');
+      const asn1js = await import('asn1js');
+      const req = new pkijs.TimeStampReq({
+        schema: asn1js.fromBER(sentBody.slice().buffer as ArrayBuffer).result,
+      });
+      const echoed = new Uint8Array(req.nonce!.valueBlock.valueHexView);
+      const sentImprint = new Uint8Array(req.messageImprint.hashedMessage.valueBlock.valueHexView);
+      const body = await fakeTimestampResponse(signature, { nonce: echoed, imprint: sentImprint });
+      return new Response(body as unknown as BodyInit, { status: 200 });
+    }) as unknown as typeof fetch;
+
+    const fetched = await requestTimestamp(signature, { fetchImpl: stub, endpoint: '/api/timestamp' });
+    ok(fetched.length > 300, 'a round trip through the transport yields a token');
+    eq(sentTo, '/api/timestamp', 'the request goes to our own proxy, never to a TSA directly');
+    eq(sentBody[0], 0x30, 'and it is a DER TimeStampReq');
+
+    // The nonce has to differ per request, or two signatures could be given the
+    // same token by a TSA that caches.
+    const first = new Uint8Array(sentBody);
+    await requestTimestamp(signature, { fetchImpl: stub, endpoint: '/api/timestamp' });
+    ok(
+      !first.every((b, i) => b === sentBody[i]),
+      'each request carries a fresh nonce, so no two can be answered by one token'
+    );
+  }
+
+  // A TSA that answers with someone else's nonce must not produce a file.
+  {
+    const liar = (async () =>
+      new Response((await fakeTimestampResponse(signature, { nonce: new Uint8Array([7, 7]) })) as unknown as BodyInit, {
+        status: 200,
+      })) as unknown as typeof fetch;
+    checks++;
+    await assert.rejects(
+      () => requestTimestamp(signature, { fetchImpl: liar }),
+      { name: 'TimestampError' },
+      'a TSA answering with the wrong nonce is refused end to end'
+    );
+  }
+
+  // The attribute, in the CMS.
+  {
+    const cmsInput = {
+      certificate: certificateDer,
+      chain: [] as Uint8Array[],
+      messageDigest: new Uint8Array(32).fill(7),
+      sign: async () => signature,
+    };
+    const plain = await buildCms(cmsInput);
+    const stamped = await buildCms({
+      ...cmsInput,
+      timestamp: async (sig: Uint8Array) => {
+        const raw = await fakeTimestampResponse(sig, { nonce });
+        const imp = new Uint8Array(
+          await crypto.subtle.digest(
+            'SHA-256',
+            sig.buffer.slice(sig.byteOffset, sig.byteOffset + sig.byteLength) as ArrayBuffer
+          )
+        );
+        return readToken(raw, imp, nonce);
+      },
+    });
+
+    const pkijs = await import('pkijs');
+    const asn1js = await import('asn1js');
+    const parse = (der: Uint8Array) =>
+      new pkijs.SignedData({
+        schema: new pkijs.ContentInfo({
+          schema: asn1js.fromBER(der.slice().buffer as ArrayBuffer).result,
+        }).content,
+      });
+
+    const plainSigner = parse(plain).signerInfos[0];
+    eq(
+      plainSigner.unsignedAttrs,
+      undefined,
+      'without a timestamp the SignerInfo carries no unsigned attributes at all'
+    );
+
+    const stampedSigner = parse(stamped).signerInfos[0];
+    eq(
+      stampedSigner.unsignedAttrs?.attributes.map((a) => a.type),
+      [SIGNATURE_TIMESTAMP_OID],
+      'the token goes in as exactly one unsigned attribute, id-aa-signatureTimeStampToken'
+    );
+    // The signed half must be untouched: the card signed those bytes and cannot
+    // be asked again, so a timestamp that changed them would invalidate the
+    // signature it was meant to strengthen.
+    eq(
+      stampedSigner.signedAttrs?.attributes.map((a) => a.type),
+      plainSigner.signedAttrs?.attributes.map((a) => a.type),
+      'and the signed attributes are untouched by it'
+    );
+    eq(
+      new Uint8Array(stampedSigner.signature.valueBlock.valueHexView),
+      new Uint8Array(plainSigner.signature.valueBlock.valueHexView),
+      'as is the signature itself'
+    );
+    ok(stamped.length > plain.length, 'the timestamped CMS is the larger of the two');
+  }
+
+  // A timestamp that fails must not cost the signature: by then the card has
+  // signed and the PIN is spent. The CMS still builds, one level lower.
+  {
+    const degraded = await buildCms({
+      certificate: certificateDer,
+      chain: [],
+      messageDigest: new Uint8Array(32).fill(7),
+      sign: async () => signature,
+      timestamp: async () => null,
+    });
+    const pkijs = await import('pkijs');
+    const asn1js = await import('asn1js');
+    const signer = new pkijs.SignedData({
+      schema: new pkijs.ContentInfo({
+        schema: asn1js.fromBER(degraded.slice().buffer as ArrayBuffer).result,
+      }).content,
+    }).signerInfos[0];
+    eq(
+      signer.unsignedAttrs,
+      undefined,
+      'a timestamp that could not be had leaves a valid B-B signature, not a broken one'
+    );
+  }
 }
 
 // ---- the bridge seam ----

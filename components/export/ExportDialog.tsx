@@ -6,6 +6,8 @@ import type { TimesheetMode } from '@/components/SettingsPanel';
 import type { TimeEntry } from '@/lib/calc';
 import type { FetchedEntries } from '@/lib/source/types';
 import { isAuthRequired, isRateLimit } from '@/lib/source/errors';
+import { getConfig } from '@/lib/source/config';
+import { loadAuth } from '@/lib/source/auth';
 import {
   type ExportPreset,
   PRESET_LABELS,
@@ -276,6 +278,11 @@ export default function ExportDialog({
   // only by templates that reserve an area for the widget: an export nobody
   // asked to sign has to come out exactly as it always did.
   const [signing, setSigning] = useState(false);
+  // Whether this deployment has a TSA configured (TSA_URL). Null until asked.
+  // Timestamping is not offered as a choice: when the server can do it, every
+  // signature gets one, because a signature that outlives its certificate is
+  // strictly better and there is no reason anyone would want the weaker file.
+  const [canTimestamp, setCanTimestamp] = useState<boolean | null>(null);
   // A remembered scan is only usable if pdfmake can embed it. One stored by an
   // earlier build (the picker used to accept WebP) is dropped rather than
   // carried into an export that would fail on it.
@@ -391,6 +398,26 @@ export default function ExportDialog({
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [signing, signatureWidget]);
+
+  // Asked once, when signing is switched on rather than on mount: a dialog
+  // opened to export an XLSX has no business calling /api/config.
+  useEffect(() => {
+    if (!signing || canTimestamp !== null) return;
+    let cancelled = false;
+    getConfig().then(
+      (config) => {
+        if (!cancelled) setCanTimestamp(config.timestamp.enabled);
+      },
+      () => {
+        // A config that will not load means no timestamp rather than a broken
+        // dialog: signing still works, at B-B.
+        if (!cancelled) setCanTimestamp(false);
+      }
+    );
+    return () => {
+      cancelled = true;
+    };
+  }, [signing, canTimestamp]);
 
   // A bridge that lists without asking anything is listed straight away — the
   // throwaway key, whose CN the preview then shows. An interactive one waits
@@ -612,6 +639,18 @@ export default function ExportDialog({
 
       // Signing is the last thing that happens and the only optional one: with
       // it off, `runExport` downloads exactly the blob the template rendered.
+      //
+      // The level is reported back out of the signer rather than returned,
+      // because a timestamp can fail after the card has already signed — the
+      // file still ships, one level lower, and saying so is the whole point of
+      // tracking it (see lib/export/pdf/sign/signer.ts).
+      // An object rather than two `let`s so the compiler keeps the union:
+      // nothing assigns to them in a straight line, only the callback does, and
+      // control-flow analysis narrows a `let` to its initialiser regardless.
+      const outcome: { level: 'B-B' | 'B-T'; timestampError: Error | null } = {
+        level: 'B-B',
+        timestampError: null,
+      };
       let signRequest: SignRequest | null = null;
       if (format === 'pdf' && signing && signatureWidget) {
         if (!selectedBridge || !certificate) {
@@ -628,6 +667,13 @@ export default function ExportDialog({
             signedAtMs: Date.now(),
           },
           reason: SIGN_REASON[tplLocale],
+          // The session token, because the timestamp route is gated the way the
+          // Toggl proxy is. Absent on a deployment with no password gate.
+          timestamp: canTimestamp ? { appAuth: loadAuth()?.token ?? null } : false,
+          onLevel: (level, timestampError) => {
+            outcome.level = level;
+            outcome.timestampError = timestampError;
+          },
         };
       }
 
@@ -636,11 +682,25 @@ export default function ExportDialog({
         setError('No entries in this range — nothing to export.');
         return;
       }
-      setDone(
-        signRequest
-          ? `Exported as ${FORMAT_LABELS[format]}, digitally signed.`
-          : `Exported as ${FORMAT_LABELS[format]}.`
-      );
+      if (!signRequest) {
+        setDone(`Exported as ${FORMAT_LABELS[format]}.`);
+      } else if (outcome.level === 'B-T') {
+        setDone(
+          `Exported as ${FORMAT_LABELS[format]}, digitally signed and timestamped ` +
+            '(PAdES-B-T) — it stays verifiable after the certificate expires.'
+        );
+      } else if (outcome.timestampError) {
+        // Not an error: the signature is real and the file is downloaded. But
+        // it is a level lower than was asked for, and only saying "signed"
+        // would be telling someone they have a timestamp they do not have.
+        setDone(
+          `Exported as ${FORMAT_LABELS[format]}, digitally signed (PAdES-B-B). The ` +
+            `timestamp could not be obtained, so this signature stops verifying when the ` +
+            `certificate expires — ${outcome.timestampError.message}`
+        );
+      } else {
+        setDone(`Exported as ${FORMAT_LABELS[format]}, digitally signed (PAdES-B-B).`);
+      }
     } catch (e) {
       if (e instanceof Error && e.name === 'TokenBridgeUnavailableError') {
         setError(e.message);

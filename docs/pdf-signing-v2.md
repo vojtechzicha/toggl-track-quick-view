@@ -567,7 +567,12 @@ key.
    512-byte signature verifying against the certificate's own public key,
    `signingCertificateV2` present and no signing-time attribute. `FortifyBridge` and
    `@peculiar/fortify-client-core` were deleted the same day.
-4. **(Later) B-T timestamp** — TSA proxy route + unsigned attribute embedding.
+4. **B-T timestamp** — ✅ **done 2026-08-27.** `lib/export/pdf/sign/timestamp.ts` builds
+   the RFC 3161 request and — this is the part that matters — checks the answer;
+   `app/api/timestamp/route.ts` is the proxy; `cms.ts` embeds the token as
+   `id-aa-signatureTimeStampToken`. Off unless `TSA_URL` is set, and reported through
+   `/api/config` so the dialog never promises a timestamp the deployment cannot make.
+   See "Timestamps" below.
 
 ### What only the real card revealed (2026-08-27)
 
@@ -599,6 +604,50 @@ A fourth was in the helper, not here: SecureStore's dylib destructor joins a hea
 thread that only `C_Finalize` stops, so the host hung **forever inside `exit()`** while
 holding the card. See `sign-bridge-plan.md`.
 
+## Timestamps — PAdES-B-T (2026-08-27)
+
+Acrobat's third line on a B-B signature is *"signing time is from the clock on the
+signer's computer"*, and it is not a nitpick. The certificate is issued for a year. With
+no timestamp there is nothing to distinguish a signature made while it was valid from one
+made after it expired, so on 2027-08-27 every timesheet ever sent quietly stops
+verifying. The timestamp is the evidence that the signature existed at a time, and it
+keeps working forever.
+
+**Shape.** The token covers the SIGNATURE VALUE, not the document, so it cannot exist
+until after the card has signed — which is why it goes in as an *unsigned* attribute, the
+one place it can go without disturbing bytes the card has already committed to.
+
+**Checking the answer is most of the work.** A token over the wrong digest, or replayed
+from an older exchange, parses exactly as cleanly as a correct one; the first thing to
+notice would be a validator, long after the file reached a client. So the client sends a
+random nonce and refuses a response that is not granted, carries no token, timestamps a
+different digest, echoes a different nonce, echoes none at all, or whose eContent is not
+a TSTInfo. Each of those is a check in `check:signature`, against a locally built TSA.
+
+**Two decisions worth knowing about:**
+
+- **A failed timestamp does not fail the export.** By the time the TSA is called the
+  person has entered a PIN and the card has signed; a TSA that is down must not throw
+  that away. The file ships at B-B and the dialog *says so*, naming the failure — the
+  unacceptable outcome is not the lower level, it is someone believing they have a
+  timestamp they do not have.
+- **The reservation is an allowance, not a measurement.** Everything else in the CMS is
+  measured exactly (see the placeholder note above), but a token cannot be measured
+  without buying one, so it gets a flat 12 KiB against tokens that run 1.5–6 KiB. A real
+  DigiCert token measured 6005 bytes with a three-certificate chain. Over-reserving costs
+  padding; under-reserving costs a signature that has already been made.
+
+**Configuration.** `TSA_URL`, plus `TSA_CREDENTIALS` for a commercial authority — see
+`.env.example`. The destination is read only by the proxy: a route that forwarded to a
+URL from the request body would be an SSRF hole with a timestamp-shaped excuse. Nothing
+about the document leaves; the request is a hash of the signature and nothing else.
+
+**Qualified vs not.** A QES with a *non-qualified* timestamp is still a QES, and a
+free TSA in the common trust stores (DigiCert, freetsa.org) is enough for the practical
+goal — surviving the certificate's expiry. A *qualified* timestamp (eIDAS art. 42) is a
+paid product from I.CA or PostSignum at a few CZK a stamp, and is only needed when the
+timestamp itself must be qualified. Switching is one environment variable.
+
 ## Legal notes
 
 - The handwritten image is cosmetic; the CMS signature is the legal act. Never ship a
@@ -607,7 +656,9 @@ holding the card. See `sign-bridge-plan.md`.
 - QES is equivalent to a handwritten signature (eIDAS art. 25); for B2B acceptance sheets
   this exceeds requirements — which is fine.
 - Certificate renewal is annual; signatures made with an expired cert won't validate
-  without a timestamp — the argument for eventually doing B-T.
+  without a timestamp. That was the argument for B-T, which is now implemented — see
+  "Timestamps" above. It is off until `TSA_URL` is set, so an export from a deployment
+  without one is still B-B and still expires with the certificate.
 
 ## References
 

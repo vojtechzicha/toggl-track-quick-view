@@ -21,6 +21,20 @@ export interface PadesSignerOptions {
   chain: Uint8Array[];
   /** Passed to the bridge so a hardware one can name it in its PIN prompt. */
   documentName?: string;
+  /**
+   * Fetch an RFC 3161 token over the signature, producing PAdES-B-T. Omitted
+   * leaves the signature at B-B.
+   */
+  timestamp?: (signature: Uint8Array) => Promise<Uint8Array>;
+  /**
+   * Told what level came out, once it is known.
+   *
+   * `signPdf` cannot return it: the CMS is built inside a callback @signpdf
+   * owns, and by the time it returns a Blob the timestamp has either happened
+   * or been given up on. The caller needs to know which, because the whole
+   * difference between B-B and B-T is invisible in the file's name.
+   */
+  onLevel?: (level: 'B-B' | 'B-T', timestampError: Error | null) => void;
 }
 
 export class PadesSigner extends Signer {
@@ -44,6 +58,8 @@ export class PadesSigner extends Signer {
    */
   async sign(pdfBuffer: Buffer): Promise<Buffer> {
     const messageDigest = await sha256(new Uint8Array(pdfBuffer));
+    let timestampError: Error | null = null;
+
     const cms = await buildCms({
       certificate: this.options.certificate,
       chain: this.options.chain,
@@ -55,7 +71,27 @@ export class PadesSigner extends Signer {
           hash: 'SHA-256',
           documentName: this.options.documentName,
         }),
+      // A failed timestamp degrades to B-B instead of failing the export, and
+      // that is a deliberate choice about something already spent: by the time
+      // this runs the person has entered a PIN and the card has signed, and a
+      // TSA that is down must not cost them that. Nobody is told they have a
+      // timestamp they do not have — `onLevel` reports what actually happened.
+      timestamp: this.options.timestamp
+        ? async (signature) => {
+            try {
+              return await this.options.timestamp!(signature);
+            } catch (e) {
+              timestampError = e instanceof Error ? e : new Error(String(e));
+              return null;
+            }
+          }
+        : undefined,
     });
+
+    this.options.onLevel?.(
+      this.options.timestamp && !timestampError ? 'B-T' : 'B-B',
+      timestampError
+    );
     return Buffer.from(cms);
   }
 }

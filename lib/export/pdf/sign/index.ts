@@ -22,6 +22,7 @@ import { rsaSignatureBytes } from './certificateInfo';
 import { buildCms } from './cms';
 import { prepareSignature } from './prepare';
 import { PadesSigner } from './signer';
+import { requestTimestamp, TIMESTAMP_ALLOWANCE_BYTES, type TimestampOptions } from './timestamp';
 import type { TokenBridge, TokenCertificate } from './tokenBridge';
 import type { SignatureAppearance } from './types';
 
@@ -29,6 +30,14 @@ export { prepareSignature, type PreparedSignature } from './prepare';
 export { renderAppearance, appearanceDocDefinition } from './appearance';
 export { buildCms, sha256, PADES_SIGNED_ATTRIBUTE_OIDS } from './cms';
 export { widgetRectToPdf, widgetRectFits, type PdfRect } from './widget';
+export {
+  requestTimestamp,
+  readToken,
+  TimestampError,
+  SIGNATURE_TIMESTAMP_OID,
+  TIMESTAMP_ALLOWANCE_BYTES,
+  type TimestampOptions,
+} from './timestamp';
 export {
   WebCryptoBridge,
   ExtensionBridge,
@@ -68,6 +77,18 @@ export interface SignPdfOptions {
    * Nothing in the PDF depends on it.
    */
   documentName?: string;
+  /**
+   * Ask the configured timestamp authority for an RFC 3161 token, producing
+   * PAdES-B-T instead of B-B. Off when absent.
+   *
+   * Worth having because a certificate is issued for a year: without a
+   * timestamp, a validator cannot tell a signature made while the certificate
+   * was valid from one made after it expired, and every signature quietly stops
+   * verifying on the renewal date.
+   */
+  timestamp?: TimestampOptions | false;
+  /** Told which level actually came out, and why, when a timestamp was asked for. */
+  onLevel?: (level: 'B-B' | 'B-T', timestampError: Error | null) => void;
 }
 
 /**
@@ -99,7 +120,11 @@ async function ensureBuffer(): Promise<void> {
  * nothing about the values — the digest is always 32 bytes and an RSA signature
  * is always the modulus length, whatever they contain.
  */
-async function reserveForCms(certificate: Uint8Array, chain: Uint8Array[]): Promise<number> {
+async function reserveForCms(
+  certificate: Uint8Array,
+  chain: Uint8Array[],
+  timestamped: boolean
+): Promise<number> {
   // Falls back to 4096-bit rather than to the smallest plausible key: over-
   // reserving costs bytes in the file, under-reserving costs a signature.
   const signatureBytes = rsaSignatureBytes(certificate) ?? 512;
@@ -109,6 +134,13 @@ async function reserveForCms(certificate: Uint8Array, chain: Uint8Array[]): Prom
     messageDigest: new Uint8Array(32),
     sign: async () => new Uint8Array(signatureBytes),
   });
+  // The timestamp cannot be measured the same way — it does not exist until the
+  // signature does, and asking a TSA for one just to size the hole would spend
+  // a stamp to learn how big a stamp is. So it gets an allowance instead, and a
+  // generous one; see TIMESTAMP_ALLOWANCE_BYTES for why erring large is free
+  // and erring small is not.
+  const allowance = timestamped ? TIMESTAMP_ALLOWANCE_BYTES : 0;
+
   // Margin for the ASN.1 length prefixes, which grow by a byte as the structure
   // crosses 256, 65536 … and for the leading zero DER adds to a positive
   // INTEGER whose top bit happens to be set in the real signature but not in a
@@ -118,7 +150,7 @@ async function reserveForCms(certificate: Uint8Array, chain: Uint8Array[]): Prom
   // /Contents holds the CMS hex-encoded, and @signpdf compares its length
   // against this number directly. Returning a byte count here reserves half of
   // what is needed and fails at the same last step it was meant to prevent.
-  return (probe.length + 512) * 2;
+  return (probe.length + allowance + 512) * 2;
 }
 
 /** Sign a rendered export. The returned Blob is a PAdES-B-B PDF. */
@@ -155,15 +187,20 @@ export async function signPdf(pdf: Blob, options: SignPdfOptions): Promise<Blob>
     location: options.location ?? '',
     contactInfo: options.contactInfo ?? '',
     signingTime: new Date(signedAtMs),
-    signatureLength: await reserveForCms(options.certificate.der, chain),
+    signatureLength: await reserveForCms(options.certificate.der, chain, !!options.timestamp),
   });
 
+  const timestampOptions = options.timestamp;
   const signer = new PadesSigner({
     bridge: options.bridge,
     certificateId: options.certificate.id,
     certificate: options.certificate.der,
     chain,
     documentName: options.documentName,
+    timestamp: timestampOptions
+      ? (signature) => requestTimestamp(signature, timestampOptions)
+      : undefined,
+    onLevel: options.onLevel,
   });
   const signed = await new SignPdf().sign(Buffer.from(prepared.bytes), signer);
   return new Blob([new Uint8Array(signed)], { type: 'application/pdf' });
