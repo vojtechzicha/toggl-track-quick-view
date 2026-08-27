@@ -4,11 +4,14 @@ A browser extension and a macOS helper that let a web page sign with the qualifi
 certificate on the I.CA token, replacing Fortify (dead — see `pdf-signing-v2.md`) and
 I.CA's PKIServiceHost (unusable off `localhost` without a licence).
 
-Status: **phases 1–3 built** (2026-08-22), in `../zicha-sign-bridge`. The agent signs
-against SoftHSM and enumerates the real I.CA card; the extension, the native host and
-the protocol between them are written and checked; the app has its bridge and its
-readiness UI. Not yet done: loading the extension into Chrome for a true end-to-end
-run, the menu-bar UI, packaging and release (phase 4), and publishing (phase 5).
+Status: **phases 1–3 done, end to end** (2026-08-27), in `../zicha-sign-bridge`. On
+2026-08-27 a real timesheet was signed with the qualified certificate on the card,
+through the extension, from `localhost:3000` — page → extension → native host → PKCS#11
+→ ACR40T → card, PIN typed in the helper's own window. The resulting PAdES signature was
+verified independently: leaf + issuing CA in the CMS, `messageDigest` matching the
+ByteRange, and a 512-byte RSA-4096 signature verifying against the certificate's own
+public key. Not yet done: the menu-bar UI, packaging and release (phase 4), and
+publishing (phase 5).
 
 ## What forces the shape
 
@@ -235,9 +238,23 @@ Each phase ends somewhere demonstrable.
 2. **The wire, end to end, locally.** ✅ *written* — protocol, native host, extension
    (pinned id), `dev-install.sh`. The host has been driven over real native-messaging
    framing; what remains is loading the extension in Chrome, which is a hands-on step.
-3. **The real card.** ✅ Pointed at SecureStore, the agent enumerates the card:
-   **29 certificates, none with a private key**, every one of them parseable. That is
-   the truth about a card that has not been through certificate issuance.
+3. **The real card.** ✅ **Signed, 2026-08-27.** Before certificate issuance the card
+   enumerated as **29 certificates, none with a private key** — the truth about a card
+   that has not been through issuance. After it: **31 certificates, 2 with a private
+   key** — an RSA-4096 qualified signature certificate from *I.CA EU Qualified CA2/RSA
+   06/2022*, and the commercial authentication half of the TWINS pair beside it. Both
+   parse; the app tells them apart correctly (`qualified: true / false`).
+
+   **The host hung forever inside `exit()`.** Not a hypothetical: with SecureStore
+   loaded, the process never terminated. Its dylib destructor
+   (`HearbeatThreadGuard::~HearbeatThreadGuard`, run from `__cxa_finalize_ranges`) joins
+   a heartbeat thread that only `C_Finalize` stops, and `exit` — which is also what
+   returning from `main` does — runs that destructor. So a host that had touched the
+   card sat holding it until it was killed, which is exactly the "reader busy for no
+   reason anyone can see" failure the shim was supposed to prevent. The fix is an
+   ordering, not a process: `PKCS11Module.finalize()` releases the card, then the host
+   leaves by `_exit`, which runs no destructor and cannot be held. It is the only exit
+   path in `signbridge-host`.
 
    **Implementation note — the shim was not needed yet.** The plan had a stdio shim in
    front of a long-lived agent, to keep one owner of the card. The host is currently a
@@ -284,8 +301,17 @@ Phases 1–3 need nothing from anyone. Phase 4 is where the prerequisites land.
 Small, and none of it before phase 2:
 
 - `lib/export/pdf/sign/extensionBridge.ts` — a `TokenBridge` over the protocol above.
-- `tokenBridge.ts` — add `readiness()`; `isAvailable()` derives from it.
-- `bridge.ts` — offer it, ahead of the throwaway key.
-- `ExportDialog.tsx` — render `BridgeReadiness` where the picker's notes sit.
+  ✅ Also implements `certificateChain()`, which the plan did not anticipate: the card
+  carries its issuer's CA certificates, so the chain is a walk up the list already
+  fetched rather than the `certificateChain` request this document specifies. That
+  request is therefore **unimplemented in the host**, and not missed — it would be a
+  round trip for something already in hand.
+- `tokenBridge.ts` — add `readiness()`; `isAvailable()` derives from it. ✅ Also gained
+  `hasKey`, separated from `forSignature`: the first says this machine can act on the
+  certificate, the second says the issuer meant it for signing, and a card that reports
+  29 keyless CA certificates makes the difference load-bearing.
+- `bridge.ts` — offer it, ahead of the throwaway key. ✅
+- `ExportDialog.tsx` — render `BridgeReadiness` where the picker's notes sit. ✅ And
+  filter the picker to `hasKey`, or 29 unusable entries bury the 2 real ones.
 - `fortify.ts` — deleted once the extension bridge signs, along with
-  `@peculiar/fortify-client-core`.
+  `@peculiar/fortify-client-core`. ✅ **Deleted 2026-08-27**, the day it signed.

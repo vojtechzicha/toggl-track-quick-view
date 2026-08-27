@@ -33,7 +33,7 @@ so signing stays client-side and needs a local bridge.
 | Certification agency | **I.CA** — TWINS certificate (qualified signature + commercial auth), 545 CZK/yr renewal, done online from SecureStore while the cert is valid. |
 | Hardware (QSCD) | **I.CA Premium USB** (2 067 CZK incl. VAT, **ordered**): breakable Starcos 3.7 chip card + **A7 USB-C device** (requested in the order note; default shipped is A6 — any ACS CCID reader likely works, but only A7 is marketed for macOS). |
 | Middleware | **I.CA SecureStore for macOS 8.3.1.0** (website still says 8.1; the installer ships 8.3.1.0, built 2026-06-12). Installs the PKCS#11 library at `/usr/local/lib/pkcs11/libICASecureStorePkcs11.dylib` — verified from the binary: **universal x86_64 + arm64**, supports Starcos 3.0/3.5/3.7. |
-| Browser bridge | ~~Fortify v2.1.0~~ — **abandoned 2026-08-22**, it does not run on macOS 26 (see the smoke test). Replaced per "Fortify is out": I.CA's own PKIServiceHost on localhost now, a DIY helper or an I.CA licence for production. The `FortifyBridge` implementation and its `@peculiar/fortify-client-core` dependency stay in the tree for now — they cost nothing while unavailable, and are the reference for what a bridge has to do. |
+| Browser bridge | ~~Fortify v2.1.0~~ — **abandoned 2026-08-22**, it does not run on macOS 26 (see the smoke test). Replaced per "Fortify is out": I.CA's own PKIServiceHost on localhost now, a DIY helper or an I.CA licence for production. The `FortifyBridge` implementation and its `@peculiar/fortify-client-core` dependency were **deleted 2026-08-27**, the day the Sign Bridge extension signed with the card — the condition set for removing them. |
 | Signature assembly | **@signpdf 3.3.0** (placeholder + CMS embedding, `ETSI.CAdES.detached`) + **@cantoo/pdf-lib 2.9.1** (maintained pdf-lib fork: incremental save built for signing, `drawSvg`, `embedPage`) + **PKI.js 3.4.0** (CMS SignedData, RFC 3161 client) + **@peculiar/asn1-ess** (`SigningCertificateV2`). All free/open source. |
 | Visible appearance | **Stamp-PDF pattern** — the signature block is designed with pdfmake itself and embedded as the widget's appearance XObject (details below). |
 | Timestamps | Ship **B-B** first. Add **B-T** later via a free TSA (freetsa.org, DigiCert, Czech `tsa.cesnet.cz`) through a stateless Next.js proxy route (public TSAs don't do CORS). Qualified PostSignum stamps (~2.5 CZK each, TSA100 pack) only if a *qualified* timestamp is ever legally needed — addable without redesign. |
@@ -299,12 +299,14 @@ things needed deciding on top of it:
   `interactive`, and the dialog offers a *Connect and list certificates* button for a
   bridge that has it rather than listing on switch-on. The throwaway bridge, which asks
   nobody anything, still lists immediately.
-- **The chain is fetched for one certificate, not all of them.** `getChain()` is a round
-  trip per certificate, and Fortify's macOS keychain provider can list dozens. So
-  `TokenCertificate.chain` comes back empty from the hardware bridge and `signPdf()`
-  calls the new optional `certificateChain()` for the one being signed with.
-  `getChain()` returns the path *including* the leaf while `buildCms` ships
-  `[signerCert, ...chain]`, so the leaf is filtered back out.
+- **The chain is fetched for one certificate, not all of them.** `TokenCertificate.chain`
+  comes back empty from the hardware bridge and `signPdf()` calls the optional
+  `certificateChain()` for the one being signed with. On the Sign Bridge bridge that
+  costs no round trip at all: the card carries its issuer's CA certificates alongside
+  its own — that is what the other thirty objects on it are — so the chain is a walk up
+  the list already fetched, matching each certificate's encoded issuer name against
+  another's encoded subject. It stops at a self-issued certificate and ships whatever it
+  reached; the leaf is never repeated, because `buildCms` ships `[signerCert, ...chain]`.
 
 **Implementation note — the certificate is chosen, never assumed.** Phase 2's dialog took
 the first certificate the first available bridge offered, which is correct when a bridge
@@ -315,7 +317,10 @@ and is not a QES — a failure with no visible symptom. So `TokenCertificate` ca
 `qualified` (from the client's `X509Schema.isQualified()`, i.e. the certificate's own
 qcStatements and policies) and `forSignature` (key usage includes nonRepudiation), the
 picker preselects the certificate that is both, and the dialog says out loud when the
-chosen one is neither. Both flags are *claims read off the certificate*: false is
+chosen one is neither. A third flag, `hasKey`, is what the picker FILTERS on rather than
+warns about, and the real card is why: it reports 31 certificates and holds the private
+key of 2. The other 29 are its issuer's CA certificates, and offering one is offering a
+PIN prompt that ends in "no private key". Both flags are *claims read off the certificate*: false is
 reliable, true is an expectation, and the verdict still belongs to a validator checking
 the Trust List. That is the right way round for warning someone before they sign.
 
@@ -515,6 +520,13 @@ Worth repeating once a certificate exists, and worth repeating on a hardware-sig
 file — signing the FIXTURE document through the token would give both a real chain and
 no client data, which is the run to make.
 
+**Still to do (2026-08-27).** The card-signed run has been verified locally — chain,
+digest, signature, attributes — but has **not** been through the DSS validator, because
+the file signed was a real client timesheet and the fixture has not been signed with the
+card yet. That is the outstanding milestone check: sign `scripts/fixtures`' report
+through the token and put it through DSS, which should turn `Qualification: N/A` into a
+QES determination and `NO_CERTIFICATE_CHAIN_FOUND` into TOTAL_PASSED.
+
 ### Phase 2 results (2026-08-19)
 
 Fixture: `scripts/fixtures/signed-report.pdf`, signed with the committed throwaway
@@ -540,23 +552,52 @@ key.
    self-signed throwaway key via WebCrypto; `PAdES-BASELINE-B` per the DSS validator (see
    the results above). `TokenBridge` is defined and has its WebCrypto implementation;
    signing is offered from the ExportDialog behind a switch that is off by default.
-3. **Bridge wiring** — ⏳ **written against Fortify, which is dead; being rebuilt.**
-   See `sign-bridge-plan.md` — the seam survives, the implementation behind it does not.
-   The state below describes what exists in the tree today.
+3. **Bridge wiring** — ✅ **done 2026-08-27. A real qualified signature has been made.**
+   Both blockers cleared: Fortify was replaced by our own extension and helper (see
+   `sign-bridge-plan.md`), and the card went through certificate issuance. The card now
+   reports 31 certificates, 2 of them with a private key — an RSA-4096 qualified
+   signature certificate from *I.CA EU Qualified CA2/RSA 06/2022*, and the commercial
+   authentication half of the TWINS pair beside it, which is the case the picker was
+   written for and is no longer hypothetical.
 
-   **⏳ written, unproven, and blocked.** `FortifyBridge` is
-   implemented against `@peculiar/fortify-client-core` (`lib/export/pdf/sign/fortify.ts`),
-   the certificate picker is in the export dialog, and the pieces that hold still without
-   hardware are in `check:signature`: the probe address, the DN parsing behind the
-   printed CN, and the chain fetch. **Nothing has been signed with the token.** Two
-   independent blockers, in this order: Fortify does not stay running on macOS 26, so no
-   bridge of any kind can be exercised; and the card has no end-entity certificate, so
-   nothing qualified can be signed even once one does. The app-side work does not change
-   under either — including a switch to fallback 1, which is a new `TokenBridge`
-   implementation and nothing else.
+   The run: export dialog → `ExtensionBridge` → extension → native host → PKCS#11 →
+   ACR40T → card, with the PIN typed in the helper's own window. Result verified
+   independently of the code that made it: 2 certificates in the CMS (leaf + issuing CA,
+   built by the chain walk), `messageDigest` equal to SHA-256 over the ByteRange, a
+   512-byte signature verifying against the certificate's own public key,
+   `signingCertificateV2` present and no signing-time attribute. `FortifyBridge` and
+   `@peculiar/fortify-client-core` were deleted the same day.
 4. **(Later) B-T timestamp** — TSA proxy route + unsigned attribute embedding.
 
-Phase 3's remaining half waits on the certificate.
+### What only the real card revealed (2026-08-27)
+
+Three defects that no amount of SoftHSM or throwaway-key testing would have found, all
+fixed:
+
+- **The placeholder was too small.** `@signpdf`'s `DEFAULT_SIGNATURE_LENGTH` is 8192,
+  and — the trap — it counts **hex characters, not bytes**, so it reserves 4 KiB of CMS.
+  A 2048-bit throwaway key with no chain fits in a third of that. An RSA-4096 signer
+  certificate (2459 B), its RSA-4096 issuing CA (1806 B) and a 512-byte signature come to
+  5317 B, and the export died on `Signature exceeds placeholder length: 10634 > 8192` —
+  *after* the PIN had been typed and the card had already signed. `signPdf()` now
+  measures instead of guessing: it builds the CMS once over a zero digest and a zero
+  signature, which has exactly the length the real one will have (a CMS's DER length is
+  fixed by the sizes of the certificate, the chain and the signature, never by their
+  values), and reserves that plus a margin, doubled for the hex encoding.
+- **Every certificate on the card was offered.** The picker listed all 31, including 29
+  CA certificates with no private key here, several already expired. It filters on
+  `hasKey` now — which meant separating "the issuer intended this for signing"
+  (`forSignature`, read from the DER) from "this machine can act on it" (`hasKey`), two
+  things the code had been conflating.
+- **Any failure blamed Toggl.** The export dialog's catch-all reported *"Could not load
+  this range from Toggl"* for everything it did not recognise — which covers the entire
+  render-and-sign half of the pipeline. The placeholder overflow above presented as a
+  network error, and finding the real message needed a code change. It now reports what
+  actually happened.
+
+A fourth was in the helper, not here: SecureStore's dylib destructor joins a heartbeat
+thread that only `C_Finalize` stops, so the host hung **forever inside `exit()`** while
+holding the card. See `sign-bridge-plan.md`.
 
 ## Legal notes
 
