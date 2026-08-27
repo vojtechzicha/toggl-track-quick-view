@@ -18,6 +18,8 @@
 
 import type { SignatureWidget } from '../templates';
 import { renderAppearance } from './appearance';
+import { rsaSignatureBytes } from './certificateInfo';
+import { buildCms } from './cms';
 import { prepareSignature } from './prepare';
 import { PadesSigner } from './signer';
 import type { TokenBridge, TokenCertificate } from './tokenBridge';
@@ -29,17 +31,18 @@ export { buildCms, sha256, PADES_SIGNED_ATTRIBUTE_OIDS } from './cms';
 export { widgetRectToPdf, widgetRectFits, type PdfRect } from './widget';
 export {
   WebCryptoBridge,
-  FortifyBridge,
-  FORTIFY_ORIGIN,
+  ExtensionBridge,
+  SIGN_BRIDGE_EXTENSION_ID,
   TokenBridgeUnavailableError,
   availableBridges,
   type AvailableBridgeOptions,
-  type FortifyBridgeOptions,
+  type ExtensionBridgeOptions,
+  type BridgeReadiness,
   type TokenBridge,
   type TokenCertificate,
   type SignDigestRequest,
 } from './bridge';
-export { generateThrowawayKey, type ThrowawayKey } from './throwaway';
+export { ensureCryptoEngine, generateThrowawayKey, type ThrowawayKey } from './throwaway';
 export { PadesSigner } from './signer';
 export {
   DEFAULT_SIGNATURE_APPEARANCE,
@@ -79,6 +82,45 @@ async function ensureBuffer(): Promise<void> {
   }
 }
 
+/**
+ * Bytes to reserve in /Contents for the CMS, measured rather than guessed.
+ *
+ * The PDF must reserve the room before anything is signed, and @signpdf's 8 KiB
+ * default is sized for a 2048-bit signer with no chain. A real qualified
+ * certificate is not that: an RSA-4096 signer certificate, its issuing CA and a
+ * 512-byte signature come to over 10 KiB, and the export fails at the last step
+ * with "signature exceeds placeholder length" — after the PIN has been typed and
+ * the signature has already been made on the card.
+ *
+ * A constant large enough for every case would waste a fixed amount of every
+ * PDF and still be a guess. This builds the CMS instead, over a zero digest and
+ * a zero signature, and measures it. That is exact: a CMS's DER length is
+ * decided by the SIZES of the certificate, the chain and the signature, and by
+ * nothing about the values — the digest is always 32 bytes and an RSA signature
+ * is always the modulus length, whatever they contain.
+ */
+async function reserveForCms(certificate: Uint8Array, chain: Uint8Array[]): Promise<number> {
+  // Falls back to 4096-bit rather than to the smallest plausible key: over-
+  // reserving costs bytes in the file, under-reserving costs a signature.
+  const signatureBytes = rsaSignatureBytes(certificate) ?? 512;
+  const probe = await buildCms({
+    certificate,
+    chain,
+    messageDigest: new Uint8Array(32),
+    sign: async () => new Uint8Array(signatureBytes),
+  });
+  // Margin for the ASN.1 length prefixes, which grow by a byte as the structure
+  // crosses 256, 65536 … and for the leading zero DER adds to a positive
+  // INTEGER whose top bit happens to be set in the real signature but not in a
+  // probe full of zeros.
+  //
+  // Doubled because the placeholder is counted in HEX CHARACTERS, not bytes:
+  // /Contents holds the CMS hex-encoded, and @signpdf compares its length
+  // against this number directly. Returning a byte count here reserves half of
+  // what is needed and fails at the same last step it was meant to prevent.
+  return (probe.length + 512) * 2;
+}
+
 /** Sign a rendered export. The returned Blob is a PAdES-B-B PDF. */
 export async function signPdf(pdf: Blob, options: SignPdfOptions): Promise<Blob> {
   await ensureBuffer();
@@ -93,6 +135,17 @@ export async function signPdf(pdf: Blob, options: SignPdfOptions): Promise<Blob>
     certificateCN: options.appearance.certificateCN || options.certificate.subjectCN,
   };
 
+  // The issuing chain is fetched here rather than when the certificate was
+  // listed: a bridge over a software key store can list dozens, and only the
+  // one being signed with is worth a round trip. A bridge that has no chain to
+  // offer simply ships without one.
+  //
+  // It is fetched BEFORE the placeholder is written, because how much room the
+  // placeholder needs depends on how many certificates end up inside it.
+  const chain = options.certificate.chain.length
+    ? options.certificate.chain
+    : (await options.bridge.certificateChain?.(options.certificate.id)) ?? [];
+
   const stamp = await renderAppearance(options.widget.rect, appearance);
   const prepared = await prepareSignature(pdf, {
     widget: options.widget,
@@ -102,15 +155,8 @@ export async function signPdf(pdf: Blob, options: SignPdfOptions): Promise<Blob>
     location: options.location ?? '',
     contactInfo: options.contactInfo ?? '',
     signingTime: new Date(signedAtMs),
+    signatureLength: await reserveForCms(options.certificate.der, chain),
   });
-
-  // The issuing chain is fetched here rather than when the certificate was
-  // listed: a bridge over a software key store can list dozens, and only the
-  // one being signed with is worth a round trip. A bridge that has no chain to
-  // offer simply ships without one.
-  const chain = options.certificate.chain.length
-    ? options.certificate.chain
-    : (await options.bridge.certificateChain?.(options.certificate.id)) ?? [];
 
   const signer = new PadesSigner({
     bridge: options.bridge,

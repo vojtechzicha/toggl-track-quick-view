@@ -45,7 +45,16 @@ export interface PrepareSignatureOptions {
    * signing-time ATTRIBUTE, so this entry is where the claimed time lives.
    */
   signingTime: Date;
-  /** Bytes reserved for the CMS. The default (8 KiB) fits a full chain. */
+  /**
+   * Room reserved for the CMS, in HEX CHARACTERS — the unit @signpdf compares
+   * against, since /Contents holds the CMS hex-encoded. So this is twice the
+   * byte count, and passing a byte count reserves half of what is needed.
+   *
+   * The default is @signpdf's 8192, i.e. 4 KiB of CMS: enough for a 2048-bit
+   * signer with a short chain and not enough for a qualified certificate.
+   * `signPdf` measures the real figure instead (see ./index.ts) and always
+   * passes it; the default is what remains for a direct caller.
+   */
   signatureLength?: number;
 }
 
