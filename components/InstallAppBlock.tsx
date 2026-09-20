@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useState, useSyncExternalStore } from 'react';
 import { appName, manualInstallGuide, type ManualInstallGuide } from '@/lib/pwa';
 import {
+  consumeInstallPrompt,
   getInstallPrompt,
   getServerInstallPrompt,
   subscribeInstallPrompt,
@@ -71,8 +72,15 @@ export default function InstallAppBlock() {
           type="button"
           className="btn"
           onClick={() => {
-            if (installEvent) void installEvent.prompt().catch(() => {});
-            else setGuideOpen(true);
+            if (!installEvent) {
+              setGuideOpen(true);
+              return;
+            }
+            // One-shot: take it out of the store first, so a dismissed dialog
+            // doesn't leave a button that replays a spent event (see
+            // lib/installPrompt.ts)
+            const event = consumeInstallPrompt();
+            if (event) void event.prompt().catch(() => {});
           }}
         >
           {installEvent

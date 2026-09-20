@@ -44,6 +44,21 @@ export function getInstallPrompt(): BeforeInstallPromptEvent | null {
   return deferred;
 }
 
+/**
+ * Take the event out of the store to prompt with it. A
+ * BeforeInstallPromptEvent can be prompted ONCE: after that `prompt()`
+ * rejects, and a dismissed dialog fires no `appinstalled`, so keeping the
+ * event would leave a button that looks live and does nothing. Consuming it
+ * hides the button until the browser hands out a fresh event (Chromium does,
+ * after a while, when the person dismissed rather than installed).
+ */
+export function consumeInstallPrompt(): BeforeInstallPromptEvent | null {
+  const event = deferred;
+  deferred = null;
+  if (event) notify();
+  return event;
+}
+
 export function subscribeInstallPrompt(fn: () => void): () => void {
   listeners.add(fn);
   return () => {
