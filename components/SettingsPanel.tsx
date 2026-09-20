@@ -15,6 +15,7 @@ import {
 } from '@/lib/calc';
 import { mappingGridCompatible, type CodeMapping } from '@/lib/timesheet/mapping';
 import { EMPTY_EXPORT_FIELDS, type ExportFieldValues } from '@/lib/exportFields';
+import InstallAppBlock from '@/components/InstallAppBlock';
 
 export type TimesheetMode = 'summary' | 'individual';
 
@@ -1745,6 +1746,11 @@ export default function SettingsPanel({
             </p>
           </div>
         </details>
+
+        {/* Per-device, like the refresh interval: install the site as an app.
+            Renders only where the browser can install (or be walked through
+            it), never inside the installed app. */}
+        <InstallAppBlock />
 
         <div className="row">
           {canClose && (

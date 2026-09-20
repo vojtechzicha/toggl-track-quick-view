@@ -2486,3 +2486,99 @@ body:has(.imp-page) {
 .sig-in-use {
   margin-top: 4px;
 }
+
+/* ----- Settings: "Install as an app" + the manual-install walkthrough
+   (components/InstallAppBlock.tsx, InstallGuideSheet.tsx). The sheet reuses
+   the .overlay/.panel shell one layer above the settings overlay it was
+   opened from. ----- */
+.overlay.install-guide {
+  z-index: 55;
+}
+.install-guide-panel {
+  width: min(400px, 100%);
+}
+.install-guide-head {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+}
+.install-guide-head h2 {
+  font-size: 20px;
+  line-height: 1.2;
+}
+.install-guide-head .hint {
+  margin-top: 4px;
+}
+.install-guide-icon {
+  flex: 0 0 auto;
+  width: 56px;
+  height: 56px;
+  border-radius: 14px;
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.45);
+}
+.install-steps {
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.install-step {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 12px 14px;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: var(--bg);
+}
+.install-step-num {
+  flex: 0 0 auto;
+  width: 26px;
+  height: 26px;
+  border-radius: 50%;
+  background: rgba(59, 130, 246, 0.18);
+  color: var(--accent-soft);
+  font-size: 13px;
+  font-weight: 700;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  margin-top: 1px;
+}
+.install-step-body {
+  min-width: 0;
+  font-size: 15px;
+  line-height: 1.6;
+}
+.install-step-hint {
+  display: block;
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.4;
+  margin-top: 2px;
+}
+/* A system menu row as the person will see it on the share sheet. */
+.menu-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  vertical-align: -3px;
+  padding: 1px 8px;
+  border-radius: 8px;
+  font-size: 14px;
+  font-weight: 600;
+  white-space: nowrap;
+  color: var(--text);
+  background: var(--card2);
+  border: 1px solid var(--line);
+}
+/* The confirming "Add" button, blue like the real one. */
+.menu-chip.accent {
+  color: #3d95ff;
+  background: rgba(10, 122, 255, 0.14);
+  border-color: transparent;
+}
+.menu-chip-icon {
+  display: inline-flex;
+  flex: 0 0 auto;
+}

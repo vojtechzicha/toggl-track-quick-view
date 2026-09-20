@@ -62,6 +62,11 @@ const nextConfig = {
   generateBuildId: () => buildId,
   env: {
     NEXT_PUBLIC_BUILD_ID: buildId,
+    // Which deployment this bundle is, for the install sheet's app name
+    // (lib/pwa.ts): a preview installs as "(beta)". Baked here rather than
+    // relying on Vercel's automatic NEXT_PUBLIC_VERCEL_ENV exposure, so it
+    // holds on a fork with that setting off; empty outside Vercel.
+    NEXT_PUBLIC_VERCEL_ENV: process.env.VERCEL_ENV ?? '',
   },
   webpack: (config) => {
     config.resolve.alias = {

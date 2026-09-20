@@ -215,9 +215,11 @@ export const ENV_SPEC = [
  */
 export const EXTERNAL_ENV = {
   platform: ['NODE_ENV', 'PORT', 'CI', 'VERCEL', 'VERCEL_ENV', 'VERCEL_GIT_COMMIT_SHA'],
-  // Computed by next.config.js at build time (from the git commit) and baked
-  // into the bundle for the post-deploy refresh hint — nobody ever sets it.
-  derived: ['NEXT_PUBLIC_BUILD_ID'],
+  // Computed by next.config.js at build time and baked into the bundle —
+  // nobody ever sets them: the build id (from the git commit) for the
+  // post-deploy refresh hint, and VERCEL_ENV re-exported for the install
+  // sheet's app name (lib/pwa.ts).
+  derived: ['NEXT_PUBLIC_BUILD_ID', 'NEXT_PUBLIC_VERCEL_ENV'],
   // scripts/check-windows.ts reassigns TZ per case to exercise DST boundaries.
   scriptFlags: ['TZ'],
   // A 1Password service-account token in a generated .env would sit on every

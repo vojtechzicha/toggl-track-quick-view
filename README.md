@@ -184,10 +184,31 @@ works on every deployment, synced or not.
 ## Install as an app (PWA)
 
 The dashboard ships a web manifest, maskable icons, and Apple touch-icon /
-status-bar metadata, so it can be installed to the home screen and launched
-standalone (its own window, no browser chrome, dark theme color, safe-area
-padding for notched phones). On the phone, "Add to Home Screen" (iOS Safari) or
-the install prompt (Chrome / Android) does the job.
+status-bar metadata, so it can be installed to the home screen and launched in
+its own window (no browser chrome, dark theme color, safe-area padding for
+notched phones).
+
+Settings ends with an **"Install as an app"** block that does the installing,
+or explains it, depending on the browser:
+
+- Where the browser can install on its own (Chrome, Edge, Android), the button
+  opens the browser's native install dialog. The browser's own affordances (the
+  omnibox icon, Android's banner) are left alone — the button is one more way
+  in, not a replacement.
+- On iPhone and iPad (every browser there), and in Safari 17+ on the Mac, no
+  browser can trigger the install, so the button opens a short walkthrough of
+  the manual route instead: Share → **Add to Home Screen**, or File → **Add to
+  Dock** on the Mac (Safari on macOS Sonoma or later). A third-party iOS
+  browser older than iOS 16.4, or an in-app browser (Slack, Teams, a mail
+  app), gets the same walkthrough prefixed with "open this page in Safari",
+  since their share menus don't offer it.
+- Nowhere else, and never inside the installed app.
+
+The rules live in `lib/pwa.ts` and `pnpm check:pwa` pins each branch against a
+real user-agent string. Preview deployments install under their own name,
+**Toggl Quick View (beta)** — they have a stable host (`beta.track.zicha.dev`),
+so a preview install can sit next to the production one on the same home
+screen without the two being confused.
 
 It is **not** offline-capable by design — a tiny pass-through service worker
 (`public/sw.js`) only exists to satisfy installability and caches nothing, so the
