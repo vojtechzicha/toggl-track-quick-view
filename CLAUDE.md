@@ -137,6 +137,7 @@ pnpm check:windows    # Start-window / DST boundaries (reassigns process.env.TZ)
 pnpm check:export     # Export scope
 pnpm check:templates  # PDF template registry invariants (app + pack)
 pnpm check:fonts      # Font / pdfmake VFS, for whatever templates are registered
+pnpm check:pwa        # PWA install rules (which browsers get the native prompt vs the walkthrough)
 pnpm check:pack       # The template pack's own checks, if one is checked out
 
 pnpm build            # next build
@@ -201,6 +202,22 @@ Vercel, GitHub integration, previews per PR.
   per-ORIGIN — a fresh `*-<hash>.vercel.app` per deployment loses both. The
   `VERCEL_TOKEN` repo secret comes from `Development/vercel-zicha-dev-ci`,
   which zicha-travel's equivalent workflow shares.
+- **PWA install entry** (README → "Install as an app"): the "Install as an
+  app" block at the bottom of Settings (`components/InstallAppBlock.tsx`)
+  either replays Chromium's `beforeinstallprompt` — parked from page load by
+  `lib/installPrompt.ts`, since the event fires long before Settings opens,
+  and NOT `preventDefault`ed, so the browser's own install affordances stay —
+  or opens `InstallGuideSheet.tsx`, the Share → "Add to Home Screen" / File
+  → "Add to Dock" walkthrough for WebKit. Which applies is `manualInstallGuide`
+  in `lib/pwa.ts`, pure and pinned by `pnpm check:pwa` against real UA strings
+  (iPadOS Safari claims to be a Mac, in-app browsers drop the Safari token,
+  Safari's UA never says which macOS). **Naming trap**: the platform's
+  "standalone display mode" (running as the installed app) is called
+  `installed` throughout, because "standalone" already means the no-Toggl
+  store mode in this app. Preview installs are named "Toggl Quick View (beta)"
+  (`appName` in `lib/pwa.ts`; `next.config.js` bakes `VERCEL_ENV` into
+  `NEXT_PUBLIC_VERCEL_ENV` for the client side) — the stable beta host makes a
+  preview install a real thing next to the production one.
 - **Post-deploy refresh hint**: every build bakes a deterministic build id (git
   commit via `VERCEL_GIT_COMMIT_SHA`, `computeBuildId()` in `next.config.js`)
   into the client bundle AND the server routes; long-lived tabs compare theirs
