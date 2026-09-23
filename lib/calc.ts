@@ -260,15 +260,14 @@ export function holidayDaysOfWeek(
   weekStart: number,
   timeOffTag?: string
 ): Set<number> {
-  const dayMs = 24 * HOUR * MS;
+  const weekEnd = addDays(weekStart, 7);
   const days = new Set<number>();
   for (const e of entries) {
     if (!inSet(e.project_id, projects)) continue;
     if (!isTimeOffEntry(e.tags, timeOffTag)) continue;
     const startMs = new Date(e.start).getTime();
-    if (!Number.isFinite(startMs)) continue;
-    const dayIdx = Math.floor((startMs - weekStart) / dayMs);
-    if (dayIdx >= 0 && dayIdx <= 6) days.add(dayIdx);
+    if (!Number.isFinite(startMs) || startMs < weekStart || startMs >= weekEnd) continue;
+    days.add(weekDayIndex(new Date(startMs)));
   }
   return days;
 }
@@ -333,6 +332,17 @@ export function startOfWeek(d: Date): Date {
   return x;
 }
 
+/**
+ * `ms` moved by `days` local calendar days, keeping the time of day. Use it for
+ * every day and week step: a week with a clock change is 167h or 169h long, so
+ * adding 24h blocks shifts later days by an hour.
+ */
+export function addDays(ms: number, days: number): number {
+  const d = new Date(ms);
+  d.setDate(d.getDate() + days);
+  return d.getTime();
+}
+
 // ---- Month-split weeks ----
 // Billing is per month, so when the 1st falls mid-week the week splits in two,
 // as the timesheet's overtime cap does (weekSegments in lib/timesheet/overtime).
@@ -340,8 +350,12 @@ export function startOfWeek(d: Date): Date {
 // weekday it contains. Hours logged on one side never count toward the other,
 // so overtime in the old month does not shorten the new month's days.
 
-/** Day index within the Sat-start week: Sat→0, Sun→1, Mon→2 … Fri→6. */
-function weekDayIndex(d: Date): number {
+/**
+ * Day index within the Sat-start week: Sat→0, Sun→1, Mon→2 … Fri→6, from the
+ * local calendar so it survives a clock change. Callers bucketing an instant
+ * check first that it lies in [weekStart, addDays(weekStart, 7)).
+ */
+export function weekDayIndex(d: Date): number {
   return (d.getDay() + 1) % 7;
 }
 
@@ -559,6 +573,17 @@ export function plannedTargetSeconds(
     planned += target;
   }
   return t.standardDay; // unreachable: idx is a working day of its segment
+}
+
+/**
+ * Whether the week summary shows future days' plan (plannedTargetSeconds)
+ * instead of targets projected from today: Saturday through Wednesday, before
+ * the adaptive Thursday and Friday. Projecting a weekend day's fallback target
+ * as worked time would inflate them. Uses the Saturday-start index because
+ * getDay() puts Saturday last.
+ */
+export function futureDaysShowPlan(now: Date): boolean {
+  return weekDayIndex(now) < 5;
 }
 
 /**

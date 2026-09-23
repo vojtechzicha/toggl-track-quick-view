@@ -2,10 +2,12 @@
 // call it, so exports show the same figures as the screen.
 
 import {
+  addDays,
   holidayDaysOfWeek,
   isTimeOffEntry,
   parseBillingCode,
   roundQuartersPreservingTotal,
+  weekDayIndex,
   type TimeEntry,
 } from '@/lib/calc';
 import type { SelectedProject } from '@/components/SettingsPanel';
@@ -21,7 +23,7 @@ import {
   type MappedAgg,
 } from './mapping';
 import { fitDescs } from './desc';
-import { DAY_MS, UNTAGGED, MULTIPLE, projectBillingCode } from './constants';
+import { UNTAGGED, MULTIPLE, projectBillingCode } from './constants';
 
 export interface Cell {
   descs: string[]; // distinct (case-insensitive), in first-seen order
@@ -123,7 +125,7 @@ export function buildSummaryGrid({
   if (!weekStart) return null;
   const ids = new Set(projects.map((p) => p.id));
   const nameById = new Map(projects.map((p) => [p.id, p.name]));
-  const weekEnd = weekStart + 7 * DAY_MS;
+  const weekEnd = addDays(weekStart, 7);
 
   const holidays = holidayDaysOfWeek(entries, ids, weekStart, timeOffTag);
 
@@ -150,8 +152,7 @@ export function buildSummaryGrid({
     if (e.project_id == null || !ids.has(e.project_id)) continue;
     const startMs = new Date(e.start).getTime();
     if (!Number.isFinite(startMs) || startMs < weekStart || startMs >= weekEnd) continue;
-    const dayIdx = Math.floor((startMs - weekStart) / DAY_MS);
-    if (dayIdx < 0 || dayIdx > 6) continue;
+    const dayIdx = weekDayIndex(new Date(startMs));
     // Time-off markers only mark the day; they are never billed or shown.
     if (isTimeOffEntry(e.tags, timeOffTag)) continue;
 

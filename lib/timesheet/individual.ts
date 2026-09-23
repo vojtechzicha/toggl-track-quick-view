@@ -2,12 +2,14 @@
 // both call it, so exports show the same lines as the screen.
 
 import {
+  addDays,
   fmtHoursLabel,
   fmtTimeOfDay,
   holidayDaysOfWeek,
   isTimeOffEntry,
   parseBillingCode,
   roundQuartersPreservingTotal,
+  weekDayIndex,
   type TimeEntry,
 } from '@/lib/calc';
 import type { SelectedProject } from '@/components/SettingsPanel';
@@ -22,7 +24,7 @@ import {
   type MappedAgg,
 } from './mapping';
 import { fitDescs } from './desc';
-import { DAY_MS, UNTAGGED, MULTIPLE, TOOLONG, projectBillingCode } from './constants';
+import { UNTAGGED, MULTIPLE, TOOLONG, projectBillingCode } from './constants';
 
 const COMBINE_GAP_SECONDS = 60 * 60; // max gap between same-code entries that combine
 const OVERLAP_MIN_MS = 60 * 1000; // shorter overlaps are not flagged
@@ -419,7 +421,7 @@ export function buildIndividualWeek({
   const windowMs =
     Math.max(roundingSeconds, startWindowSeconds && startWindowSeconds > 0 ? startWindowSeconds : 0) *
     1000;
-  const weekEnd = weekStart + 7 * DAY_MS;
+  const weekEnd = addDays(weekStart, 7);
 
   const holidays = holidayDaysOfWeek(entries, ids, weekStart, timeOffTag);
 
@@ -428,8 +430,7 @@ export function buildIndividualWeek({
     if (e.project_id == null || !ids.has(e.project_id)) continue;
     const startMs = new Date(e.start).getTime();
     if (!Number.isFinite(startMs) || startMs < weekStart || startMs >= weekEnd) continue;
-    const dayIdx = Math.floor((startMs - weekStart) / DAY_MS);
-    if (dayIdx < 0 || dayIdx > 6) continue;
+    const dayIdx = weekDayIndex(new Date(startMs));
     // Time-off markers only mark the day; they are never billed or shown.
     if (isTimeOffEntry(e.tags, timeOffTag)) continue;
 
@@ -536,7 +537,7 @@ export function buildIndividualWeek({
     .map((c, dayIdx) =>
       finalizeDay(
         dayIdx,
-        weekStart + dayIdx * DAY_MS,
+        addDays(weekStart, dayIdx),
         c,
         windowMs,
         overtimeByDay[dayIdx],

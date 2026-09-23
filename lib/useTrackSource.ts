@@ -39,6 +39,7 @@ import type {
 } from '@/components/SettingsPanel';
 import {
   TimeEntry,
+  addDays,
   startOfDay,
   startOfWeek,
   DEFAULT_WEEKLY_HOURS,
@@ -297,8 +298,8 @@ function broadcastStoreChange(kind: StoreChangeKind): void {
  */
 export function pollWindow(now: Date): { startMs: number; endMs: number } {
   const weekStart = startOfWeek(now).getTime();
-  const yesterdayStart = startOfDay(now).getTime() - 24 * 3600 * 1000;
-  return { startMs: Math.min(weekStart, yesterdayStart), endMs: weekStart + 7 * 24 * 3600 * 1000 };
+  const yesterdayStart = addDays(startOfDay(now).getTime(), -1);
+  return { startMs: Math.min(weekStart, yesterdayStart), endMs: addDays(weekStart, 7) };
 }
 
 /** Apply an EntryInput patch onto a client-side TimeEntry (optimistic preview). */

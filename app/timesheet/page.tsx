@@ -15,6 +15,7 @@ import type { TimesheetViewProps } from '@/components/timesheet/types';
 import { useTrackSource } from '@/lib/useTrackSource';
 import { isAuthRequired } from '@/lib/source/errors';
 import {
+  addDays,
   startOfWeek,
   effectiveMaxBillableHours,
   roundingUnitSeconds,
@@ -23,8 +24,6 @@ import {
   type TimeEntry,
 } from '@/lib/calc';
 
-const DAY_MS = 24 * 3600 * 1000;
-const WEEK_MS = 7 * DAY_MS;
 const PICKER_PAGE = 12; // previous weeks shown per page of the picker
 
 // One entry per timesheet view. The note mentions the start-time window only
@@ -132,7 +131,7 @@ export default function TimesheetPage() {
       setHistError(null);
       try {
         const startISO = new Date(weekStart).toISOString();
-        const endISO = new Date(weekStart + WEEK_MS).toISOString();
+        const endISO = new Date(addDays(weekStart, 7)).toISOString();
         const { entries: ent, dataAtMs } = await loadRange(startISO, endISO, { force });
         const at = dataAtMs ?? Date.now();
         cacheRef.current.set(weekStart, { entries: ent, at });
@@ -171,12 +170,12 @@ export default function TimesheetPage() {
 
   const fmtDay = (ms: number) =>
     new Date(ms).toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
-  const weekRange = (ms: number) => `${fmtDay(ms)} – ${fmtDay(ms + 6 * DAY_MS)}`;
+  const weekRange = (ms: number) => `${fmtDay(ms)} – ${fmtDay(addDays(ms, 6))}`;
 
   const currentWeekStart = nowMs ? startOfWeek(new Date(nowMs)).getTime() : 0;
   const pickerWeeks = useMemo(() => {
     if (!currentWeekStart) return [];
-    return Array.from({ length: pickerCount }, (_, i) => currentWeekStart - (i + 1) * WEEK_MS);
+    return Array.from({ length: pickerCount }, (_, i) => addDays(currentWeekStart, -7 * (i + 1)));
   }, [currentWeekStart, pickerCount]);
 
   const shownWeekStart = mode === 'history' && selectedWeek != null ? selectedWeek : currentWeekStart;
@@ -187,7 +186,7 @@ export default function TimesheetPage() {
   const shownDataReady = mode !== 'history' || (!histLoading && !histError && histLoadedAt > 0);
   const exportPrefetched =
     hasProject && shownWeekStart > 0 && shownDataReady
-      ? { fromMs: shownWeekStart, toMs: shownWeekStart + WEEK_MS, entries: shownEntries }
+      ? { fromMs: shownWeekStart, toMs: addDays(shownWeekStart, 7), entries: shownEntries }
       : null;
 
   if (!hydrated) {

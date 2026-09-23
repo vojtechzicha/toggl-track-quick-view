@@ -167,7 +167,9 @@ exports map answers `require` and `import` with different builds. Two builds mea
 PDFName pools, and pdf-lib keys dictionaries by PDFName identity, so the
 placeholder's `/AcroForm` would be invisible to the code that attaches the
 appearance. Both specifiers are pinned to the ES build in `next.config.js` (bundle)
-and `scripts/resolve-hooks.mjs` (checks).
+and `scripts/resolve-hooks.mjs` (checks). On Node 22 the checks' pin holds only while
+no `load` hook is registered: with one, `require()` inside an imported CommonJS module
+skips the resolve hooks and the placeholder gets `cjs/` again.
 
 ### Two ASN.1 library bugs
 

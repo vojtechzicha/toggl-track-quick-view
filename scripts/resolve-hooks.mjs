@@ -25,6 +25,8 @@ const PACK_CANDIDATES = ['pdf-templates/index.ts', 'lib/export/pdf/emptyPack.ts'
  * placeholder's /AcroForm would then be invisible to the signing code, failing
  * silently when the appearance is attached. next.config.js pins the bundle the
  * same way.
+ *
+ * The pin holds only while no `load` hook is registered (see installResolveHooks).
  */
 const PDF_LIB = pathToFileURL(
   path.join(root, 'node_modules/@cantoo/pdf-lib/es/index.js')
@@ -42,8 +44,15 @@ export function packEntry() {
 /**
  * @param {{stubs?: Record<string, string>}} [opts] In-memory module sources to
  *   serve for specific specifiers (check-fonts.ts stubs pdfmake).
+ *
+ * The `load` hook is registered only when there are stubs. On Node 22 any load
+ * hook makes the ESM loader evaluate imported CommonJS modules itself, and
+ * their `require()` calls then skip the resolve hook. The placeholder's
+ * `require('pdf-lib')` would get cjs/ and bring back the two-copies failure,
+ * so a check that stubs something must not also sign.
  */
 export function installResolveHooks({ stubs = {} } = {}) {
+  const hasStubs = Object.keys(stubs).length > 0;
   registerHooks({
     resolve(specifier, context, next) {
       if (stubs[specifier]) {
@@ -72,10 +81,12 @@ export function installResolveHooks({ stubs = {} } = {}) {
       }
       return next(specifier, context);
     },
-    load(url, context, next) {
-      const key = url.startsWith('stub:') ? url.slice(5) : '';
-      if (stubs[key]) return { format: 'module', source: stubs[key], shortCircuit: true };
-      return next(url, context);
-    },
+    ...(hasStubs && {
+      load(url, context, next) {
+        const key = url.startsWith('stub:') ? url.slice(5) : '';
+        if (stubs[key]) return { format: 'module', source: stubs[key], shortCircuit: true };
+        return next(url, context);
+      },
+    }),
   });
 }
