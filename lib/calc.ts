@@ -279,15 +279,14 @@ export function holidayDaysOfWeek(
   weekStart: number,
   timeOffTag?: string
 ): Set<number> {
-  const dayMs = 24 * HOUR * MS;
+  const weekEnd = addDays(weekStart, 7);
   const days = new Set<number>();
   for (const e of entries) {
     if (!inSet(e.project_id, projects)) continue;
     if (!isTimeOffEntry(e.tags, timeOffTag)) continue;
     const startMs = new Date(e.start).getTime();
-    if (!Number.isFinite(startMs)) continue;
-    const dayIdx = Math.floor((startMs - weekStart) / dayMs);
-    if (dayIdx >= 0 && dayIdx <= 6) days.add(dayIdx);
+    if (!Number.isFinite(startMs) || startMs < weekStart || startMs >= weekEnd) continue;
+    days.add(weekDayIndex(new Date(startMs)));
   }
   return days;
 }
@@ -355,6 +354,18 @@ export function startOfWeek(d: Date): Date {
   return x;
 }
 
+/**
+ * `ms` moved by `days` local calendar days, keeping its time of day. Every day and
+ * week step goes through this rather than adding 24h blocks: a week holding a
+ * clock change is 167h or 169h long, and a fixed-ms step off Saturday 00:00 lands
+ * on Friday 23:00 or Saturday 01:00 — shifting every day after it by an hour.
+ */
+export function addDays(ms: number, days: number): number {
+  const d = new Date(ms);
+  d.setDate(d.getDate() + days);
+  return d.getTime();
+}
+
 // ---- Month-split weeks ----
 // Billing runs to month-end, so when the 1st of a month falls mid-week the week
 // splits in two and each side settles against its own month — the same rule the
@@ -365,8 +376,12 @@ export function startOfWeek(d: Date): Date {
 // overtime in the old month's half from (wrongly) shortening the new month's
 // days — the old month's surplus is that month's business, not a credit here.
 
-/** Day index within the Sat-start week: Sat→0, Sun→1, Mon→2 … Fri→6. */
-function weekDayIndex(d: Date): number {
+/**
+ * Day index within the Sat-start week: Sat→0, Sun→1, Mon→2 … Fri→6. Read off the
+ * local calendar, so it stays right across a clock change — callers bucketing an
+ * instant into a week check it lies in [weekStart, addDays(weekStart, 7)) first.
+ */
+export function weekDayIndex(d: Date): number {
   return (d.getDay() + 1) % 7;
 }
 
@@ -604,6 +619,18 @@ export function plannedTargetSeconds(
     planned += target;
   }
   return t.standardDay; // unreachable — idx is always a working day inside its segment
+}
+
+/**
+ * Whether the week summary shows a future day's plain plan (plannedTargetSeconds)
+ * rather than its adaptive target projected from today. True Saturday through
+ * Wednesday — before the adaptive Thursday/Friday arrive there is nothing to adapt
+ * to yet, and projecting a weekend day's fallback target as if it were worked
+ * would inflate Thu/Fri. Indexed within the Saturday-start week: getDay() puts
+ * Saturday last (6), which would read the week's first day as past Thursday.
+ */
+export function futureDaysShowPlan(now: Date): boolean {
+  return weekDayIndex(now) < 5;
 }
 
 /**

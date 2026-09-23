@@ -3,12 +3,14 @@
 // (same same-code combining, same biased quarter-hour rounding, same time anchoring).
 
 import {
+  addDays,
   fmtHoursLabel,
   fmtTimeOfDay,
   holidayDaysOfWeek,
   isTimeOffEntry,
   parseBillingCode,
   roundQuartersPreservingTotal,
+  weekDayIndex,
   type TimeEntry,
 } from '@/lib/calc';
 import type { SelectedProject } from '@/components/SettingsPanel';
@@ -23,7 +25,7 @@ import {
   type MappedAgg,
 } from './mapping';
 import { fitDescs } from './desc';
-import { DAY_MS, UNTAGGED, MULTIPLE, TOOLONG, projectBillingCode } from './constants';
+import { UNTAGGED, MULTIPLE, TOOLONG, projectBillingCode } from './constants';
 
 const COMBINE_GAP_SECONDS = 60 * 60; // combine same-code entries only within this gap
 const OVERLAP_MIN_MS = 60 * 1000; // ignore sub-minute touches (display/manual-entry noise)
@@ -475,7 +477,7 @@ export function buildIndividualWeek({
   const windowMs =
     Math.max(roundingSeconds, startWindowSeconds && startWindowSeconds > 0 ? startWindowSeconds : 0) *
     1000;
-  const weekEnd = weekStart + 7 * DAY_MS;
+  const weekEnd = addDays(weekStart, 7);
 
   // Days marked as time off by a selected project's entry: non-working days for
   // the overtime cap below. The marker entries themselves never bill (skipped in
@@ -487,8 +489,7 @@ export function buildIndividualWeek({
     if (e.project_id == null || !ids.has(e.project_id)) continue;
     const startMs = new Date(e.start).getTime();
     if (!Number.isFinite(startMs) || startMs < weekStart || startMs >= weekEnd) continue;
-    const dayIdx = Math.floor((startMs - weekStart) / DAY_MS);
-    if (dayIdx < 0 || dayIdx > 6) continue;
+    const dayIdx = weekDayIndex(new Date(startMs));
     // The time-off marker only classifies its day (see `holidays` above) — the
     // entry itself is never billed, warned about, or shown.
     if (isTimeOffEntry(e.tags, timeOffTag)) continue;
@@ -611,7 +612,7 @@ export function buildIndividualWeek({
     .map((c, dayIdx) =>
       finalizeDay(
         dayIdx,
-        weekStart + dayIdx * DAY_MS,
+        addDays(weekStart, dayIdx),
         c,
         windowMs,
         overtimeByDay[dayIdx],

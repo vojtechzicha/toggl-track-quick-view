@@ -28,6 +28,7 @@ import { togglBackend, getEntries, HOURLY_LIMIT } from '@/lib/source/toggl';
 import { importEntriesApi, type ImportResult } from '@/lib/source/standalone';
 import { isAuthRequired, isRateLimit } from '@/lib/source/errors';
 import type { TrackProject } from '@/lib/source/types';
+import { addDays } from '@/lib/calc';
 
 const DAY_MS = 24 * 3600 * 1000;
 const WINDOW_MS = 90 * DAY_MS; // page size through Toggl history
@@ -168,7 +169,7 @@ export default function ImportPage() {
   const untilMs = fromDateInput(untilStr);
   const windowCount =
     sinceMs !== null && untilMs !== null && untilMs >= sinceMs
-      ? Math.ceil((untilMs + DAY_MS - sinceMs) / WINDOW_MS)
+      ? Math.ceil((addDays(untilMs, 1) - sinceMs) / WINDOW_MS)
       : 0;
 
   const run = async () => {
@@ -178,7 +179,7 @@ export default function ImportPage() {
     setRunError(null);
     setStats(ZERO_STATS);
 
-    const endMs = untilMs + DAY_MS; // the picked "until" day, inclusive
+    const endMs = addDays(untilMs, 1); // the picked "until" day, inclusive
     const windows: [number, number][] = [];
     for (let s = sinceMs; s < endMs; s += WINDOW_MS) {
       windows.push([s, Math.min(s + WINDOW_MS, endMs)]);

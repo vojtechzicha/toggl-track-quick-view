@@ -5,13 +5,13 @@
 // decides how to render them (decimal hours for the technical formats, the view's
 // "h" label for PDF).
 
-import { fmtHours, fmtTimeOfDay, type TimeEntry } from '@/lib/calc';
+import { addDays, fmtHours, fmtTimeOfDay, type TimeEntry } from '@/lib/calc';
 import type { SelectedProject } from '@/components/SettingsPanel';
 import { buildSummaryGrid } from '@/lib/timesheet/summary';
 import { buildIndividualWeek } from '@/lib/timesheet/individual';
 import { fitDescs } from '@/lib/timesheet/desc';
 import type { CodeMapping } from '@/lib/timesheet/mapping';
-import { DAY_LABELS, DAY_MS, UNTAGGED, MULTIPLE } from '@/lib/timesheet/constants';
+import { DAY_LABELS, UNTAGGED, MULTIPLE } from '@/lib/timesheet/constants';
 import { weeksInRange, type DateRange } from './range';
 
 export type ExportView = 'summary' | 'individual';
@@ -236,7 +236,7 @@ function buildSummaryDoc(o: ExportOptions): SummaryDoc {
     // Keep only day columns whose date falls inside the requested range, so the
     // edge weeks of a month don't bleed into the neighbouring month.
     const dayCols = grid.dayCols.filter((d) => {
-      const dayMs = weekStart + d * DAY_MS;
+      const dayMs = addDays(weekStart, d);
       return dayMs >= range.fromMs && dayMs < range.toMs;
     });
     if (dayCols.length === 0) continue;
@@ -292,14 +292,14 @@ function buildSummaryDoc(o: ExportOptions): SummaryDoc {
     // appear when they carry time. Because `dayCols` is already the visible,
     // range-clipped set, the first and last of them give the right span (and a
     // month export's edge weeks naturally stay within the month).
-    const labelFromMs = weekStart + dayCols[0] * DAY_MS;
-    const labelToMs = weekStart + dayCols[dayCols.length - 1] * DAY_MS;
+    const labelFromMs = addDays(weekStart, dayCols[0]);
+    const labelToMs = addDays(weekStart, dayCols[dayCols.length - 1]);
 
     weeks.push({
       weekStart,
       label: `${fmtDay(labelFromMs)} – ${fmtDay(labelToMs)}`,
       dayLabels: dayCols.map((d) => DAY_LABELS[d]),
-      dayDates: dayCols.map((d) => weekStart + d * DAY_MS),
+      dayDates: dayCols.map((d) => addDays(weekStart, d)),
       rows: keptRows,
       dayTotals,
       grandTotal,
@@ -447,7 +447,7 @@ export function secsToHoursLabel(seconds: number): string {
 /** "Jun 1 – Jun 30, 2026" style period label for document headers / filenames. */
 export function periodLabel(fromMs: number, toMs: number): string {
   const from = new Date(fromMs);
-  const lastDay = new Date(toMs - DAY_MS); // inclusive last day
+  const lastDay = new Date(addDays(toMs, -1)); // inclusive last day
   const opts: Intl.DateTimeFormatOptions = { year: 'numeric', month: 'short', day: 'numeric' };
   return `${from.toLocaleDateString(undefined, opts)} – ${lastDay.toLocaleDateString(undefined, opts)}`;
 }
