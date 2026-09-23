@@ -2,7 +2,7 @@
   "name": "toggl-track-quick-view",
   "version": "0.1.0",
   "private": true,
-  "description": "A single-screen quick view for tracking a work day (configurable weekly target) on one or more Toggl Track projects.",
+  "description": "A one-screen view for tracking a work day against a weekly target, from Toggl Track or its own MongoDB store.",
   "scripts": {
     "dev": "node scripts/sync-pack.mjs && WAS_RUNNING=$(docker compose ps -q mongo 2>/dev/null); docker compose up -d mongo && trap '[ -z \"$WAS_RUNNING\" ] && docker compose down' EXIT && next dev",
     "devsafe": "node scripts/sync-pack.mjs && rm -rf .next && next dev",

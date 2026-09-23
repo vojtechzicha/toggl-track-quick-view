@@ -1,16 +1,11 @@
-// Build id for the post-deploy refresh hint (see components/UpdateHint.tsx):
-// the id is inlined into both the client bundle and the server route handlers
-// via `env`, so a long-lived tab can compare its own id against GET
-// /api/version and learn that a newer build has been deployed.
+// Build id for the post-deploy refresh hint (components/UpdateHint.tsx),
+// inlined into the client bundle and the server routes so a tab can compare
+// its id with GET /api/version.
 //
-// It must be DETERMINISTIC — Next evaluates this config several times during
-// one build (main process + compiler workers), so a random id would come out
-// different in the client bundle, the server bundle, and BUILD_ID, making
-// every fresh tab look stale. Deriving it from the git commit makes all
-// evaluations agree and gives every deploy of new code a new id. On Vercel
-// the commit arrives via VERCEL_GIT_COMMIT_SHA (no .git dir in the build);
-// locally, git itself answers. With neither (e.g. a tarball build) it falls
-// back to a constant, which simply disables the hint rather than misfiring.
+// Must be deterministic: Next evaluates this config several times per build,
+// and a random id would differ between bundles and make every tab look stale.
+// On Vercel the commit comes from VERCEL_GIT_COMMIT_SHA (no .git in the build).
+// Without a commit, 'unversioned' turns the hint off.
 function computeBuildId() {
   const vercelSha = process.env.VERCEL_GIT_COMMIT_SHA;
   if (vercelSha) return vercelSha.slice(0, 16);
@@ -27,30 +22,23 @@ function computeBuildId() {
 
 const buildId = computeBuildId();
 
-// The PDF signing stage (lib/export/pdf/sign) and @signpdf/placeholder-pdf-lib
-// must share ONE copy of pdf-lib. `pdf-lib` is already an alias for
-// @cantoo/pdf-lib (see package.json and pnpm-workspace.yaml), but that is not
-// enough on its own: the placeholder package does `require('pdf-lib')` while
-// our own modules `import` it, and the package's exports map answers those two
-// with different builds (cjs/ vs es/). Two builds means two PDFName pools and
-// two sets of PDFDict classes — and since pdf-lib keys dictionaries by PDFName
-// IDENTITY, the placeholder would write /AcroForm and /Annots entries that our
-// code cannot read back. Pinning both specifiers to the ES build collapses them
-// to one module instance. Node's own resolution is pinned the same way in
-// scripts/check-signature.ts.
+// lib/export/pdf/sign and @signpdf/placeholder-pdf-lib must share one copy of
+// pdf-lib. `pdf-lib` is already an alias for @cantoo/pdf-lib (package.json),
+// but the placeholder `require`s it while our code `import`s it, and the
+// exports map serves those from different builds (cjs/ vs es/). pdf-lib keys
+// dictionaries by PDFName identity, so with two copies the placeholder's
+// /AcroForm and /Annots entries are unreadable to our code. Pinning both
+// specifiers to the ES build fixes that. scripts/resolve-hooks.mjs does the
+// same for the check scripts.
 const pdfLibEsm = require('path').join(
   require('path').dirname(require.resolve('@cantoo/pdf-lib')),
   '../es/index.js'
 );
 
-// The optional PDF template pack (lib/export/pdf/pack.ts). Resolved ONCE, here,
-// because the answer has to be the same in every one of the several evaluations
-// Next makes of this config, and because `pdf-templates/` may legitimately not
-// exist: a plain clone of this repository has no pack and falls back to the
-// app's own templates. scripts/sync-pack.mjs is what puts a pack there.
-//
-// tsconfig.json carries the same fallback list for tsc and the editor; this is
-// the one the bundler obeys.
+// The optional PDF template pack (lib/export/pdf/pack.ts), checked out into
+// pdf-templates/ by scripts/sync-pack.mjs. Without it, fall back to the empty
+// pack. The same pair is in tsconfig.json `paths` and scripts/resolve-hooks.mjs;
+// keep all three in step.
 const PACK_ENTRY = require('path').join(__dirname, 'pdf-templates', 'index.ts');
 const templatePack = require('fs').existsSync(PACK_ENTRY)
   ? PACK_ENTRY
@@ -62,10 +50,9 @@ const nextConfig = {
   generateBuildId: () => buildId,
   env: {
     NEXT_PUBLIC_BUILD_ID: buildId,
-    // Which deployment this bundle is, for the install sheet's app name
-    // (lib/pwa.ts): a preview installs as "(beta)". Baked here rather than
-    // relying on Vercel's automatic NEXT_PUBLIC_VERCEL_ENV exposure, so it
-    // holds on a fork with that setting off; empty outside Vercel.
+    // For the installed app's name (lib/pwa.ts): previews install as "(beta)".
+    // Set here so it works without Vercel's system-variable exposure; empty
+    // outside Vercel.
     NEXT_PUBLIC_VERCEL_ENV: process.env.VERCEL_ENV ?? '',
   },
   webpack: (config) => {
