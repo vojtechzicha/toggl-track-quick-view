@@ -1,735 +1,523 @@
 # toggl-track-quick-view
 
-A single-screen quick view for tracking your work day on a Toggl Track
-client/project. Open it on a spare monitor and see, at a glance:
+A single-screen dashboard for tracking your work day against a weekly target,
+reading from Toggl Track or from its own database. Open it on a spare monitor and
+see at a glance:
 
-You normally pick **one** project, but you can track **several at once** — in
-Settings, click _"Track more than one project"_ to multiselect. The selected
-projects then count as a single pool for every target, ring and break
-calculation; they stay distinct only in the timesheet, where each billing tag is
-grouped per project and prefixed with the project name. Tiny initials chips
-(colored by the Toggl project color) flag which projects are in the group.
+- **Whether you are tracking**: a live badge (this project, another project, or
+  nothing).
+- **How much you have tracked today**: a ring and a clock that ticks while a
+  timer runs.
+- **How much is left**: the remaining time to today's target.
+- **When to take a break**: an alert after 4.5h of continuous work.
 
-- **Am I tracking right now?** — a live status badge (this project / another
-  project / not tracking).
-- **How much have I tracked today?** — a big ring + live clock that ticks up in
-  real time while a timer is running.
-- **How much is left to a full day?** — remaining time toward your target.
-- **Short Friday** — optional weekly model that front-loads the week so Friday
-  is short.
-- **Break reminder** — a prominent on-screen alert after 4.5h of continuous
-  work.
+It also builds a copy-paste-ready **timesheet** for the week and exports it as
+CSV, XLSX or PDF.
 
-It fills the whole screen with no scrolling.
-
-## How it works
-
-- **Next.js (App Router)**, deployable to Vercel in one click.
-- Toggl's v9 API can't be called directly from a browser (CORS is whitelist-only
-  and the whitelist call is itself blocked). So all Toggl calls go through a
-  same-origin proxy route (`app/api/toggl/[...path]`) that adds Basic auth — no
-  CORS setup, and your token never touches a third party.
-- Your API token, selected project, and preferences live in the browser's
-  `localStorage`. Deployments with a MongoDB can additionally **sync the
-  preferences across devices** — see "Settings sync" below; the token itself
-  never syncs.
-- Alternatively, set a **`TOGGL_API_TOKEN`** env var for a private single-user
-  deploy: the app detects it on load, connects automatically, and hides the
-  token field in Settings (you only pick a project). A browser-entered token
-  always takes precedence over the env var; the env var is the fallback used
-  when no browser token is sent.
-- Long-lived tabs get a **post-deploy refresh hint**: every build bakes in a
-  build id, and each tab compares its own against `GET /api/version` whenever
-  it regains focus (plus a slow background interval). After a deploy, stale
-  tabs show a toast asking to refresh — important with settings sync, where a
-  tab running an old build wouldn't know newer settings keys and would drop
-  them from the synced document on its next save.
+You normally pick one project. In Settings, **Track more than one project** lets
+you select several; they then count as one pool for every target, ring and break
+calculation. They stay separate only in the timesheet, where each billing code is
+grouped per project and prefixed with the project name. Small initials chips in
+the project colour show which projects are in the group.
 
 ## Running locally
 
 ```bash
 pnpm install
-pnpm env:pull    # generates .env from .env.tpl via 1Password
-pnpm env:check   # says what is missing or contradictory
-pnpm dev         # starts MongoDB, then http://localhost:3000
+pnpm env:pull    # generate .env from .env.tpl via 1Password
+pnpm env:check   # report missing or contradictory variables
+pnpm dev         # start MongoDB and Next on http://localhost:3000
 ```
 
-`pnpm dev` brings the local MongoDB up (`docker compose`, port 27018) before
-starting Next, and leaves it as it found it — Ctrl-C stops the container only
-if `pnpm dev` was what started it. `pnpm db` / `pnpm db:stop` run it on its own
-for a longer session.
+Without 1Password, run `cp .env.tpl .env` instead of `env:pull`. The only
+placeholder in it is `TOGGL_API_TOKEN`; leave it blank and the app asks for a
+token in Settings.
 
-**Without 1Password**, skip `env:pull` and `cp .env.tpl .env` instead. Exactly
-one line in it is a placeholder — `TOGGL_API_TOKEN` — and blanking it is a
-valid choice: the app then asks for a token in Settings. Everything else in the
-template is already a working literal.
+The default `.env` gives the plain Toggl dashboard: no password, no database.
+Open Settings (⚙), pick your project, and optionally turn on **Short Friday** or
+change **Hours worked per week**.
 
-Out of the box this is the plain Toggl dashboard — no password, no database.
-Open Settings (⚙), pick your project, and optionally enable **Short Friday** or
-adjust **Hours worked per week** (40h by default) for a part-time commitment.
-
-To work on **settings sync** or **standalone mode**, uncomment the block at the
-bottom of `.env.tpl` and set `APP_PASSWORD`; both together, since those routes
-write and refuse to without a gate.
-
-Full walkthrough of every variable, the 1Password layout and the Vercel
-environments: **[docs/ENVIRONMENT.md](docs/ENVIRONMENT.md)**.
+`pnpm dev` also starts a local MongoDB in Docker (port 27018) and stops it on
+Ctrl-C if it started it. It is only used once you enable settings sync or
+standalone mode; see [docs/ENVIRONMENT.md](docs/ENVIRONMENT.md).
 
 ## Deploying to Vercel
 
-1. Push this repo to GitHub and import it in Vercel (framework auto-detected as
-   Next.js — no extra config).
-2. (Optional) Set `TOGGL_API_TOKEN` in Vercel's environment variables to skip
-   entering the token in the UI. Otherwise the token stays in your browser.
-3. (Optional) Set `APP_PASSWORD` to put the whole dashboard behind a password —
-   see below.
+1. Import the repository in Vercel. It is detected as Next.js and needs no
+   extra configuration.
+2. Optional: set `TOGGL_API_TOKEN` so nobody has to enter a token in the
+   browser.
+3. Optional: set `APP_PASSWORD` to put the dashboard behind a password (see
+   [Password protection](#password-protection)).
 
-Preview deployments are reachable at a stable **beta.track.zicha.dev**, which
-`.github/workflows/preview-alias.yml` re-points at the newest successful preview
-on every deployment. That matters because the password-gate session and the
-installed PWA are both tied to the origin — a per-deployment URL would ask for
-the preview password every time. It needs a `VERCEL_TOKEN` repository secret.
+With no variables at all, the deployment is a bring-your-own-token dashboard:
+each visitor enters their own Toggl token, which stays in their browser.
 
-If you are deploying your **own** instance, note that `DEPLOYMENT_TOPOLOGY` in
-`scripts/env-spec.mjs` lists what *this* repository's deployments must have —
-Toggl source, MongoDB sync, password gate. None of it is required by the app.
-Empty that object and every variable goes back to optional, including the
-zero-configuration bring-your-own-token deploy described above; the format
-checks and contradiction rules still apply, since those follow from the code.
+`MONGODB_URI` and `APP_MODE` together decide what the deployment is:
 
-The build runs `pnpm env:check` before `next build` (the `vercel-build` script),
-so a variable the code needs but the Vercel project lacks fails the deployment
-rather than shipping a half-configured app. It also flags the combinations that
-quietly change what the deployment *is* — most importantly `MONGODB_URI`
-without `APP_MODE=toggl`, which switches a Toggl dashboard to standalone mode.
-See [docs/ENVIRONMENT.md](docs/ENVIRONMENT.md).
+| `MONGODB_URI` | `APP_MODE` | Result |
+| --- | --- | --- |
+| unset | (any) | Toggl mode, no sync |
+| set | unset | [Standalone mode](#standalone-mode-no-toggl): own store, Toggl never contacted |
+| set | `toggl` | Toggl mode with [settings sync](#settings-sync-across-devices) |
 
-## Standalone mode (no Toggl)
+The `vercel-build` script runs `pnpm env:check` before `next build`, so a missing
+or contradictory variable fails the deployment. Every variable, the 1Password
+layout and the Vercel environments are described in
+[docs/ENVIRONMENT.md](docs/ENVIRONMENT.md).
 
-Setting **`MONGODB_URI`** switches the deployment to **standalone mode**: the
-app keeps its own store of time entries (MongoDB — e.g. a free Atlas M0
-cluster) instead of reading them from the Toggl Track API, and gains a
-**Tracker** page (`/tracker`) replicating the Toggl timer view — start/stop
-timer, manual entries, inline editing, billing-tag autocomplete, continue,
-delete, entry list grouped by day and (Saturday-start) week.
+**Deploying your own instance:** `DEPLOYMENT_TOPOLOGY` in
+`scripts/env-spec.mjs` lists what this repository's own deployments must have.
+None of it is required by the app. Empty that object and every variable becomes
+optional again; the format and contradiction checks still apply.
 
-- **Workspaces become first-class**: each stored workspace owns its settings
-  snapshot *and* its time entries, syncs across devices, and doubles as the
-  selectable "project" on the dashboard/timesheet — so multi-project tracking,
-  billing tags, timesheets and exports all work unchanged.
-- `APP_PASSWORD` is **required** in standalone mode (the store accepts writes);
-  the same password gate and session mechanics as below apply.
-- `MONGODB_DB` (optional) picks the database name, default `toggl-quick-view`.
-- `TOGGL_API_TOKEN` / `TOGGL_CACHE_INTERVAL` are ignored in standalone mode;
-  there is no request budget or meter — every device just refreshes every 30
-  seconds, plus instantly after any change.
-- **Linked billing codes work across workspaces**: the "Linked billing codes"
-  picker offers the other stored workspaces, so a sub-client workspace can bill
-  onto another workspace's timesheet as a single code (see below) — no Toggl
-  projects needed.
-- **Import your Toggl history** on the **Import** page (`/import`): connect
-  with your Toggl API token, map each Toggl project to a workspace (existing,
-  created fresh with the project's name/color, or skipped), pick a range, run.
-  History is paged oldest-first in ~90-day windows within Toggl's 30 req/hour
-  budget (auto-pausing as needed), and the import is safe to re-run — entries
-  already brought in are skipped, never duplicated or overwritten.
+Preview deployments are also served at `beta.track.zicha.dev`, which
+`.github/workflows/preview-alias.yml` points at the newest successful preview.
+The password session and the installed PWA are tied to the origin, so a fixed
+host keeps both across deployments. The workflow needs a `VERCEL_TOKEN`
+repository secret.
 
-See `docs/standalone/` for the full design and phase plan.
+## How it talks to Toggl
 
-## Settings sync across devices
+Toggl's API cannot be called from a browser (its CORS whitelist is closed), so
+every call goes through a same-origin proxy at `app/api/toggl/[...path]`. The
+token is sent only to that proxy and to Toggl.
 
-Once the app is set up the way you want it — stored workspaces, targets,
-linked billing codes, timesheet options, the export dialog's identity fields
-(role in each template language, company, client, approver, rate, engagement
-notes, the engagement's start date — each workspace's
-own) — that setup can
-follow you to every device instead of living in one browser's `localStorage`.
+The API token, selected project and preferences live in the browser's
+`localStorage`. If `TOGGL_API_TOKEN` is set, the app connects with it
+automatically and hides the token field. A token entered in the browser takes
+precedence over the server's.
 
-**Enabling it.** Sync stores one revisioned settings document in MongoDB and
-requires the password gate (it accepts writes):
-
-- **Standalone mode** (`MONGODB_URI` + `APP_PASSWORD`): nothing extra to set —
-  sync is on automatically, alongside the store.
-- **Toggl mode**: set `MONGODB_URI` + `APP_PASSWORD` **and `APP_MODE=toggl`**.
-  The `APP_MODE` override keeps the Toggl source (without it, `MONGODB_URI`
-  switches the deployment to standalone mode); the database is then used for
-  settings sync only. A free Atlas M0 cluster is plenty.
-
-**How it behaves.** Changes upload automatically a moment after you make them;
-other devices pick them up on load and whenever their page regains focus. A
-brand-new device adopts the synced setup silently. Every write is
-revision-checked, so two devices editing at once can never silently clobber
-each other: if both changed since their last common revision, the app shows
-both sides in **Settings → Sync & transfer** and asks which setup to keep.
-
-An incoming setup that lands while **Settings** or the **export dialog** is
-open re-seeds their fields and says so — otherwise the next Save or Export
-would write the superseded values straight back over it. In standalone mode
-the **workspace list** lives outside the synced document (each workspace is
-its own server record), so it is re-listed when the window regains focus as
-well; a workspace renamed, recaptured, created or deleted on another device
-shows up there without a reload.
-
-**What never syncs**: the Toggl API token (a credential stays on the device it
-was entered on — each device connects with its own token, or the server holds
-one via `TOGGL_API_TOKEN`) and the refresh interval (a per-device/network
-knob). The server additionally strips a token out of any payload it receives,
-so a credential cannot reach the database even from a tampered client.
-
-**No database? Move settings by file.** The same **Sync & transfer** section
-can download the whole setup as a JSON file (again: never the token) and
-import it on another device — handy as a one-off transfer or a backup, and it
-works on every deployment, synced or not.
-
-## Install as an app (PWA)
-
-The dashboard ships a web manifest, maskable icons, and Apple touch-icon /
-status-bar metadata, so it can be installed to the home screen and launched in
-its own window (no browser chrome, dark theme color, safe-area padding for
-notched phones).
-
-Settings ends with an **"Install as an app"** block that does the installing,
-or explains it, depending on the browser:
-
-- Where the browser can install on its own (Chrome, Edge, Android), the button
-  opens the browser's native install dialog. The browser's own affordances (the
-  omnibox icon, Android's banner) are left alone — the button is one more way
-  in, not a replacement.
-- On iPhone and iPad (every browser there), and in Safari 17+ on the Mac, no
-  browser can trigger the install, so the button opens a short walkthrough of
-  the manual route instead: Share → **Add to Home Screen**, or File → **Add to
-  Dock** on the Mac (Safari on macOS Sonoma or later). A third-party iOS
-  browser older than iOS 16.4, or an in-app browser (Slack, Teams, a mail
-  app), gets the same walkthrough prefixed with "open this page in Safari",
-  since their share menus don't offer it.
-- Nowhere else, and never inside the installed app.
-
-The rules live in `lib/pwa.ts` and `pnpm check:pwa` pins each branch against a
-real user-agent string. Preview deployments install under their own name,
-**Toggl Quick View (beta)** — they have a stable host (`beta.track.zicha.dev`),
-so a preview install can sit next to the production one on the same home
-screen without the two being confused.
-
-It is **not** offline-capable by design — a tiny pass-through service worker
-(`public/sw.js`) only exists to satisfy installability and caches nothing, so the
-app always shows live data and never serves anything stale.
+After a deploy, open tabs notice the new build (they check `GET /api/version` on
+focus and periodically) and ask you to refresh. With settings sync this matters:
+a tab on an old build does not know newer settings keys and would drop them on
+its next save.
 
 ## Password protection
 
-A server-managed deploy (`TOGGL_API_TOKEN` set) is otherwise readable by anyone
-who knows the URL. Set **`APP_PASSWORD`** to gate it:
+Set `APP_PASSWORD` to gate a deployment that holds data of its own, meaning one
+with `TOGGL_API_TOKEN` or `MONGODB_URI` set. Without either, each visitor brings
+their own token and the password has no effect.
 
-- On first visit the app shows a password prompt; **no Toggl data is fetched or
-  shown until the password is accepted.**
-- The check is enforced **server-side** — the Toggl proxy refuses to serve the
-  server token's data without a valid session — so it can't be bypassed by
-  calling the API directly or editing the page.
-- The **password is never stored** anywhere. On success the server returns a
-  signed, expiring **session token**; the browser keeps only that token (in
-  `localStorage`), so each device is asked for the password **at most once a
-  week**.
-- The session token is an HMAC signed with a key **derived from the password**,
-  so **changing `APP_PASSWORD` instantly invalidates every existing session**.
-- The gate only applies in server-managed mode. If `TOGGL_API_TOKEN` is unset,
-  each user brings their own browser token and there's no shared secret to
-  protect, so `APP_PASSWORD` has no effect.
+- Nothing is fetched or shown until the password is accepted. The check runs on
+  the server, so it cannot be bypassed by calling the API directly.
+- The password is never stored. The server returns a signed session token valid
+  for 7 days, and the browser keeps only that (in `localStorage`).
+- The session is signed with a key derived from the password, so changing
+  `APP_PASSWORD` ends every session immediately.
+- Wrong guesses get an increasing delay. The delay is per server instance, so on
+  serverless it is best-effort; use a long random password.
 
-Security notes:
+`localStorage` is readable by any script on the page. The app loads no
+third-party scripts, so the remaining risk is XSS.
 
-- Use a **long, random** password and serve over **HTTPS** (Vercel is HTTPS by
-  default) so neither the password nor the token can be sniffed.
-- `localStorage` is readable by any JavaScript on the page; this app loads no
-  third-party scripts, so the main residual risk is XSS. (An httpOnly cookie
-  would be immune to that but can't be read by JS at all — `localStorage` is the
-  deliberate, simple fit for this single-user tool.)
-- A wrong-password guess is met with a small, escalating delay to slow brute
-  force. This throttle is per server instance, so on a fanned-out serverless
-  deploy it's best-effort — your password strength is the real defense.
+## Standalone mode (no Toggl)
 
-## The targets model
+With `MONGODB_URI` set and `APP_MODE` unset, the app keeps its own time entries
+in MongoDB (a free Atlas M0 cluster is enough) and never contacts Toggl.
+`APP_PASSWORD` is required, since the store accepts writes. `MONGODB_DB` picks
+the database name (default `toggl-quick-view`).
 
-The whole model aims for a configurable weekly total — **Hours worked per week**
-in Settings, **40h** by default. Every figure below is the 40h-week baseline; set
-the weekly hours lower (a part-time project) or higher and _all_ targets, floors
-and caps rescale linearly. For example a **20h** week becomes an even **4h/day**,
-or a short week of `4.5 / 4.5 / 4.5 / 4 / 2.5`. The break reminder is deliberately
-**not** scaled (see below).
+- The **Tracker** page (`/tracker`) replaces Toggl's timer view: start/stop,
+  manual entries, inline editing, billing-tag autocomplete, continue, delete, and
+  a list grouped by day and week.
+- **Workspaces** are stored on the server. Each one has its own settings and time
+  entries, syncs across devices, and acts as the selectable "project" on the
+  dashboard and timesheet, so multi-project tracking, billing codes, timesheets
+  and exports work as in Toggl mode.
+- [Linked billing codes](#linked-billing-codes-subcontracting) can point at
+  another stored workspace.
+- Every device refreshes every 30 seconds and immediately after a change. There
+  is no request budget, and `TOGGL_API_TOKEN` / `TOGGL_CACHE_INTERVAL` are
+  ignored.
+- **Import** (`/import`) brings in Toggl history: connect with your Toggl token,
+  map each Toggl project to a workspace (existing, new, or skipped), pick a
+  range and run. It pages through history oldest first in ~90-day windows,
+  pausing to stay within Toggl's rate limit. Re-running it skips entries already
+  imported.
 
-### Standard (Short Friday off)
+## Settings sync across devices
 
-A flat target every day of **week ÷ 5** (8h at 40h).
+With a database, your setup follows you between devices: stored workspaces,
+targets, billing options, timesheet options and the export details.
 
-### Short Friday on (40h / week shown; scales with the weekly total)
+- **Standalone mode:** always on.
+- **Toggl mode:** set `MONGODB_URI`, `APP_PASSWORD` and `APP_MODE=toggl`. The
+  database then holds settings only.
 
-| Day     | Target                                                                  |
-| ------- | ----------------------------------------------------------------------- |
-| Mon–Wed | **9h** each                                                             |
-| **Thu** | `40h − (hours logged Mon–Wed) − 5h` — recalculated to leave ~5h for Fri |
-| **Fri** | `40h − (hours logged Mon–Thu)` — simply whatever's left for the week    |
-| Sat/Sun | 8h (fallback)                                                           |
+Changes upload shortly after you make them. Other devices pick them up on load
+and when the page regains focus, and a new device adopts the synced setup
+without asking. Every write is checked against a revision number; if two devices
+changed settings since their last common revision, **Settings → Sync &
+transfer** shows both and asks which to keep.
 
-Thursday and Friday adapt to what you actually logged earlier in the week, so an
-over- or under-run mid-week is absorbed sensibly. Both are clamped to ≤ 12h (also
-scaled).
+If a newer setup arrives while Settings or the export dialog is open, their
+fields are reloaded and the app tells you, so saving does not overwrite the newer
+values. In standalone mode the workspace list is also re-read on focus.
 
-### Month boundaries split the week
+**Never synced:** the Toggl API token (the server also strips it from anything
+it receives) and the refresh interval.
 
-Billing runs to month-end, so when the 1st of a month falls mid-week the targets
-follow the same rule the timesheet's overtime cap already uses: the week is cut at
-the boundary and each side becomes an independent mini-week with its own budget of
-**week ÷ 5 per weekday (Mon–Fri)** it holds. Hours logged on one side never count
-toward the other, so overtime banked before the rollover no longer (wrongly)
-shortens the new month's days — if the 1st is a Friday, Friday's target is a full
-standard day no matter how much you front-loaded Mon–Thu.
+**Without a database**, **Sync & transfer** can download the whole setup as a
+JSON file (without the token) and import it on another device. This works on
+every deployment.
 
-Within each side, the adaptive Thursday/Friday roles shift to its **last two
-weekdays**: the closing weekday takes whatever remains of that side's budget
-(floored at the minimal target working day), the one before it adapts
-Thursday-style, and any earlier weekdays keep their base target (9h short / 8h
-regular). So the old month's half settles its own surplus or shortfall on its
-closing day — with Short Friday on and the 1st on a Friday, front-loading Mon–Wed
-now buys you a short *Thursday* instead. A week wholly inside one month behaves
-exactly as described above.
+## Install as an app
 
-### Advanced overrides
+The app has a web manifest and icons, so it can be installed and run in its own
+window. It is not offline-capable: the service worker (`public/sw.js`) exists
+only for installability and caches nothing.
 
-Two values under **Advanced targets** in Settings can be pinned independently of
-the weekly figure. Each pre-fills with its proportional default; leave it blank to
-keep auto-scaling, or type a value to fix it (it then stays put when you later
-change the weekly hours):
+The **Install as an app** block at the bottom of Settings adapts to the browser:
 
-- **Maximal individually billed timesheet** — the longest a single entry can be
-  and still bill as one line (4h at 40h). Longer entries are flagged to split.
-- **Minimal target working day** — the Friday floor: once the week is nearly done,
-  the day's target never drops below this (5h at 40h), so a stray hour isn't worth
-  a trip in. (The short-week Thursday reserve still scales purely with the weekly
-  total, so the default shape is unchanged.)
+- **Chrome, Edge, Android:** the button opens the browser's own install dialog.
+  The browser's other install prompts still work.
+- **iPhone and iPad (any browser), Safari 17+ on the Mac:** the button opens a
+  walkthrough: Share → **Add to Home Screen**, or File → **Add to Dock** on the
+  Mac. In-app browsers (Slack, Teams, mail apps) and third-party browsers on iOS
+  older than 16.4 are first told to open the page in Safari.
+- **Anywhere else, or inside the installed app:** the block is hidden.
 
-Also under **Advanced** is **Round timesheet to** — the unit the timesheet rounds
-each entry to. It defaults to **15 minutes (0.25h)**; pick **12 minutes (0.2h)**
-for a client that can't bill quarter-hours, or **30 minutes (0.5h)** / **1 hour**
-for one that bills in coarser blocks. Only the timesheet and exports are affected
-— the dashboard and the targets above are not.
+The rules are in `lib/pwa.ts`, tested by `pnpm check:pwa`. Preview deployments
+install as **Toggl Quick View (beta)**, so they can sit next to the production
+install.
 
-Right below it, **Timesheet lines may start** unlinks *when* a line may begin from
-the unit its duration is rounded to. Normally the two are the same grid: 15-minute
-rounding puts the Individual view's clock times on `:00/:15/:30/:45`. Some clients
-keep them apart — they take quarter-hour durations but only accept lines starting
-at `:00` or `:30` — so pick that window here and every start is anchored to it. A
-line pushed past its own mark by the one before it moves on to the **next** mark,
-so the times may leave a gap rather than drift off the window. Durations, totals,
-the Summary view and the dashboard are all untouched; the field only appears when a
-window coarser than the rounding unit exists to pick.
+## Targets
 
-### Don't bill overtime
+Targets aim for **Hours worked per week** (Settings, default 40h). The figures
+below are for 40h; every target, floor and cap scales linearly with the weekly
+hours. A 20h week, for example, becomes 4h a day, or `4.5 / 4.5 / 4.5 / 4 / 2.5`
+with Short Friday. The break reminder does not scale.
 
-Some engagements contractually disallow billing more than the agreed weekly hours.
-Turn on **Don't bill overtime** (under **Advanced**) and the timesheet caps each
-week's **billed** total at your **Hours worked per week**: when the week's billable
-lines exceed the cap, it trims them back down — always **rounding down**, by whole
-rounding units. The time is still tracked in Toggl; it just isn't billed.
+The week runs Saturday to Friday. Weekend days have a nominal 8h target but add
+nothing to the weekly budget; hours logged on them count toward the adaptive
+days below. A day's target depends only on hours logged before that day, so it
+does not shrink as you work.
 
-How the trim is shared out:
+| Day | Standard | Short Friday |
+| --- | --- | --- |
+| Mon–Wed | 8h | 9h |
+| Thu | Half of what remains for the week, at least 7h | What remains minus 5h for Friday, between 8h and 9h |
+| Fri | What remains for the week, at least 5h | What remains for the week, at least 5h |
 
-- **`(X)`-marked time goes first.** Append `(X)` to a billing tag (e.g. `D123(X)`)
-  to mark that time as the disposable buffer. `D123(X)` is treated as the *same
-  billing code* as `D123` — they merge into one `D123` line — but the `(X)` share
-  of that line is what gets trimmed first, and it can be trimmed all the way to
-  zero before any firm time is touched.
-- The cut is **spread proportionally** across the candidate lines and across the
-  days of the week (the bigger the share, the more it gives up), so no single day
-  or code is singled out.
-- If trimming every `(X)` share still isn't enough to reach the cap, the firm
-  remainder of the billable lines is trimmed the same way.
-- **`(!)`-marked time is never trimmed.** Append `(!)` to a billing tag (e.g.
-  `D123(!)`) to protect that time: it merges into the same displayed line as
-  `D123`, always bills whole, and still consumes the cap — so the cut falls on
-  the other lines (and in the Summary view a day keeps at least its protected
-  time, the leveling working around it). In the extreme case where the
-  protected time alone exceeds the cap, the billed total stays above the cap —
-  same as a linked-code line, which is also never trimmed.
+No day's target exceeds 12h.
 
-The **`(X)` / `(!)` markers are internal**: they're stripped from every
-displayed/exported code, so a client never sees them. The cap is measured on
-**billable lines only** — the
-"No billing tag" / "Multiple billing tags" / "Too long" warnings are problems to
-fix in Toggl, not billable slack, so they never count toward it or get trimmed.
+### Month boundaries
 
-**Month boundaries split the cap.** Billing runs to month-end, so when the 1st of
-a month falls mid-week the week is cut there and each side gets its own cap,
-proportional to the **weekdays (Mon–Fri)** it holds — `weeklyHours / 5 × that
-count` — and each side is trimmed independently. So if the 1st is a Wednesday, the
-Sat–Tue half caps at `weeklyHours/5 × 2` and the Wed–Fri half at `weeklyHours/5 ×
-3`. A weekend-only half caps at **zero** (its work isn't billed): when the 1st is a
-Monday, the leading Sat–Sun is capped at nothing. A week wholly inside one month is
-a single full-week segment capped at `weeklyHours`, exactly as before. This applies
-to the on-screen week too, not just month exports.
+When the 1st of a month falls mid-week, the week is split there and each part is
+budgeted separately at 8h per weekday it contains. Hours on one side never count
+toward the other. Within each part, its last weekday takes the Friday role and
+the one before it the Thursday role. So with the 1st on a Friday, Friday gets a
+full standard day however much you worked Mon–Thu, and any surplus from Mon–Wed
+shortens Thursday instead.
 
-The trimmed time is shown **only in the on-screen views** (Summary and Individual)
-on a muted **"Overtime (not billed)"** line, as a hint that the cap is doing its
-job. **Exports stay clean**: the XLSX / CSV / PDF contain only the billable
-timesheet — no overtime line and no warning/overlap rows — and every billable
-figure (and the totals) matches the view exactly.
+### Advanced targets
 
-### Time off (state holidays)
+Under **Settings → Advanced targets**. Each of the first two shows its scaled
+default; leave it blank to keep scaling, or enter a value to fix it.
 
-Add an entry carrying the **time off tag** (default **`.Time Off`**, configurable
-under **Settings → Advanced**) on any day — its length doesn't matter — and that
-day becomes a **non-working day**, exactly like a weekend:
+- **Maximal individually billed timesheet** (4h): the longest a single entry
+  can be and still bill as one line. Longer entries are flagged.
+- **Minimal target working day** (5h): the floor for the closing day of the
+  week.
+- **Round timesheet to**: the unit timesheet entries are rounded to. 15 minutes
+  by default; also 12 minutes, 30 minutes or 1 hour. Affects the timesheet and
+  exports only.
+- **Timesheet lines may start**: a coarser grid for start times in the
+  Individual view, for clients that take quarter-hour durations but want lines
+  to start on `:00` or `:30`. Durations and totals are unaffected. It only
+  appears when a coarser grid than the rounding unit exists.
 
-- Its **daily target is 0h**, and the dashboard's weekly goal drops by a day's
-  worth (`weeklyHours / 5`) — a 40h week with one state holiday becomes a 32h
-  week, with the adaptive Thursday/Friday targets settling against that.
-- The **"Don't bill overtime" cap shrinks the same way** (per segment, so a
-  month-split week counts each side's own holidays), and the per-day evening-out
-  in the Summary view levels the *remaining* working days — the holiday is never
-  treated as one of them.
-- The **marker entry itself is never billed, counted or exported** — it doesn't
-  show on the timesheet, doesn't trigger the "No billing tag" warning, and
-  doesn't count as tracked time on the dashboard.
-- Any **other** work tracked on that day still counts in full, like weekend
-  work: it's billed whole (never water-filled down) and consumes the reduced cap.
+### Time off
 
-Only entries on the **tracked projects/workspaces** mark a day off, so a day can
-be time off in one workspace and a normal working day in another. Days marked
-this way carry a small **"holiday"** pill in the timesheet views and an **"off"**
-pill in the dashboard's week summary.
+An entry tagged with the **time off tag** (default `.Time Off`, set under
+Advanced) makes its day a non-working day, like a weekend. Its length does not
+matter.
 
-## Break detection
+- The day's target is 0h and the week's budget drops by a day (a 40h week with
+  one holiday becomes 32h). The "Don't bill overtime" cap shrinks the same way.
+- The marker entry is never billed, counted or exported, and never triggers a
+  missing-tag warning.
+- Other work tracked that day counts in full and is billed whole.
 
-You're reminded to take a break once you've worked **4.5h continuously** on the
-selected project. A break is considered taken when either:
+Only entries on the tracked projects count, so a day can be off in one workspace
+and a working day in another. Such days show a **holiday** pill in the timesheet
+and an **off** pill in the dashboard's week summary.
 
-- there's a gap of **≥ 10 minutes** with no tracking, or
-- you start tracking a **different project** (a context switch counts as a
-  break).
+## Breaks and unreported time
 
-Either resets the continuous-work timer. The alert can be snoozed for 15
-minutes.
+**Break reminder.** After 4.5h of continuous work on the selected project, an
+alert asks you to take a break. A gap of 10 minutes or more, or switching to a
+different project, counts as a break. The alert can be snoozed for 15 minutes.
 
-## Unreported time
+**Unreported time.** The side panel lists gaps today and yesterday where no timer
+ran on any project. Time before the first entry and after the last is not
+counted, and gaps under a minute are ignored. The **Today / Yesterday** timeline
+draws each gap as a red dashed divider. This uses the week's data already
+fetched, so it costs no extra API calls.
 
-The side panel flags **unreported time** — stretches of **today and yesterday**
-where _no_ timer was running on _any_ project (a true hole in the timeline, as
-opposed to a "Break", which here means working on a different project). It's
-derived from the same week fetch, so it costs **no extra API calls**: entries
-across all projects are merged and the gaps _between_ them are reported. Time
-before your first entry or after your last isn't counted — only genuine gaps in
-the middle. Gaps shorter than `UNREPORTED_MIN_MINUTES` (default **1 min**) are
-ignored as noise.
+## Billing codes
 
-The entries panel has **Today / Yesterday** tabs so you can see exactly where
-each gap falls relative to your tracked work. Within the timeline a gap is drawn
-as a **red dashed divider** (not a card), so it clearly reads as a hole rather
-than another entry. A summary "Unreported time" card lists both days' gaps with
-per-day totals.
+Each entry on the selected project should carry one **billing tag**: a Toggl tag
+starting with the billing tag prefix (default `D`, e.g. `D123`, set under
+Advanced). The tag says which timesheet line the time bills to. Entries without
+one get a small ⚠ on the dashboard timeline.
 
-## Billing tags
+### Overtime markers
 
-Every entry on the selected project is expected to carry a **billing tag** — a
-Toggl tag whose name starts with a configurable prefix (default **`D`**, e.g.
-`D123`) that says which line the time bills to.
+Append a marker to a billing tag to control how [Don't bill
+overtime](#dont-bill-overtime) treats that time. Both merge into the plain code's
+line (`D123(X)` and `D123(!)` bill as `D123`) and are never shown or exported.
 
-- On the dashboard's **Today / Yesterday** timeline, any selected-project entry
-  **missing** a billing tag gets a small ⚠ marker. It's deliberately a quiet,
-  **non-amber** nudge — visible, but not alarming.
-- It reads the tag names Toggl already returns on each time entry, so this costs
-  **no extra API calls**.
-
-The prefix is configurable under **Settings → Advanced → Billing tag prefix**
-(change it to `A`, say, to match `A123` tags). Its default lives in
-[`lib/calc.ts`](lib/calc.ts) as `DEFAULT_BILLING_TAG_PREFIX`.
-
-Everything in this section assumes the engagement bills by code. One that bills
-per project instead turns the whole layer off — see **Projects-only billing**
-below.
+- `(X)`: disposable. Trimmed first, down to zero if needed.
+- `(!)`: protected. Never trimmed; it still counts toward the cap, so other lines
+  are trimmed instead.
 
 ### Strip parentheses from billing codes
 
-A tag often carries a human-readable name in parentheses — `D123 (Phase 2)` —
-which some clients don't want on the timesheet they receive. Turn on
-**Settings → Advanced → Strip parentheses from billing codes** (off by
-default) and every billing code is used **without** its parenthetical groups:
-`D123 (Phase 2)` bills, displays and exports as `D123`. The order of
-operations is fixed: the internal `(X)` / `(!)` overtime markers are
-**interpreted first**, then the remaining parentheses are stripped, and only
-then is the code used — so `D123 (Phase 2)(!)` still protects its time and
-lands as `D123`. Since the stripped code is what's *used* (not just shown),
-codes that differ only in the parenthetical — `D123 (a)` and `D123 (b)` —
-merge into one `D123` line, exactly like the marker twins do. It's a workspace
-setting, so each stored workspace remembers its own choice.
-
-### Projects-only billing (no billing codes)
-
-Not every engagement bills by code. Some are billed **per project** — the
-client's timesheet has one line per project and there is nothing finer to
-report. Turn on **Settings → Advanced → Bill by project** and this workspace
-stops using billing codes altogether: **every entry bills to its project**,
-whose name is the line.
-
-What follows from that:
-
-- **Nothing can be untagged.** The "No billing tag" and "Multiple billing tags"
-  warnings can't occur — an entry always has a project — so they never appear on
-  the timesheet, and the dashboard timeline drops its ⚠ missing-tag marker.
-- **Rows are projects.** The Summary view heads its first column **Project** and
-  gives each tracked project one row; the Individual view codes each line by its
-  project. Tracking several projects, the project-name prefix disappears — the
-  line already *is* the project, so prefixing would just repeat it. Exports
-  (CSV/XLSX/PDF) head that column **Project** to match.
-- **Adjacent same-project entries combine** in the Individual view, exactly as
-  same-code ones do (within an hour, capped at the billable limit).
-- **Every code-shaped input is inert**: a tag that looks like a billing tag, a
-  `[T-1234]` support-ticket bracket (the bracket stays in the description — it
-  isn't a code here), the `(X)` / `(!)` overtime markers, a parenthetical, and
-  linked billing codes. The settings that configure them — billing tag prefix,
-  strip parentheses, linked billing codes — are hidden while this is on. They
-  keep their stored values, so turning it back off restores the setup intact.
-- **Everything that isn't about codes still works**: rounding and the start
-  window, the description length limit, the billable-length cap, overlap
-  warnings, "Don't bill overtime" (with nothing marked `(X)`/`(!)`, the trim
-  simply spreads over the projects), and the **time off tag** — that's a plain
-  tag, not a billing code, so state holidays behave exactly as described above.
-- In **standalone mode** the tracker drops the billing-tag chip and its
-  autocomplete for such a workspace: there is no tag to set, and entries created
-  there carry none.
-
-It's a **workspace setting**, so one client can bill by project while another
-bills by code, each in its own stored workspace.
+Under Advanced, off by default. Turns `D123 (Phase 2)` into `D123` everywhere:
+billing, display and exports. Overtime markers are read first, so
+`D123 (Phase 2)(!)` still protects its time. Codes that differ only in the
+parenthesis merge into one line. This is a per-workspace setting.
 
 ### Support tickets
 
-Support engagements bill against many **one-time tickets** instead of a few
-long-lived codes, and creating a tag per ticket isn't practical. So an entry
-that has **no billing tag** but whose description **starts with a bracketed
-ticket id** bills to that id as if it were tagged:
+An entry with no billing tag whose description starts with a bracketed id bills
+to that id:
 
-> `[T-1234] Fix login redirect` → billed to code **`T-1234`**, description
-> "Fix login redirect"
+> `[T-1234] Fix login redirect` bills to `T-1234` with the description
+> "Fix login redirect".
 
-- The bracket's content becomes the entry's **billing code** (any string —
-  it doesn't need the billing-tag prefix) and the bracket itself is **dropped
-  from the billed description** (the code already names the ticket).
-- **Always on, no toggle** — an explicit billing tag on the entry wins over the
-  bracket, and a description that doesn't open with `[…]` behaves exactly as
-  before, so ordinary entries are unaffected. Such entries no longer show the
-  ⚠ missing-tag marker or land on the "No billing tag" warning row.
-- Everything downstream treats the derived code like a real tag: timesheet
-  rows/lines group per ticket, same-ticket entries combine in the Individual
-  view, exports match, and the `(X)` / `(!)` overtime markers work inside the
-  bracket too (`[T-1234(X)] …`).
-- **Standalone mode works the same** — the derivation happens in the shared
-  calculation layer, not in the data source, so nothing extra is stored. The
-  tracker just shows the derived code as a dashed chip (`[T-1234]`) instead of
-  the missing-tag warning; click it to pin an explicit tag if you ever want to
-  override the bracket.
+The id needs no prefix, an explicit billing tag wins over it, and overtime
+markers work inside the bracket (`[T-1234(X)] …`). It is always on. In the
+standalone tracker the derived code shows as a dashed chip; click it to set an
+explicit tag.
 
-## Workspaces (stored settings)
+### Bill by project
 
-A **workspace** is a named snapshot of your settings you can recall in one click —
-handy when you juggle more than one setup (different clients, each with their own
-project selection, weekly target, billing-tag prefix and rounding).
+Some engagements bill one line per project. **Bill by project** (under Advanced,
+per workspace) makes every entry bill to its project's name:
 
-- Configure the settings you want, then open **Settings → Workspaces**, type a
-  name and hit **Save current**. Store as many as you like.
-- Click a stored workspace in that list to **recall it instantly** — it switches
-  live and the active one is marked. **↻** re-captures the current settings into
-  it, **✎** renames, **🗑** deletes.
-- Once at least one is stored, the **dashboard topbar** grows a workspace button
-  next to **Timesheet** showing the one you're on. Open it and pick another to
-  switch without going through Settings — the same recall, one click away. On a
-  narrow screen the button drops to its icon (the title above already names the
-  workspace) and on a phone the menu opens as a bottom sheet with full-width
-  rows; **Manage workspaces…** at its foot opens Settings straight on the
-  Workspaces section, for creating, renaming and deleting. If your live settings no longer
-  match any stored workspace the button reads **Workspace** and the menu says so
-  — picking one replaces them.
-- Workspaces are **immutable snapshots**: editing your live settings never
-  changes a stored one — recall a workspace to bring its settings back.
+- There are no missing-tag or multiple-tag warnings, and no ⚠ on the dashboard.
+- Timesheet rows and export columns are headed **Project**, without a
+  project-name prefix.
+- Billing tags, ticket brackets, overtime markers, parentheses and linked codes
+  are ignored, and their settings are hidden (but kept, so turning this off
+  restores them).
+- Rounding, start grid, description limit, billable-length cap, overlap
+  warnings, Don't bill overtime and the time off tag all still apply.
+- The standalone tracker hides the billing-tag chip for such a workspace.
 
-A workspace captures everything in Settings **except** the API token (the account
-credential, shared across all workspaces) and the refresh interval (a per-device
-knob). The list lives in the browser's `localStorage` alongside your other
-settings — it's a secondary, tucked-away feature of the Settings panel.
+## Workspaces
+
+A **workspace** is a named snapshot of your settings: project selection, targets,
+billing options and export details. Use one per client.
+
+- **Settings → Workspaces**: type a name and **Save current**. Click a stored
+  workspace to switch to it. **↻** re-captures the current settings into it,
+  **✎** renames, **🗑** deletes.
+- Once one exists, the dashboard top bar shows a workspace menu next to
+  **Timesheet** for switching. If your live settings match no stored workspace,
+  it reads **Workspace**. **Manage workspaces…** opens the Settings section.
+- Editing live settings never changes a stored workspace; only **↻** does.
+
+A workspace captures everything except the API token and the refresh interval.
+In Toggl mode the list lives in `localStorage` (and syncs if settings sync is
+on).
 
 ### Export details are per workspace
 
-The details the **export dialog** remembers — company, client, role, approver,
-reference, hourly rate, the engagement note and the engagement's start date —
-are part of the workspace too,
-because they describe *who is being billed*: with two clients stored, one
-client's company or rate can never end up on the other's PDF.
+The export dialog's details (company, client, role, approver, reference, rate,
+engagement note, start date, signature image) belong to the workspace you are on,
+so one client's details never end up on another's PDF.
 
-Two of them deserve a word of their own:
+- A new workspace starts with the details currently in use.
+- After that, anything you enter in the export dialog is saved straight to the
+  current workspace. No **↻** is needed.
+- Two workspaces may differ only in these details; the app remembers which one
+  you recalled.
+- With no workspace stored, or live settings matching none, the details belong to
+  the device.
+- **Role** and **engagement note** are kept per template language. A language
+  left empty falls back to the other one.
+- **Start date** is the engagement's first billable day. Week and month presets
+  are clipped to it, so an engagement starting Aug 16 exports Aug 16–31 as its
+  first month. Custom dates are not clipped.
 
-- **Role, per template language.** Like the engagement note, the role prints in
-  the document's language ("Integration architect" on an English template,
-  "Integrační architekt" on a Czech one), so each language keeps its own text —
-  the box in the dialog shows the selected template's. A language left empty
-  prints the other language's text, so a role that reads the same in both only
-  has to be typed once.
-- **Workspace start date.** The first billable day of the engagement. The
-  dialog's week and month presets are clipped to it, so an engagement that
-  started Aug 16 exports Aug 16–31 as its first month — the period on the
-  document — and any per-day list a template prints — says so too, instead of
-  claiming the whole of August. Hand-edited custom dates are
-  never clipped, and once the engagement is past its first month the clip
-  simply stops mattering.
-
-- A workspace you **store now** starts from the details currently in use — that
-  is the inheriting step.
-- From then on each workspace keeps **its own**: filling a detail in the export
-  dialog writes it straight back onto the workspace you're on (no **↻**
-  re-capture needed), and recalling another workspace brings that one's details.
-- Workspaces stored **before** this existed carry no details of their own, so
-  they keep using the ones already on the device until you first change them.
-- Two workspaces may be identical **apart from** these details — the same
-  project and targets billed under two identities. The app remembers which one
-  you recalled, so a write lands on that one and not on its twin.
-- With **no** workspace stored — or with your live settings no longer matching
-  any — the details are simply this device's, as they always were.
-
-**Settings → Advanced → Export details** names which of them are currently set
-(the values themselves are edited in the export dialog, next to the export that
-prints them).
+**Settings → Advanced targets → Export details** lists which details are set.
+They are edited in the export dialog.
 
 ## Timesheet
 
-The **Timesheet** button (top-right of the dashboard, or `/timesheet`) opens a
-copy-paste-ready view of the current week for filling in an external timesheet.
-Which view it opens is chosen in **Settings → Timesheet view**:
+**Timesheet** (top right, or `/timesheet`) shows the current week ready to copy
+into an external timesheet. **Settings → Timesheet view** picks the default
+layout: **Summary** or **Individual**. Both reuse the dashboard's week fetch, so
+they cost no API requests.
 
-- **Summary** (default) — the week combined per billing tag, described below.
-- **Individual** — one row per entry, with times, described below.
+**Previous weeks** lists recent weeks without fetching anything. Selecting a week
+fetches it once and keeps it in memory until reload. Past weeks do not
+auto-refresh; **↻ Refresh** fetches live data, bypassing the shared server cache.
+The live poll pauses while you view a past week and resumes on **This week**.
 
-Both views are built from the same single week fetch the dashboard already makes,
-so they add **no API requests**.
+### Summary
 
-### Previous weeks
+- Days are columns (Sat/Sun only when tracked), billing codes are rows.
+- Each cell sums a day's entries for a code and merges their descriptions
+  (`; `-separated, duplicates removed). A copy button copies the description.
+- Hours are decimal (e.g. `8.25h`), rounded to the rounding unit. Rounding is
+  spread across a day's cells (largest-remainder method) so they add up to the
+  rounded day total.
 
-Click **Previous weeks** (top-left of the timesheet) to step back in time. You
-first get a plain **list of recent weeks** — choosing this list costs **no API
-requests**. Only when you **select a week** is that week's data fetched (once),
-and the chosen view renders it with the **same layout and warnings** as the live
-current week.
+### Individual
 
-A past week is a **frozen snapshot**: it does **not** auto-refresh. A **↻
-Refresh** button re-fetches on demand, and — when the shared server cache is on —
-deliberately **bypasses** it to pull genuinely live data. Already-fetched weeks
-are kept **in memory for the session** (no `localStorage`), so re-opening one
-costs nothing; reloading the page clears them. While you're viewing a past week
-the live current-week poll is **paused**, so reading history never spends from
-the hourly budget — it resumes when you click **This week**.
+- One section per day, one row per entry: start–end time, rounded hours, code
+  and description, with a copy button.
+- Starts snap to the rounding unit (or the start grid, if set) on the local
+  clock, and each end is start plus rounded duration. Rows are pushed forward so
+  they never overlap, but never past the day they were tracked on.
+- Adjacent entries with the same code merge when they are within an hour of
+  each other and the result stays within the billable maximum (4h at 40h).
+  `D-1, D-2, D-1` stays three rows.
+- Rounding works as in Summary, but favours keeping small entries visible.
 
-### Summary timesheet
+### Warnings
 
-- **Days are columns** (Mon–Fri always; Sat/Sun appear only when the project was
-  tracked then) and **billing tags are rows**.
-- Each day's entries for a tag are **combined into one cell**: their durations
-  are summed and their descriptions merged (`; `-separated) with **duplicates
-  removed**. Cells show **duration only** — no clock times.
-- Durations are shown as **decimal hours** (e.g. `8.33h`) and **rounded to the
-  nearest rounding unit** (15 minutes by default, or 12/30/60 — see Advanced
-  above).
-  The rounding is apportioned per day so each day's cells
-  still **add up to that day's rounded total** — the error is spread evenly
-  across tags rather than accumulating (largest-remainder method).
-- A **copy button** on each cell copies that combined description to the
-  clipboard. Per-day, per-tag, and grand-total hours are shown.
-- An entry **without** a billing tag collects in a **"No billing tag"** row, and
-  one carrying **more than one** billing tag collects in a **"Multiple billing
-  tags"** row — both flagged in **amber** ⚠ so you go fix the tag in Toggl. These
-  warning rows are **on-screen hints only**: they don't count toward the day/grand
-  totals and never appear in exports (the totals are the billable lines alone, so
-  the view and the export always agree).
+Both views flag, in amber: **No billing tag**, **Multiple billing tags**, and in
+Individual also **Too long to bill individually** (over the billable maximum)
+and **Overlapping entries**. Warning rows are on-screen only: they do not count
+toward totals and never appear in exports, so the view and the export always
+agree.
 
-### Individual timesheet
+### Don't bill overtime
 
-- The week is a **list of day sections**; each lists that day's entries on their
-  own rows showing **start–end time, rounded hours, billing tag and description**
-  (the summary view shows hours only). A **copy button** copies the row's
-  description.
-- **Times are rounded too:** each row's start is snapped to the nearest rounding
-  unit and the end is start + the rounded duration, and rows are **packed
-  forward so they never overlap** even after rounding. When the workspace sets a
-  coarser **start window** (see Advanced above), starts snap to _that_ grid
-  instead — including the packed ones, which land on the next window mark — while
-  the durations keep rounding on the rounding unit. The marks are read off the
-  **local clock** (they run from the day's own midnight, so a half-hour timezone
-  offset doesn't put an "hourly" grid on `:30`), and a line's own mark never
-  leaves the day it was tracked on: a late entry falls back to the day's last
-  mark rather than being shown — and exported — under tomorrow's date.
-- **Adjacent same-tag entries combine** into one row — but only when they sit
-  **within an hour** of each other and the combined time stays **≤ 4h**. So
-  `D-1, D-2, D-1` stays three rows, while the first two of `D-1, D-1, D-2, D-1`
-  merge (unless that would exceed 4h, in which case they split).
-- Rounding uses the same 15-minute, day-total-preserving method as the summary,
-  with one tweak: it **biases small entries to surface** rather than vanish, and
-  only drops a billable row if it _still_ rounds to zero.
-- **Warnings** (amber): a **No billing tag** and **Multiple billing tags** row
-  as in the summary, plus a **Too long to bill individually (> 4h)** row for any
-  single entry over four hours (it can't be split), and an **Overlapping
-  entries** notice when two entries overlap in time. The over-4h case also shows
-  the same quiet ⚠ on the dashboard timeline. As in the summary, all of these are
-  **view-only hints** — they don't count toward the totals and are left out of
-  exports.
+For engagements that forbid billing more than the agreed hours. With **Don't
+bill overtime** on (under Advanced), each week's billed total is capped at
+**Hours worked per week**, trimming whole rounding units:
+
+1. `(X)`-marked time goes first.
+2. Then the rest, except `(!)`-marked time and linked-code lines, which are never
+   trimmed. If those alone exceed the cap, the total stays above it.
+
+The Individual view spreads the cut in proportion to each line's size. The
+Summary view bills the weekend in full and evens out the weekdays toward a common
+ceiling. Only billable lines count toward the cap; warning rows never do.
+
+A week split by the 1st of a month gets a cap per part, 8h (at 40h) per weekday
+it holds. A weekend-only part is capped at zero. Holidays reduce the cap the same
+way.
+
+The trimmed time appears in the views on a muted **Overtime (not billed)** line.
+Exports contain only the billed figures.
 
 ### Max description length
 
-Some clients' timesheet systems reject entry messages over a character limit.
-Set **Maximal description length** (under **Advanced**) and every description
-the timesheet produces — on screen, via the copy buttons, and in the technical
-exports (CSV/XLSX) — is guaranteed to fit:
+For client systems that reject long descriptions. Set **Maximal description
+length** (under Advanced; blank means no limit) and every description in the
+views, copy buttons and CSV/XLSX fits:
 
-- A **single entry** whose description fits passes through **untouched** — the
-  common case needs nothing.
-- A **combined** description (merged cell/row) keeps its parts **in first-seen
-  order while they fit** and drops the rest behind a trailing **`; …`** marker,
-  so the pasted text honestly signals the omission. Nothing is cut mid-sentence.
-- A **linked-code** line's per-code breakdown (e.g. `S101 3.25h, S102 1.5h`) is
-  its **first** part, so it always survives — the merged entry descriptions are
-  what get dropped.
-- Only when a **single entry's own description** already exceeds the limit
-  (there's nothing left to drop) is it hard-cut at the limit with `…`.
+- A single entry that fits is unchanged.
+- A merged description keeps parts in order while they fit and ends with `; …`.
+  A linked-code breakdown is always the first part, so it survives.
+- A single description that is too long on its own is cut with `…`.
 
-A shortened description is flagged on screen with an amber **✂** whose tooltip
-shows the full text, so you can shorten the source entry in Toggl (or the
-tracker) if you'd rather choose what stays. Warning rows (no/multiple billing
-tag) are never shortened — their text is the pointer to the entries to fix.
-Leave the field blank for no limit (the default; nothing changes).
+Shortened text shows an amber **✂**; hover for the full text. Warning rows are
+never shortened. PDFs use full text by default; when a limit is set, the export
+dialog's **Descriptions** option can switch the PDF to the shortened text.
 
-**PDF exports show the full text by default** — a PDF is read by people, not
-pasted into the client's system. When a limit is set, the export dialog offers
-a **Descriptions** picker (PDF only): keep **Full text**, or pick **Shortened**
-to match the on-screen and CSV/XLSX text.
+### Linked billing codes (subcontracting)
+
+Use this when you work for a prime contractor who bills the whole engagement
+under one code, but the work is tracked for a sub-client with its own codes and
+possibly its own rounding and overtime rules. A linked code (**Advanced → Linked
+billing codes**) says, for one selected project:
+
+- its entries carry the sub-client's tags (their own prefix, e.g. `S101`),
+  validated as usual;
+- each day they are grouped by those codes and rounded on the link's own unit
+  (a whole multiple of this sheet's unit), as the sub-client's sheet would show
+  them;
+- the day's rounded total bills here as the single target code (e.g.
+  `D-SUB-1`).
+
+So each day, the sub-client's codes sum to this sheet's linked line. The line's
+description starts with the breakdown (e.g. `S101 1.75h, S102 0.50h`). In the
+Individual view the linked project is one block per day, placed at its first
+entry.
+
+**Setup**, billing prime client P for work done for sub-client S:
+
+1. **In Toggl:** create a project for S's work and tag its entries with S's
+   codes (one per entry).
+2. **Prime workspace:** select P's project(s) and S's project (the linked project
+   must be selected). Add the linked code: pick S's project, its prefix, its
+   rounding and the code it bills as here. If S's contract forbids overtime,
+   tick **It doesn't bill overtime** and enter S's weekly cap. Save as a
+   workspace.
+3. **Sub-client workspace:** only S's project, its prefix, rounding and targets,
+   no linked code. This produces the sheet you hand to S.
+
+**Overtime.** This sheet's Don't bill overtime never trims a linked line, since
+it must match S's sheet; the linked hours still count toward the cap, so the
+other lines absorb the cut. The link's own **It doesn't bill overtime** applies
+S's cap upstream with the same rules S's sheet uses. Keep it in step with the
+sub-client workspace's setting.
+
+In standalone mode the link can target another stored workspace instead of a
+Toggl project. The logic is in `lib/timesheet/mapping.ts`.
+
+## Exports
+
+The timesheet exports to CSV, XLSX and PDF. Exports use the same figures as the
+view.
 
 ### PDF templates
 
-The export dialog's **PDF template** picker chooses the layout of the PDF. This
-repository ships one:
+The export dialog's **PDF template** picker chooses the layout. This repository
+ships one, **Timesheet**: your name, the period, and the tables as shown on
+screen, with no logo or embedded typeface. The picker appears only when there is
+more than one template.
 
-- **Timesheet** — your name, the period, and the per-week (Summary) or per-day
-  (Individual) tables exactly as shown on screen. Deliberately plain: no logo,
-  no accent colour, no embedded typeface.
+### Digital signature
 
-The picker only appears when there is more than one template to choose from, so
-a stock deployment simply exports that layout. Everything below is about adding
-your own.
+A template can declare a signature area (the built-in Timesheet does not). For
+such templates the export dialog offers **Digital signature → Sign the PDF**,
+which adds a PAdES signature over the whole file, with the visible block in the
+issuer's box. Boxes for the client's countersignature stay blank.
+
+- **Sign with**: **Hardware token via Sign Bridge** signs with a certificate on
+  a smart card. Sign Bridge is a browser extension plus a local helper app; the
+  dialog says which part is missing. The **throwaway key** is always offered: a
+  key generated in the browser and discarded with the tab. Its signatures are
+  valid (`PAdES-BASELINE-B`) but chain to nothing, so no viewer trusts them. It
+  exists to test the pipeline without a card.
+- **Certificate**: **Connect and list certificates** pairs with the helper
+  (approve only if the code shown matches the page). Cards often hold a
+  qualified signing certificate and an authentication certificate for the same
+  person; signing with the second gives a valid but non-qualified signature, and
+  the dialog warns when you pick one.
+- **Handwritten signature**: a PNG or JPEG scan, embedded in the visible block.
+  It is stored with the workspace, so it reaches your deployment and syncs with
+  your settings. Scans over ~190 kB are used for that export only. No signature
+  image ships with the app.
+- **Signature block layout**: image above or beside the certificate details,
+  with a preview at printed size.
+
+The image is cosmetic; the certificate is what signs. With signing off, the
+export is unchanged. Design and status: [docs/pdf-signing-v2.md](docs/pdf-signing-v2.md).
 
 ### Adding a PDF template
 
-A template is one object. It says what it is called, which extra details the
-export dialog should ask the user for, and how to turn an export document into
-a [pdfmake](https://pdfmake.github.io/docs/) document definition. Nothing else
-in the export pipeline is template-aware — the contract lives in
-`lib/export/pdf/types.ts`, and `lib/export/pdf/timesheet.ts` is a complete
-worked example to copy.
+A template is one `PdfTemplate` object: its name, the details the export dialog
+should ask for, and a function that turns an export document into a
+[pdfmake](https://pdfmake.github.io/docs/) document definition. Nothing else in
+the export pipeline knows about templates. The contract is in
+`lib/export/pdf/types.ts`; `lib/export/pdf/timesheet.ts` is a complete example.
 
 ```ts
 import type { PdfTemplate } from '@/lib/export/pdf/types';
 
 export const invoiceAnnex: PdfTemplate = {
-  id: 'invoice-annex',             // stable: it is what a device remembers
+  id: 'invoice-annex',             // stable: devices remember their pick by id
   name: 'Invoice annex',           // shown in the picker
   description: 'One line per day, totalled by billing code.',
   fields: ['client', 'reference'], // which dialog inputs to show (see below)
@@ -738,151 +526,88 @@ export const invoiceAnnex: PdfTemplate = {
 };
 ```
 
-Register it by adding it to `APP_TEMPLATES` in `lib/export/pdf/templates.ts`,
-or ship it in a pack (below).
+Register it in `APP_TEMPLATES` in `lib/export/pdf/templates.ts`, or ship it in a
+[pack](#private-template-packs).
 
 | Key | |
 | --- | --- |
-| `id` | Stable identifier. A device remembers its last pick by id, so renaming a template is free and changing its id is not. Lowercase, digits and dashes. |
-| `name` | What the picker shows. |
-| `description` | One or two sentences shown under the picker once the template is selected. |
-| `fields` | Identity details the dialog should collect for this template. Anything not listed is never asked for. |
-| `fieldHints` | Placeholder text per field, for one whose wording the user has to phrase themselves. |
-| `locale` | `'en'` or `'cs'` — the language the document prints in. It decides which of the per-language inputs (role, engagement note) the dialog shows and stores. |
-| `loadFonts` | Optional async loader for embedded fonts (below). Omit it and the document sets in pdfmake's bundled Roboto. |
-| `signatureWidget` | Optional. Declaring it makes the template **signable** — see "Making a template signable" below. Omit it and the export dialog offers no signing for this template at all. |
-| `build` | `(doc: ExportDoc) => TDocumentDefinitions`. Pure: same document in, same definition out. |
+| `id` | Stable identifier; renaming is free, changing the id is not. Lowercase, digits and dashes. |
+| `name` | Shown in the picker. |
+| `description` | One or two sentences shown under the picker. |
+| `fields` | Identity details the dialog collects for this template. Unlisted fields are never asked for. |
+| `fieldHints` | Placeholder text per field. |
+| `locale` | `'en'` or `'cs'`. Decides which language's role and engagement note the dialog shows and stores. |
+| `loadFonts` | Optional async loader for embedded fonts. Without it, pdfmake's bundled Roboto is used. |
+| `signatureWidget` | Optional. Makes the template signable; see below. |
+| `build` | `(doc: ExportDoc) => TDocumentDefinitions`. Must be pure. |
 
-`pnpm check:templates` asserts what has to hold for any template — unique ids,
-fields the dialog can actually offer, and that `build()` survives all four
-shapes a real export can take (Summary, Individual, an empty range, and a
-document with no rate).
-
-#### Making a template signable
-
-The app can sign a PDF export with a qualified certificate on a hardware token
-(`lib/export/pdf/sign`, and `docs/pdf-signing-v2.md` for the whole picture). All
-of that is the app's: the card, the CMS, the timestamp, the visible stamp. The
-only thing a template contributes is a promise about **where the stamp goes**:
-
-```ts
-signatureWidget: {
-  rect: { x: 62, y: 620, width: 216, height: 92 },  // pdfmake coords, from the TOP-left
-  page: { width: 595.28, height: 841.89 },          // what the rect is measured against
-  fontFamily: 'IBMPlexSans',                        // optional; must be one loadFonts() declares
-}
-```
-
-It is a **guarantee, not a report**. The signing stage is handed a finished PDF
-that says nothing about where a flowing block landed — its page and Y move with
-the number of table rows — so a template that declares a widget has to make the
-rectangle true rather than describe where it happened to end up. The rect must
-be free, on the **last page**, at exactly those coordinates.
-
-Two mechanisms together do it, and a template needs both:
-
-1. **Reserve the band.** Flow an invisible node exactly as tall as the signature
-   row at the end of the content, so pdfmake's own "does this still fit above
-   the bottom margin" arithmetic pushes it — and the row with it — onto a fresh
-   page as soon as the flow reaches the reserved band. It must be a real
-   drawing op with real extents: pdfmake drops zero-extent nodes from the list
-   its page-break rule walks, and a dropped anchor is a silent no-guarantee.
-2. **Say it directly too.** A `pageBreakBefore` rule keyed on that node's `id`,
-   so the contract does not rest on a measured height alone.
-
-Then draw the box itself at a fixed `absolutePosition`, so its Y needs no text
-metrics. Anything that would flow *after* the row has nowhere to go — put
-footnotes above it.
-
-`fontFamily` names the family the visible stamp is set in. The stamp is dropped
-into the template's own document, so a block set in a different typeface reads
-as pasted on; naming a family the template's `loadFonts()` does **not** declare
-fails inside pdfmake at signing time, after the PIN has been entered, so
-`pnpm check:signature` asserts the two agree.
-
-Leaving `signatureWidget` off is the right default. A stamp painted over a
-layout that reserved no room for it lands on top of the content.
-
-> The app ships no signable template of its own — the generic Timesheet does not
-> reserve a signature area. `pnpm check:signature` exercises the machinery
-> against a minimal signable template defined in `scripts/signatureFixture.ts`,
-> and against any a configured pack contributes.
+`pnpm check:templates` checks every registered template: unique ids, valid
+fields, and that `build()` handles Summary, Individual, an empty range and a
+document with no rate.
 
 #### What the template gets
 
-`build()` receives an `ExportDoc` (`lib/export/model.ts`) — the timesheet
-already rounded, merged, capped, overtime-trimmed and billing-code-mapped
-exactly as the screen shows it. A template formats; it never recomputes.
+`build()` receives an `ExportDoc` (`lib/export/model.ts`): the timesheet already
+rounded, merged, capped and trimmed as on screen. A template formats; it never
+recomputes. Durations are **seconds** throughout; `secsToHoursLabel()` in
+`lib/export/model.ts` formats them like the screen.
 
-Every document carries the same header block:
+Every document has:
 
 | Field | |
 | --- | --- |
-| `view` | `'summary'` or `'individual'` — which of the two shapes below this is. |
+| `view` | `'summary'` or `'individual'`. |
 | `title` | Project or group name. |
 | `personName` | Who the timesheet is for. |
-| `fromMs`, `toMs` | Half-open range in local-midnight epoch ms: `toMs` is **exclusive**, so the last day is `toMs - 1`. |
-| `multi` | True when several projects are exported together (billing codes then carry a project prefix). |
-| `billByProject` | True when the workspace bills by project rather than by billing code: every row's `billingCode` is its project's name (and equals `project`), and no code carries a prefix. A template that heads its billing column can say "Project" instead; one that ignores the flag still prints correct figures. |
-| `grandTotal` | Rounded seconds across the whole period. |
-| `role`, `company`, `client`, `approver`, `reference`, `engagement` | The identity fields, as typed by the user. Empty string = not given. |
-| `rate`, `rateBasis`, `currency` | `rate` is `null` for a time-only document; `rateBasis` is `'hourly'` or `'md'`. A template that prints money **must** handle the `null` case. |
+| `fromMs`, `toMs` | Local-midnight epoch ms; `toMs` is exclusive. |
+| `multi` | Several projects exported together (codes carry a project prefix). |
+| `billByProject` | The workspace bills by project: each row's `billingCode` is its project name and carries no prefix. |
+| `grandTotal` | Rounded seconds for the whole period. |
+| `role`, `company`, `client`, `approver`, `reference`, `engagement` | Identity fields as entered. Empty string means not given. |
+| `rate`, `rateBasis`, `currency` | `rate` is `null` for a time-only document; `rateBasis` is `'hourly'` or `'md'`. Templates that print money must handle `null`. |
 
-A **Summary** document (`view: 'summary'`) carries `weeks[]`, one block per week
-in the range:
-
-| | |
-| --- | --- |
-| `weekStart`, `label` | Start of the week, and its display label. |
-| `dayLabels[]`, `dayDates[]` | Header text and local-midnight ms for each visible day column. |
-| `rows[]` | One per billing code: `label` (prefixed with the project when `multi`), `billingCode`, `project`, `cells[]` (rounded seconds per day column), `dayDescs[]` (per-day description, aligned with `cells`), `desc` (the week's combined description), `total`, and `warn`. |
-| `dayTotals[]`, `grandTotal` | Column totals and the week total. |
-
-An **Individual** document (`view: 'individual'`) carries `days[]`, one block
-per day with time on it:
+A Summary document has `weeks[]`:
 
 | | |
 | --- | --- |
-| `dateMs`, `label`, `total` | The day, its label, and its rounded total. |
-| `rows[]` | One per entry group: `time` (a rendered range, or `null`), `startMs`/`endMs` (raw, for a template that formats in its own locale), `hours` (rounded **seconds**, despite the name), `code`, `billingCode`, `project`, `desc`, and `warn`. |
+| `weekStart`, `label` | Start of the week and its label. |
+| `dayLabels[]`, `dayDates[]` | Header text and local-midnight ms per visible day. |
+| `rows[]` | Per billing code: `label` (project-prefixed when `multi`), `billingCode`, `project`, `cells[]` (seconds per day), `dayDescs[]`, `desc`, `total`, `warn`. |
+| `dayTotals[]`, `grandTotal` | Column totals and week total. |
 
-Two things are worth knowing. Durations are **seconds** throughout —
-`secsToHoursLabel()` from `lib/export/model.ts` renders them the way the screen
-does. And `warn` marks a row the on-screen view flags (untagged or multi-tagged
-entries); a template that ignores it prints a line the user has been told is
-wrong.
+An Individual document has `days[]`, one per day with time on it:
 
-For money there is `lib/export/pdf/money.ts`: currency-aware formatting plus
-allocation helpers that guarantee every printed subtotal sums to the printed
-total at the precision it is printed in. Rounding each row on its own drifts —
-use `allocate()` rather than `toFixed()`.
+| | |
+| --- | --- |
+| `dateMs`, `label`, `total` | The day, its label and its rounded total. |
+| `rows[]` | Per entry group: `time` (rendered range or `null`), `startMs`/`endMs`, `hours` (seconds, despite the name), `code`, `billingCode`, `project`, `desc`, `warn`. |
+
+`warn` marks rows the screen flags as wrong (untagged or multi-tagged).
+
+For money, use `lib/export/pdf/money.ts`: currency formatting, and `allocate()`,
+which makes printed subtotals add up to the printed total. Rounding each row
+with `toFixed()` drifts.
 
 #### Identity fields
 
-`fields` lists what the export dialog collects for this template. Their values
-are always user-entered and are remembered with the **workspace** being billed
-(see "Export details are per workspace"), so no company name, client or rate
-ever ships with the app.
+Values are always entered by the user and stored with the workspace, so no
+company, client or rate ships with the app.
 
-| Field | What the dialog asks for | On the document |
+| Field | The dialog asks for | On the document |
 | --- | --- | --- |
 | `role` | The person's role, in the template's language | `doc.role` |
 | `company` | The supplier company | `doc.company` |
-| `client` | The client the sheet is billed to | `doc.client` |
+| `client` | The client billed | `doc.client` |
 | `approver` | Who countersigns | `doc.approver` |
-| `reference` | Document reference, defaulted to `TS-YYYY-MM` | `doc.reference` |
-| `engagement` | A free-text note in the template's language, for a basis-of-preparation block | `doc.engagement` |
-| `rate` | A rate, its currency, and whether it is quoted per hour or per man-day | `doc.rate`, `doc.currency`, `doc.rateBasis` |
-
-`role` and `engagement` are stored **per language**, so a template with
-`locale: 'cs'` and one with `locale: 'en'` never overwrite each other's text.
+| `reference` | Document reference, default `TS-YYYY-MM` | `doc.reference` |
+| `engagement` | Free text in the template's language | `doc.engagement` |
+| `rate` | Rate, currency, and hourly or per man-day | `doc.rate`, `doc.currency`, `doc.rateBasis` |
 
 #### Fonts
 
-Without `loadFonts`, a template sets in pdfmake's bundled Roboto: nothing to
-ship, but Roboto's character map stops at Latin Extended — fine for Czech, not
-for Cyrillic or Greek. To embed your own cuts, return the pdfmake declarations
-and the font data together:
+Roboto covers Latin Extended (Czech is fine; Cyrillic and Greek are not). To
+embed other fonts, return pdfmake's font declarations and virtual file system
+together:
 
 ```ts
 loadFonts: async () => {
@@ -891,25 +616,53 @@ loadFonts: async () => {
 },
 ```
 
-They travel together because pdfmake resolves a style to a *filename* and then
-looks that filename up in the virtual file system; a pair that disagrees fails
-deep inside the library, at render time, and only for documents that reach the
-missing glyph. `pnpm check:fonts` asserts they agree for every registered
-template, that the base64 decodes to a real font file, and that each embedded
-cut carries a full character map — pdfmake has no per-glyph fallback, so a
-subset renders user text as tofu rather than falling back to another face.
+pdfmake maps a style to a filename and looks that up in the VFS, and a mismatch
+only fails at render time for text that needs the missing file.
+`pnpm check:fonts` checks that they agree, that the data decodes to real fonts,
+and that each font has a full character map (pdfmake has no glyph fallback, so
+a subset renders missing characters as boxes). The loader runs only when that
+template exports.
 
-The loader runs only when that template actually exports, so an embedded
-typeface never reaches a browser using a different one.
+#### Making a template signable
+
+Signing (the certificate, CMS, timestamp and visible stamp) is handled by the app
+in `lib/export/pdf/sign`. A template only promises where the stamp goes:
+
+```ts
+signatureWidget: {
+  rect: { x: 62, y: 620, width: 216, height: 92 },  // pdfmake coords, from the top-left
+  page: { width: 595.28, height: 841.89 },          // what the rect is measured against
+  fontFamily: 'IBMPlexSans',                        // optional; must be declared by loadFonts()
+}
+```
+
+The rect must be empty, on the **last page**, at exactly those coordinates. The
+signing step only sees the finished PDF, so the template has to guarantee this,
+using both:
+
+1. **Reserve the space.** End the content with an invisible node as tall as the
+   signature row, so pdfmake moves it (and the row) to a new page when it does
+   not fit. It must be a real drawing with non-zero size; pdfmake ignores
+   zero-size nodes when deciding page breaks.
+2. **A `pageBreakBefore` rule** keyed on that node's `id`, so the guarantee does
+   not rest on the measured height alone.
+
+Draw the box at a fixed `absolutePosition`. Nothing may flow after the row, so
+put footnotes above it.
+
+A `fontFamily` not declared by `loadFonts()` fails only at signing time, after
+the PIN is entered; `pnpm check:signature` catches that. It tests the signing
+code against `scripts/signatureFixture.ts` and any signable pack templates.
+
+Leave `signatureWidget` off unless the layout reserves room: otherwise the stamp
+is drawn over the content.
 
 ### Private template packs
 
-Templates can also live in **their own repository**, outside this one. That is
-how a deployment keeps client-specific layouts — letterheads, acceptance
-protocols, anything carrying a real engagement's wording — out of a public
-repo while still building them into its own deployment.
+Client-specific templates can live in a separate, private repository and be
+built into your deployment without being in this one.
 
-A pack is plain source, not a package. Its `index.ts` default-exports:
+A pack is plain source. Its `index.ts` default-exports:
 
 ```ts
 import type { TemplatePack } from '@/lib/export/pdf/types';
@@ -921,271 +674,71 @@ export default {
 } satisfies TemplatePack;
 ```
 
-Point `PDF_TEMPLATE_PACK_REPO` at that repository (plus
-`PDF_TEMPLATE_PACK_TOKEN` when it is private, and `PDF_TEMPLATE_PACK_REF` to
-pin a ref). Before `next dev` and `next build`, `scripts/sync-pack.mjs` checks
-it out into `pdf-templates/` — gitignored, never part of this repository — and
-the app resolves it through the `@pdf-template-pack` alias, falling back to
-`lib/export/pdf/emptyPack.ts` when there is nothing there. A pack's templates
-come first in the picker, and a pack may name the default. `pnpm pack:sync`
-does the checkout on its own; `pnpm check:pack` runs whatever checks the pack
-ships in `checks/`.
+Set `PDF_TEMPLATE_PACK_REPO` to its repository, `PDF_TEMPLATE_PACK_TOKEN` if it
+is private, and optionally `PDF_TEMPLATE_PACK_REF`. Before `next dev` and
+`next build`, `scripts/sync-pack.mjs` checks it out into `pdf-templates/` (gitignored),
+and the `@pdf-template-pack` alias resolves to it, or to
+`lib/export/pdf/emptyPack.ts` when it is absent. Pack templates are listed first
+and the pack may set the default. `pnpm pack:sync` runs the checkout alone;
+`pnpm check:pack` runs the pack's own `checks/`.
 
-Treat `pdf-templates/` as disposable: the sync step force-checks it out at the
-configured ref every time, so a pack is edited in a clone of its own repository
-and pushed, not in the app's copy.
+- **Without a pack** the app is complete and exports with the Timesheet
+  template.
+- **A configured pack that cannot be fetched fails the build**, so a deployment
+  never silently loses its templates. Offline, an existing checkout is kept.
+- **`pdf-templates/` is overwritten** at the configured ref on every sync. Edit
+  the pack in its own clone and push.
+- The directory, not the variable, decides what is built in. Clearing
+  `PDF_TEMPLATE_PACK_REPO` stops updates but keeps an existing checkout;
+  delete `pdf-templates/` to build without it.
 
-What is compiled in is decided by the **directory**, not by the variable — the
-variable only says what to fetch into it. So clearing `PDF_TEMPLATE_PACK_REPO`
-on a machine that has already synced stops the updates and keeps the pack;
-`rm -rf pdf-templates` is how you build without one. The sync step never
-deletes a checkout itself, because it cannot tell one it made from one you
-cloned by hand. A deployment starts from a fresh clone, so there the variable
-is the whole story.
+It is not a git submodule, because that would make every clone and fork of this
+public repository try to fetch the private one.
 
-Two consequences worth stating plainly:
+## Toggl rate limits
 
-- **A clone of this repository with no pack configured is a complete, working
-  app.** That is the default path, not a degraded one — you get the Timesheet
-  template and nothing is missing.
-- **A pack that is configured but cannot be fetched fails the build.** Building
-  without it would produce a green deployment whose export dialog had silently
-  lost every layout its documents are filed under. The exception is a laptop
-  that is merely offline: a checkout already on disk is kept.
+Toggl's Free plan allows **30 API requests per hour** per user (the `/me`
+endpoint has a separate 30/hour budget). The app stays under it:
 
-Deliberately **not** a git submodule: a submodule records the pack's URL in
-this repository's `.gitmodules`, and every clone and fork would then try — and,
-for a private pack, fail — to fetch a repository it has no business knowing
-about. Naming the pack in the environment keeps it a property of the
-deployment, which is what it is.
+- **One request per refresh.** The week's time entries include the running
+  timer.
+- **Cached connect.** The workspace and project list are cached for 24h. A
+  project created in Toggl after that will not appear until you click **↻
+  Refresh project list** in Settings. Only projects from your default Toggl
+  workspace are listed.
+- **Refresh interval**, default 3 minutes (~20 requests/hour), from 1 minute
+  (paid plans) to 10 minutes. The clock ticks locally between refreshes.
+- **No requests while the tab is hidden**; it refreshes when you return.
+- **Backoff** on HTTP 402/429, doubling the wait up to 15 minutes.
+- A **budget meter** in the footer estimates requests in the last hour and turns
+  amber near the limit.
 
-### Digital signature
+Every open tab and device spends from the same budget. Use one, raise the
+interval, or turn on the shared server cache.
 
-The **Timesheet Report**'s *Prepared by* box — the issuer's, on the sign-off
-page — can be a **real signature field** rather than a space to print and sign.
-Pick **Sign the PDF** under *Digital signature* in the export dialog and the
-exported file carries a PAdES signature over the whole document, with the
-visible block sitting exactly inside that box.
+### Shared server cache
 
-The option appears for the two report templates only. The *Approved by* box
-beside it, and the acceptance protocol's box, belong to the **client**
-countersigning — they stay blank for whoever signs them, by hand or in their own
-reader, and carry a date prompt for that.
+For several devices sharing a server token, set `TOGGL_CACHE_INTERVAL` (requires
+`TOGGL_API_TOKEN`). All devices are then served from one in-memory cache in the
+proxy (`lib/serverCache.ts`):
 
-What you can set:
+- Only the first request after the cache goes stale calls Toggl, so upstream use
+  is about one request per interval however many devices are open.
+- There is no background timer: with nobody watching, no requests are made.
+- Simultaneous requests share one upstream call.
+- On an error or rate limit, the last good data is served.
+- The per-device refresh interval picker is hidden; devices poll at the server's
+  interval.
 
-- **Sign with** — where the private key is. A **hardware token** appears here
-  only while [Fortify](https://fortifyapp.com/) is running: a browser has no way
-  to reach a smart card on its own, and Fortify is the local app that
-  republishes the card to the page. The **throwaway key** below it is always
-  offered and is what the pipeline was built against — see the note at the end
-  of this section.
-- **Certificate** — which certificate on that device signs. Nothing is
-  connected until you ask: *Connect and list certificates* is what pairs with
-  Fortify (approve the code it shows, and check it matches the one on the page)
-  and asks the card for its PIN. The list names each certificate by holder,
-  the token it sits on, whether it is a **qualified** one, and when it expires.
-  This is a choice rather than a default because a single card commonly carries
-  two certificates issued to the same person — a qualified one for signing and a
-  commercial one for authentication — and signing with the second produces a
-  file that verifies perfectly and is not a qualified signature. The dialog says
-  so under the picker when the chosen certificate is either of the wrong kinds.
-- **Handwritten signature** — your own scan, picked from the file system. It
-  has to be a **PNG or a JPEG**: those are the formats a PDF can carry, and a
-  WebP or HEIC is rejected when you pick it rather than at export time. The
-  image is embedded into the signature block of the export and remembered with
-  the **workspace**, like the other export details — which means it is stored
-  in your own deployment and travels between your devices when settings sync is
-  on (see "Settings sync across devices"). It goes nowhere else. Nothing of the
-  sort ships with the app and no signature image is in this repository — a
-  signature image in a public repo is a signature anyone can paste. A scan
-  larger than ~256 kB is used for the export at hand and not remembered, so it
-  never bloats the synced settings; trimming the PNG to the ink is worth the
-  minute.
-- **Signature block layout** — the handwriting above the certificate details,
-  or beside them. The **preview** below shows the block at its printed size —
-  the *Prepared by* box on the report's sign-off page — set in the same IBM Plex
-  Sans as the report itself.
+The value is in **seconds**. Keep it at 120 or above on the Free plan. `1`,
+`true` or `on` means the default of 180 (~20/hour); the minimum is 30.
 
-The handwritten image is cosmetic. What makes the document *signed* is the
-certificate, so an export with signing switched off is exactly the document it
-has always been — the same bytes the template produced.
+The cache lives in one server instance's memory. On serverless with several
+instances each keeps its own, which is never worse than no cache.
 
-**The throwaway key** is a key generated in the browser and discarded when the
-tab closes. Signatures made with it are cryptographically real — the file
-validates as `PAdES-BASELINE-B` and any viewer can check the document has not
-been altered since signing — and they are not *trusted*: no viewer shows a green
-banner, because the key chains to nothing. It exists so the whole pipeline runs
-without a card in the machine, and the dialog says plainly that what it produces
-is not a qualified signature. Signing with a qualified certificate on its
-hardware token goes through exactly the same pipeline and differs only in where
-the key is; see [docs/pdf-signing-v2.md](docs/pdf-signing-v2.md) for the design
-and where it stands.
+## Tuning constants
 
-### Linked billing codes (subcontracting)
-
-Sometimes a project is billed **through** another client: you work for a prime
-contractor whose timesheet bills the whole engagement under **one** code, but the
-work itself is tracked for a sub-client project with **its own** billing codes
-and possibly its own rounding and overtime rules. **Settings → Advanced → Linked
-billing codes** models exactly that. A linked code says, for one selected
-project:
-
-- its entries carry the **sub-client's own tags** (a separate prefix, e.g. `S`
-  for `S101`/`S102`), validated as usual — untagged or multi-tagged entries still
-  land in the amber warning rows;
-- per day, those entries are grouped by their own codes and rounded on the
-  **mapping's own grid** (which must be this sheet's unit or a whole multiple of
-  it, so figures stay tidy), exactly as the sub-client's own timesheet — a stored
-  workspace with that prefix/rounding — would show them;
-- the day's rounded total then bills on this sheet as the **single target code**
-  you entered (e.g. `D-SUB-1`).
-
-The guarantee that makes the two sheets reconcile: **per day, the sum of the
-sub-client's billed codes equals this sheet's linked line** — by construction,
-since the day-total-preserving rounding makes the sub-client's cells sum to the
-rounded day total, and that same total is what the linked line carries. For
-traceability the cell's description leads with the sub-client's per-code
-breakdown (e.g. `S101 1.75h, S102 0.50h`) followed by the merged entry
-descriptions; in the Individual view the linked project appears as **one block
-per day**, anchored at its first entry. Exports show the same figures as the
-views, as always.
-
-#### How to set it up
-
-Say you bill client **P** (prime) and the work is really for sub-client **S**:
-
-1. **In Toggl**: create a separate project for the sub-client's work, and tag its
-   entries with the sub-client's own billing codes under their own prefix
-   (exactly one per entry, e.g. `S101`) — your prime-client entries keep their
-   usual tags (e.g. `D123`).
-2. **The prime workspace** (your main config): under **Settings → Project**, use
-   *Track more than one project* and select your prime project(s) **and** the
-   sub-client project — the linked project must be among the selected projects
-   (that's what brings its entries into the timesheet and counts its hours toward
-   your targets and weekly cap). Then add the linked code under **Advanced →
-   Linked billing codes**: pick the sub-client project, enter its tag prefix, its
-   rounding, and the single code it bills as here. If the sub-client engagement
-   doesn't bill overtime, tick **"It doesn't bill overtime"** and enter *its*
-   weekly cap. Store the whole thing as a workspace.
-3. **The sub-client workspace** (for the sheet you hand to the sub-client): a
-   second stored workspace with **only** the sub-client project selected, its tag
-   prefix, its rounding, and its own targets — **no** linked-codes entry there.
-   Switch between the two by clicking the stored workspace under
-   **Settings → Workspaces**.
-
-Day to day you just track on the right project with one billing tag per entry;
-both workspaces flag untagged/multi-tagged entries until fixed.
-
-#### Overtime rules for linked lines
-
-Two independent knobs, deliberately asymmetric:
-
-- **This sheet's "Don't bill overtime" NEVER trims a linked line** — no matter
-  what. The linked line must keep equalling the sub-client's sheet, so the
-  weekly cut lands entirely on the native lines (the linked hours still count
-  toward the cap, so the trim takes correspondingly more off them).
-- **The mapping's own "It doesn't bill overtime"** applies the *sub-client's*
-  contract upstream: the linked project's week is capped at the mapping's weekly
-  hours and trimmed on the mapping's grid with the very same cut the sub-client's
-  own sheet runs (weekend billed in full, weekdays evened out, `(X)`-marked codes
-  cut first, a mid-week month boundary splitting the cap into two independent
-  budgets). This sheet then bills whatever the sub-client's sheet shows — trimmed
-  or not — and builds its totals around those values. Keep this setting in sync
-  with the sub-client workspace's own overtime setting so the two sheets keep
-  reconciling.
-
-The mapping logic lives in [`lib/timesheet/mapping.ts`](lib/timesheet/mapping.ts).
-
-Each view lives in its own component under
-[`components/timesheet/`](components/timesheet); the page
-([`app/timesheet/page.tsx`](app/timesheet/page.tsx)) is a thin shell that picks
-one from a small registry, so adding a view is a component plus one entry.
-
-## Staying within Toggl's rate limits
-
-Toggl's **Free** plan allows only **30 API requests per hour** (per user, per
-org; the `/me` endpoint has its own 30/hour budget). The app is built to stay
-comfortably under that:
-
-- **One request per refresh.** The week's time-entries call already includes the
-  running timer, so there's no separate "current entry" call.
-- **Cached connect.** Your workspace + project list are cached in `localStorage`
-  for 24h, so reloading the page costs **zero** requests until the cache
-  expires. A project **created in Toggl after connecting therefore doesn't show
-  up in Settings right away** — click **↻ Refresh project list** under the
-  project picker (or **Connect/Reconnect** when you manage your own token) to
-  force a fresh fetch. Only projects from your default Toggl workspace are
-  listed.
-- **Configurable refresh interval**, default **3 minutes** (~20 requests/hour).
-  Options range from 1 min (paid plans) to 10 min. The on-screen counter keeps
-  ticking every second locally between refreshes, so the display stays live even
-  at a slow interval.
-- **Pauses when the tab is hidden** — no requests while you're not looking; it
-  refreshes immediately when you return.
-- **Backs off automatically** on a rate-limit response (HTTP 402/429),
-  doubling the wait up to 15 minutes instead of hammering the API.
-- **Live budget meter** in the footer shows an estimate of requests used in the
-  last hour (turns amber near the limit).
-
-> Tip: if you open the dashboard in several tabs/devices at once, they each spend
-> from the same hourly budget — keep one open, raise the interval, or enable the
-> shared server cache below.
-
-## Shared server-side cache (multi-device)
-
-If you want to keep the dashboard open on **several devices** (desk monitor,
-laptop, phone…) without each one independently burning through Toggl's 30/hour
-budget, set the **`TOGGL_CACHE_INTERVAL`** env var (requires `TOGGL_API_TOKEN`,
-since the cache is keyed to the server's own token).
-
-When it's set:
-
-- Every device's poll is served from a **shared in-process cache**
-  (`lib/serverCache.ts`) sitting behind the proxy. Only the **first** poll after
-  the cache goes stale actually calls Toggl; the rest read the cached payload.
-  So total upstream usage is **~one request per interval regardless of how many
-  devices are watching**.
-- It's **lazy / demand-driven** — there is no background timer. The cache only
-  refreshes when a request arrives and finds it stale, so **an idle dashboard
-  (nobody looking) makes zero requests.**
-- Concurrent polls are **de-duplicated** (single-flight): three devices hitting
-  it at the same instant cause exactly one Toggl call.
-- On a transient error or rate-limit, the last good payload is **served stale**
-  rather than blanking the screen.
-- The front-end's per-device **Refresh interval** picker is **hidden**, and the
-  app polls at the server-driven interval instead. The footer shows
-  "Shared server cache · refreshes every Nmin across all devices."
-
-The value is the refresh interval in **seconds**. Since the Free plan allows 30
-requests/hour, keep it **≥ 120** (one request per 120 s = 30/hr); the default
-when you set it to `true` is **180** (~20/hr, leaving headroom for the one-off
-`me`/projects connect calls). Setting it to `1`/`true`/`on` uses that default;
-a number sets an explicit interval (clamped to a 30 s minimum).
-
-> The cache is **in-memory, per server instance** — the right, simplest fit for
-> this private single-user app, where traffic is tiny and a single long-running
-> server (`next start`, or a warm Vercel instance) backs every request. On a
-> heavily fan-out serverless deployment with many cold instances it degrades
-> gracefully to best-effort (each instance keeps its own cache), never worse
-> than the un-cached behavior.
-
-## Tunable constants
-
-The workload thresholds live at the top of [`lib/calc.ts`](lib/calc.ts) as
-private `BASE_*` values tuned for a **40h** baseline (`BASELINE_WEEKLY_HOURS`).
-They are read through `resolveTargets(cfg)`, which scales each one by
-`weeklyHours / 40` from the user's `WeekConfig` (weekly hours plus the two
-optional overrides). The Friday floor and the billable cap resolve through
-`effectiveMinWorkingDayHours` / `effectiveMaxBillableHours` (override if set,
-else the proportional default).
-
-The fixed, deliberately **un-scaled** thresholds stay exported:
-`BREAK_AFTER_HOURS` (ergonomic — same regardless of the week's size),
-`BREAK_GAP_MINUTES`, and `UNREPORTED_MIN_MINUTES`. The timesheet's rounding
-granularity defaults to `QUARTER_SECONDS` (15 min) but is a user setting
-(`roundingHours`); `roundingUnitSeconds` converts it to seconds for the builders.
-The grid the Individual view's start times sit on is a second setting
-(`startWindowHours`, null = follow the rounding unit); `startWindowUnitSeconds`
-resolves the pair into the one figure the builder anchors times to, so a window
-that isn't coarser than the unit collapses back to the linked behaviour.
+The target thresholds are the `BASE_*` values at the top of
+[`lib/calc.ts`](lib/calc.ts), tuned for a 40h week and scaled by
+`resolveTargets()`. The unscaled ones are exported: `BREAK_AFTER_HOURS`,
+`BREAK_GAP_MINUTES` and `UNREPORTED_MIN_MINUTES`.
