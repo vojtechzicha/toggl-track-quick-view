@@ -1,9 +1,7 @@
-// Builds a format-agnostic export document from raw Toggl entries, using the SAME
-// pure builders the on-screen timesheet views use. CSV/XLSX/PDF all serialize this
-// one structure, so every export shows exactly what the view would (rounding,
-// grouping, warnings and all). Hours are carried as rounded *seconds*; each format
-// decides how to render them (decimal hours for the technical formats, the view's
-// "h" label for PDF).
+// Builds a format-agnostic export document from time entries, using the same
+// builders as the on-screen timesheet views, so every export matches the view's
+// rounding and grouping. CSV, XLSX and PDF all serialize this structure. Hours
+// are carried as rounded seconds; each format chooses how to print them.
 
 import { fmtHours, fmtTimeOfDay, type TimeEntry } from '@/lib/calc';
 import type { SelectedProject } from '@/components/SettingsPanel';
@@ -17,9 +15,8 @@ import { weeksInRange, type DateRange } from './range';
 export type ExportView = 'summary' | 'individual';
 
 /**
- * What the agreed rate is quoted per: an hour of work, or a man-day (MD, the
- * eight-hour day of lib/export/pdf/money). Contracts state one or the other,
- * and the fee wording in the PDF report follows the contract's own unit.
+ * Unit the agreed rate is quoted per: an hour, or a man-day (MD, eight hours;
+ * see HOURS_PER_MD in lib/export/pdf/money).
  */
 export type RateBasis = 'hourly' | 'md';
 
@@ -35,8 +32,8 @@ export interface ExportOptions {
   /** Rounding granularity in seconds (900 = 15 min default, 720 = 12 min). */
   roundingSeconds: number;
   /**
-   * Grid the Individual view's start times anchor to, in seconds; omitted/finer
-   * than the rounding unit = the rounding unit itself (see lib/timesheet/individual).
+   * Grid the Individual view's start times snap to, in seconds. Omitted or finer
+   * than the rounding unit means the rounding unit (see lib/timesheet/individual).
    */
   startWindowSeconds?: number | null;
   /** Optional cap (characters) on every merged description; null/omitted = no limit. */
@@ -50,14 +47,13 @@ export interface ExportOptions {
   /** Linked billing codes (see lib/timesheet/mapping); empty/omitted = none. */
   codeMappings?: CodeMapping[];
   /**
-   * When true, billing codes export without their parenthetical groups (the
-   * "(X)"/"(!)" markers are interpreted first, then the strip runs).
+   * Export billing codes without their parenthetical groups. The "(X)"/"(!)"
+   * markers are interpreted before the strip.
    */
   stripCodeParens?: boolean;
   /**
-   * When true, the workspace bills by project rather than by billing code:
-   * every row's code IS its project name, and no billing-code machinery
-   * (tickets, markers, the strip, linked codes) applies.
+   * The workspace bills by project: each row's code is its project name, and
+   * tickets, markers, the strip and linked codes do not apply.
    */
   billByProject?: boolean;
   /** Title shown on the document (project / group name). */
@@ -75,10 +71,9 @@ export interface ExportOptions {
   /** Document reference printed on every page; empty = the template's default. */
   reference?: string;
   /**
-   * Free-text sentence naming the contract, order and end customer this period
-   * was worked under. Written by the user in the template's own language and
-   * printed verbatim at the top of the basis-of-preparation block; the standing
-   * wording around it belongs to the template. Empty = omitted.
+   * User-written sentence naming the contract, order and end customer, in the
+   * template's language. Printed verbatim in the basis-of-preparation block;
+   * the template supplies the surrounding text. Empty = omitted.
    */
   engagement?: string;
   /** Agreed rate for fee lines (per `rateBasis`); null/omitted = a time-only document. */
@@ -103,26 +98,21 @@ export interface ExportMeta {
   engagement: string;
   /** Agreed rate for fee lines (per `rateBasis`); null = a time-only document. */
   rate: number | null;
-  /** Unit the rate is quoted per — an hour, or a man-day. */
+  /** Unit the rate is quoted per. */
   rateBasis: RateBasis;
   currency: string;
   fromMs: number;
   toMs: number; // exclusive
   multi: boolean;
   /**
-   * True when the document's billing lines are PROJECTS, not billing codes —
-   * `billingCode` then holds the project's name and equals `project`. A
-   * template that heads its billing column can say so ("Project" rather than
-   * "Billing code"); one that ignores it prints correct figures either way,
-   * since the codes it prints are simply project names.
+   * The billing lines are projects rather than billing codes: `billingCode`
+   * holds the project name and equals `project`. A template can use this to
+   * head its billing column "Project"; ignoring it still prints correct figures.
    *
-   * OPTIONAL on purpose, unlike every other field here: a template PACK is a
-   * separate repository compiled into this one (see README → "Private template
-   * packs"), and its typed ExportDoc fixtures are type-checked by `next build`.
-   * A required field would deadlock the two repos — a pack that hasn't added it
-   * fails to build here, and a pack that adds it early fails against the app
-   * that hasn't. Optional, either merges in any order. `buildExportDoc` always
-   * sets it, so absent means false; read it as truthy.
+   * Optional, unlike the other fields, because a template pack is a separate
+   * repository whose typed ExportDoc fixtures `next build` type-checks (README →
+   * "Private template packs"). A required field would force both repositories
+   * to change in lockstep. `buildExportDoc` always sets it; treat absent as false.
    */
   billByProject?: boolean;
 }
@@ -166,10 +156,8 @@ export interface SummaryDoc extends ExportMeta {
 export interface IndividualRow {
   time: string | null; // "09:00–10:30" in the *device* locale, or null for warnings
   /**
-   * Raw start/end of the entry. Templates that print in a fixed locale (the
-   * report's EN/CZ pair) format these themselves — `time` follows whatever
-   * locale the browser is set to, which is wrong for a Czech document produced
-   * on an en-US machine.
+   * Raw start/end of the entry, for templates that print in a fixed locale.
+   * `time` follows the browser's locale.
    */
   startMs: number | null;
   endMs: number | null;
@@ -211,8 +199,7 @@ function codeLabel(
 function buildSummaryDoc(o: ExportOptions): SummaryDoc {
   const { range, entries, nowMs, projects, multi, billingTagPrefix, roundingSeconds, maxDescriptionLength, noOvertime, weeklyHours, timeOffTag, codeMappings, stripCodeParens, billByProject } = o;
   const weeks: SummaryWeekBlock[] = [];
-  // Billing by project the code already IS the project name, so the
-  // disambiguating "Project: " prefix would only repeat it.
+  // Billing by project, the code is the project name, so skip the prefix.
   const prefixProject = multi && !billByProject;
 
   for (const weekStart of weeksInRange(range.fromMs, range.toMs)) {
@@ -233,33 +220,31 @@ function buildSummaryDoc(o: ExportOptions): SummaryDoc {
     });
     if (!grid || grid.rows.length === 0) continue;
 
-    // Keep only day columns whose date falls inside the requested range, so the
-    // edge weeks of a month don't bleed into the neighbouring month.
+    // Keep only day columns inside the range, so a month's edge weeks don't
+    // include days from the neighbouring month.
     const dayCols = grid.dayCols.filter((d) => {
       const dayMs = weekStart + d * DAY_MS;
       return dayMs >= range.fromMs && dayMs < range.toMs;
     });
     if (dayCols.length === 0) continue;
 
-    // Billable rows only — warning rows (no/multiple billing tag) are an on-screen
-    // hint to fix Toggl, never part of the exported timesheet.
+    // Billable rows only. Warning rows (no or multiple billing tags) are an
+    // on-screen prompt to fix the entries and are never exported.
     const rows: SummaryRow[] = grid.rows
       .filter((rowKey) => rowKey !== UNTAGGED && rowKey !== MULTIPLE)
       .map((rowKey) => {
         const meta = grid.rowMeta.get(rowKey);
         const label = codeLabel(meta?.projectName, meta?.tag, prefixProject);
         const cells = dayCols.map((d) => grid.rounded.get(`${d}|${rowKey}`) ?? 0);
-        // Aggregate this row's descriptions across the visible days (deduped),
-        // then fit the week-level join within the same length limit the per-day
-        // cells honour — this column is one field in the exported file too.
+        // Dedupe this row's descriptions across the visible days, then fit the
+        // week-level join to the same length limit as the per-day cells.
         const descs: string[] = [];
         for (const d of dayCols) {
           for (const desc of grid.cells.get(`${d}|${rowKey}`)?.descs ?? []) {
             if (!descs.some((x) => x.toLowerCase() === desc.toLowerCase())) descs.push(desc);
           }
         }
-        // Per-day text too (cell descs are already deduped) — day-based templates
-        // need the descriptions of exactly one day, not the week-level join.
+        // Per-day text for day-based templates (cell descs are already deduped).
         const dayDescs = dayCols.map((d) =>
           fitDescs(grid.cells.get(`${d}|${rowKey}`)?.descs ?? [], maxDescriptionLength).text
         );
@@ -267,11 +252,9 @@ function buildSummaryDoc(o: ExportOptions): SummaryDoc {
         return {
           label,
           billingCode: meta?.tag ?? '',
-          // Billing by project the two are the same field, and the row's code
-          // has already been through the nameless-project fallback (see
-          // projectBillingCode) — so take it from there rather than from the
-          // raw name, or a template printing `project` would show a blank
-          // where the billing column shows the fallback.
+          // Billing by project, take the code: it already carries the
+          // nameless-project fallback (projectBillingCode), and the raw name
+          // would print blank where the billing column shows the fallback.
           project: (billByProject ? meta?.tag : meta?.projectName) ?? '',
           warn: false,
           cells,
@@ -280,18 +263,16 @@ function buildSummaryDoc(o: ExportOptions): SummaryDoc {
           total,
         };
       });
-    // Drop rows that are entirely outside the kept columns (no time anywhere).
+    // Drop rows with no time in the kept columns.
     const keptRows = rows.filter((r) => r.total > 0);
     if (keptRows.length === 0) continue;
 
     const dayTotals = dayCols.map((_, ci) => keptRows.reduce((s, r) => s + r.cells[ci], 0));
     const grandTotal = dayTotals.reduce((s, v) => s + v, 0);
 
-    // The heading spans exactly the visible columns: weekdays (Mon–Fri) are always
-    // shown — so an empty Friday still extends the label — while weekend days only
-    // appear when they carry time. Because `dayCols` is already the visible,
-    // range-clipped set, the first and last of them give the right span (and a
-    // month export's edge weeks naturally stay within the month).
+    // The heading spans the visible columns. Mon–Fri are always shown, weekend
+    // days only when they have time, and `dayCols` is already clipped to the
+    // range.
     const labelFromMs = weekStart + dayCols[0] * DAY_MS;
     const labelToMs = weekStart + dayCols[dayCols.length - 1] * DAY_MS;
 
@@ -333,8 +314,7 @@ function buildIndividualDoc(o: ExportOptions): IndividualDoc {
   const { range, entries, nowMs, projects, multi, maxBillableHours, billingTagPrefix, roundingSeconds, startWindowSeconds, maxDescriptionLength, noOvertime, weeklyHours, timeOffTag, codeMappings, stripCodeParens, billByProject } = o;
   const nameById = new Map(projects.map((p) => [p.id, p.name]));
   const days: IndividualDayBlock[] = [];
-  // Billing by project the code already IS the project name, so the
-  // disambiguating "Project: " prefix would only repeat it.
+  // Billing by project, the code is the project name, so skip the prefix.
   const prefixProject = multi && !billByProject;
 
   for (const weekStart of weeksInRange(range.fromMs, range.toMs)) {
@@ -357,14 +337,13 @@ function buildIndividualDoc(o: ExportOptions): IndividualDoc {
     });
     if (!week) continue;
     for (const day of week.days) {
-      // Clip to the requested range (drops edge-week days outside the month).
+      // Drop edge-week days outside the range.
       if (day.dateMs < range.fromMs || day.dateMs >= range.toMs) continue;
       const dateLabel = new Date(day.dateMs).toLocaleDateString(undefined, {
         month: 'short',
         day: 'numeric',
       });
-      // Billable lines only — warning rows and overlap flags are on-screen hints to
-      // fix Toggl, never part of the exported timesheet.
+      // Billable lines only; warning rows and overlap flags are never exported.
       const rows: IndividualRow[] = day.rows
         .filter((row) => row.kind === 'bill')
         .map((row) => ({
@@ -378,8 +357,7 @@ function buildIndividualDoc(o: ExportOptions): IndividualDoc {
             prefixProject
           ),
           billingCode: row.code ?? '',
-          // As in the summary: billing by project these are one field, and the
-          // code already carries the nameless-project fallback.
+          // As in the summary: billing by project, use the code.
           project:
             (billByProject
               ? row.code
@@ -427,7 +405,7 @@ export function buildExportDoc(o: ExportOptions): ExportDoc {
   return o.view === 'summary' ? buildSummaryDoc(o) : buildIndividualDoc(o);
 }
 
-/** True when the document has nothing to export (no rows/days at all). */
+/** True when the document has no rows. */
 export function isEmptyDoc(doc: ExportDoc): boolean {
   return doc.view === 'summary' ? doc.weeks.length === 0 : doc.days.length === 0;
 }
@@ -444,7 +422,7 @@ export function secsToHoursLabel(seconds: number): string {
   return fmtHours(seconds);
 }
 
-/** "Jun 1 – Jun 30, 2026" style period label for document headers / filenames. */
+/** "Jun 1, 2026 – Jun 30, 2026" style period label for CSV/XLSX headers (device locale). */
 export function periodLabel(fromMs: number, toMs: number): string {
   const from = new Date(fromMs);
   const lastDay = new Date(toMs - DAY_MS); // inclusive last day

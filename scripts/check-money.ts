@@ -1,10 +1,7 @@
-// Invariant checks for the PDF money/allocation primitives. Run with:
-//   npm run check:money
-//
-// These back a financial document, so the checks are property-style rather than
-// a handful of examples: thousands of randomised rate/hour combinations across
-// currencies with 0, 2 and 3 minor units, asserting that what gets printed adds
-// up. Deterministic seed, so a failure reproduces.
+// Property checks for the PDF money/allocation primitives (`pnpm check:money`):
+// thousands of random rate/hour combinations across currencies with 0, 2 and 3
+// minor units, asserting that printed figures add up. Seeded, so failures
+// reproduce.
 
 import assert from 'node:assert/strict';
 import {
@@ -26,7 +23,7 @@ const eq = (a: unknown, b: unknown, msg: string) => {
   assert.deepStrictEqual(a, b, msg);
 };
 
-// Deterministic PRNG (mulberry32) — a failure is always reproducible.
+// Seeded PRNG (mulberry32).
 function rng(seed: number) {
   let s = seed >>> 0;
   return () => {
@@ -55,7 +52,7 @@ for (const bad of ['', 'CZ', 'CZKK', '123', 'C$K', ' CZ', 'kč']) {
   eq(currencyMinorUnits(bad), null, `"${bad}" is not a usable currency code`);
 }
 
-// ---- makeMoney: bad input must never silently lose the amount ----
+// ---- makeMoney: bad currency input keeps the amount and code ----
 
 for (const bad of ['', 'CZ', '123', 'Kč', 'CZKK']) {
   const m = makeMoney('cs-CZ', bad);
@@ -64,7 +61,7 @@ for (const bad of ['', 'CZ', '123', 'Kč', 'CZKK']) {
   if (bad) ok(s.includes(bad.toUpperCase()), `garbage currency "${bad}" keeps its code: ${s}`);
 }
 
-// The half-unit that started this: 58.5 h x 1125 must not print as a whole 65 813.
+// 58.5 h x 1125 = 65 812.50 must not print as 65 813.
 {
   const cs = makeMoney('cs-CZ', 'CZK');
   const en = makeMoney('en-GB', 'CZK');
@@ -99,7 +96,7 @@ for (const bad of ['', 'CZ', '123', 'Kč', 'CZKK']) {
 eq(allocate([], 2), { rows: [], total: 0 }, 'empty allocation is zero');
 eq(allocate([0, 0, 0], 2).total, 0, 'all-zero allocation stays zero');
 
-// The classic third-splitting case at every precision we support.
+// Thirds, at each supported precision.
 for (const dp of [0, 2, 3]) {
   const a = allocate([1 / 3, 1 / 3, 1 / 3], dp);
   eq(sumAt(a.rows, dp), a.total, `thirds sum exactly at ${dp} dp`);
@@ -113,7 +110,7 @@ for (const dp of [0, 2, 3]) {
 }
 
 {
-  // Zero rows stay zero — an empty project must not be handed a stray unit.
+  // A zero row must not receive a leftover unit.
   const a = allocate([0, 1 / 3, 1 / 3, 1 / 3], 2);
   eq(a.rows[0], 0, 'a zero row gains nothing');
   eq(sumAt(a.rows, 2), a.total, 'zero row does not break the sum');
@@ -183,7 +180,7 @@ eq(allocateMd([]).total, 0, 'no days, no MD');
   eq(sumAt(a.rows, 2), a.total, '7/9 MD rows sum to the header total');
 }
 {
-  // The drift case from the acceptance sheet: a month of 7 h and 9 h days.
+  // A month of alternating 7 h and 9 h days, which drifts under naive rounding.
   const days = Array.from({ length: 20 }, (_, i) => (i % 2 === 0 ? 7 : 9) * 3600);
   const a = allocateMd(days);
   eq(a.total, 20, 'twenty mixed days are twenty MD');

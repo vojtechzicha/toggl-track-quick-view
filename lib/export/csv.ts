@@ -1,7 +1,6 @@
-// CSV serializer for an export document. Plain and technical: hours as decimal
-// numbers, one block per week (summary) or a flat row-per-entry table (individual).
-// Blocks are separated by a blank line. Encoded with a UTF-8 BOM so Excel opens
-// accented descriptions correctly.
+// CSV serializer: hours as decimal numbers, one block per week (summary) or one
+// row per entry (individual), blocks separated by a blank line. Starts with a
+// UTF-8 BOM so Excel reads accented text correctly.
 
 import { type ExportDoc, periodLabel, secsToHoursNum } from './model';
 
@@ -21,8 +20,7 @@ function hoursCell(seconds: number): string | number {
 
 export function toCSV(doc: ExportDoc): string {
   const lines: string[] = [];
-  // What the billing column holds: billing codes, or — for a workspace that
-  // doesn't use them — the project each entry belongs to.
+  // A workspace that bills by project has project names in this column.
   const billingHead = doc.billByProject ? 'Project' : 'Billing tag';
   const title = doc.title || 'Timesheet';
   lines.push(row([title]));

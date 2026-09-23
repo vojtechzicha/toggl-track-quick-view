@@ -1,39 +1,28 @@
-// Checks that the font declarations and the virtual file system agree, for
-// every registered template. Run with:
-//   npm run check:fonts
+// Checks that font declarations and the virtual file system agree for every
+// registered template, pack included (`pnpm check:fonts`).
 //
-// pdfmake resolves a font to a filename and then looks that filename up in the
-// VFS. When the two disagree it fails at render time, deep inside the library
-// ("File 'X.ttf' not found in virtual file system"), and only for documents
-// that actually reach the missing glyph. Cheap to assert here.
+// pdfmake looks each declared font file up in the VFS; a missing one fails at
+// render time ("File 'X.ttf' not found in virtual file system"), and only for
+// documents that use that font. It also guards a production bug where the
+// vfs lost pdfmake's precedence chain to a global set by an import side
+// effect (see renderPdfMake in lib/export/pdf/index.ts).
 //
-// This exists because the declarations and the data were once passed to pdfmake
-// through two different channels — `pdfMake.fonts` (which won its precedence
-// chain) and `pdfMake.vfs` (which lost it to a global set by an import side
-// effect). The result was a build where fonts were declared but their data was
-// not reachable. They now travel together through a template's `loadFonts()`
-// and fontConfig().
-//
-// It is written against the template REGISTRY rather than against any
-// particular template, so it covers whatever an external pack contributes
-// (lib/export/pdf/pack.ts) without knowing anything about it. A pack that makes
-// stricter claims about its own cuts — exact weights, exact names — asserts
-// those in its own checks (npm run check:pack).
+// Pack-specific claims (exact weights, names) belong in the pack's own checks
+// (`pnpm check:pack`).
 
 import assert from 'node:assert/strict';
 import { installResolveHooks } from './resolve-hooks.mjs';
 import { cmapCodepoints, isFontFile } from './font-introspect.mjs';
 
-// Stubs for the two extensionless specifiers toPDF imports. They reproduce
-// pdfmake's precedence chain and the import side effect that broke production;
-// the real bundle is still read below via the explicit ".js" specifier.
+// Stubs for the two specifiers toPDF imports, reproducing pdfmake's precedence
+// chain and the import side effect. The real bundle is read below via ".js".
 const STUB = {
   'pdfmake/build/pdfmake': `
     let globalVfs, globalFonts;
     export const calls = [];
     const pdfMake = {
       createPdf(def, layouts, fonts, vfs) {
-        // Exactly pdfmake's own resolution order.
+        // pdfmake's resolution order.
         calls.push({
           fonts: fonts || globalFonts || pdfMake.fonts,
           vfs: vfs || globalVfs || pdfMake.vfs,
@@ -48,8 +37,8 @@ const STUB = {
     import pdfMake from 'pdfmake/build/pdfmake';
     const vfs = { 'Roboto-Regular.ttf': 'Uk9CT1RP', 'Roboto-Medium.ttf': 'Uk9CT1RP',
                   'Roboto-Italic.ttf': 'Uk9CT1RP', 'Roboto-MediumItalic.ttf': 'Uk9CT1RP' };
-    // The side effect that caused the bug: it sets globalVfs to the Roboto-only
-    // set, which outranks anything later assigned to pdfMake.vfs.
+    // The side effect: sets globalVfs to the Roboto-only set, which outranks
+    // pdfMake.vfs.
     if (pdfMake && pdfMake.addVirtualFileSystem) pdfMake.addVirtualFileSystem(vfs);
     export default vfs;
   `,
@@ -66,7 +55,7 @@ const ok = (cond: unknown, msg: string) => {
   assert.ok(cond, msg);
 };
 
-// The real pdfmake bundle, resolved exactly as the app resolves it.
+// The real pdfmake bundle.
 const baseVfs = resolveBaseVfs(await import('pdfmake/build/vfs_fonts.js'));
 ok(Object.keys(baseVfs).length > 0, 'pdfmake ships a base VFS we can read');
 ok(typeof baseVfs['Roboto-Regular.ttf'] === 'string', 'the base VFS carries Roboto');
@@ -96,9 +85,8 @@ function assertComplete(
 
 // ---- what every template declares ----
 //
-// One template must render with one merged config, whatever its fonts came
-// from. Loading each template's pack here also proves `loadFonts()` resolves at
-// all — a pack whose font module has moved fails at export time otherwise.
+// Also proves each `loadFonts()` resolves; a moved font module would otherwise
+// fail only at export time.
 
 const packs = new Map<string, { vfs: Record<string, string>; fonts: Record<string, Record<string, string>> }>();
 
@@ -119,22 +107,19 @@ for (const tpl of PDF_TEMPLATES) {
   }
 }
 
-// ---- the embedded cuts themselves ----
+// ---- the embedded font files ----
 //
-// One entry per distinct file across every template, so a font pack shared by
-// several templates is read once.
+// Each distinct file once, even when shared by several templates.
 
 const embedded = new Map<string, string>();
 for (const pack of packs.values()) {
   for (const [file, b64] of Object.entries(pack.vfs)) embedded.set(file, b64);
 }
 
-// One representative per script/block the templates can meet in user text.
-// pdfmake has NO per-glyph fallback: any code point an embedded cut lacks
-// renders as tofu wherever user-controlled text (project names, descriptions,
-// clients) reaches the page. A cut that replaces the document's body font
-// therefore has to carry the typeface's whole character map — a Latin-only
-// subset once shipped and would have mangled a project named "Миграция".
+// One sample per script or block that user text may contain. pdfmake has no
+// glyph fallback, so a code point missing from an embedded font renders as a
+// blank box wherever user text (project names, descriptions, clients) appears.
+// Embedded fonts must keep their full character map, not a Latin subset.
 const COVERAGE: Array<[string, string]> = [
   ['ř', 'Czech diacritics (Latin Ext-A)'],
   ['ě', 'Czech diacritics (Latin Ext-A)'],
@@ -151,7 +136,7 @@ const COVERAGE: Array<[string, string]> = [
 ];
 
 for (const [file, b64] of embedded) {
-  // Base64 payloads must decode — a truncated paste would still be a string.
+  // A truncated base64 payload is still a string; check it decodes to a font.
   const buf = Buffer.from(b64, 'base64');
   ok(buf.length > 1000, `${file} decodes to a plausible font (${buf.length} bytes)`);
   ok(isFontFile(buf), `${file} decodes to a real TrueType/OpenType file`);
@@ -163,12 +148,11 @@ for (const [file, b64] of embedded) {
   }
 }
 
-// ---- the production regression itself ----
+// ---- the production regression ----
 //
-// Renders through the real toPDF against a pdfmake stub that reproduces both the
-// precedence chain and the import side effect. Assigning pdfMake.vfs (the old
-// approach) loses to globalVfs here, exactly as it did in the deployed bundle;
-// passing the vfs to createPdf wins.
+// Renders through the real toPDF against the stub. Assigning pdfMake.vfs would
+// lose to globalVfs here, as it did in production; passing the vfs to
+// createPdf wins.
 
 {
   const { toPDF } = await import('../lib/export/pdf/index.ts');
@@ -203,13 +187,13 @@ for (const [file, b64] of embedded) {
     ok(calls.length === 1, `${tpl.id}: reached createPdf once`);
     const { fonts, vfs } = calls[0];
     ok(vfs != null, `${tpl.id}: a VFS reached pdfmake despite the global side effect`);
-    // The declarations and the data must still agree at the point of the call.
+    // Declarations and data must agree at the call.
     assertComplete(`toPDF ${tpl.id}`, { fonts, vfs });
     for (const file of Object.keys(packs.get(tpl.id)?.vfs ?? {})) {
       ok(
         typeof vfs[file] === 'string',
-        `${tpl.id}: the embedded cut ${file} survives the Roboto-only globalVfs — the exact ` +
-          'production failure this guards'
+        `${tpl.id}: the embedded font ${file} survives the Roboto-only globalVfs ` +
+          '(the production regression)'
       );
     }
   }

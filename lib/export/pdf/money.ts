@@ -1,23 +1,17 @@
-// Financial primitives for the PDF templates: currency-aware formatting and
-// exact allocation. These are deliberately free of app imports so they can be
-// exercised on their own (see scripts/check-money.ts).
+// Currency formatting and exact allocation for the PDF templates. No app
+// imports, so scripts/check-money.ts can test it alone.
 //
-// The rule the whole file exists to enforce: **every printed subtotal must sum
-// to the printed total, at the precision it is printed in**. Formatting a
-// rounded number is not enough — rounding each row independently drifts, so the
-// rows are allocated against the total up front and only then formatted.
+// Invariant: printed subtotals sum to the printed total at the printed
+// precision. Rounding each row on its own drifts, so rows are allocated
+// against the total first and formatted after.
 
 /** Man-day basis. One MD is a standard eight-hour day. */
 export const HOURS_PER_MD = 8;
 
 /**
  * Decimal places a currency is quoted in (ISO 4217 minor units): 2 for CZK /
- * EUR / USD, 0 for JPY / HUF, 3 for KWD / TND. Unknown-but-well-formed codes
- * fall back to 2, which is what Intl itself assumes.
- *
- * Returns null when the code is not usable as a currency at all (empty, wrong
- * length, digits) — the caller then prints a bare number with the code appended
- * rather than pretending it knows the format.
+ * EUR / USD, 0 for JPY / HUF, 3 for KWD / TND. A well-formed unknown code gets
+ * 2, as in Intl. Null when the code is not three letters.
  */
 export function currencyMinorUnits(currency: string): number | null {
   if (!/^[A-Za-z]{3}$/.test(currency)) return null;
@@ -35,16 +29,16 @@ export function currencyMinorUnits(currency: string): number | null {
 export interface MoneyFormat {
   /** Decimal places amounts are allocated and printed in. */
   dp: number;
-  /** A settled amount — always exactly `dp` decimals, so columns line up. */
+  /** A settled amount, always `dp` decimals so columns line up. */
   amount: (n: number) => string;
-  /** A unit rate — `dp` decimals minimum, up to 4 when the rate is finer. */
+  /** A unit rate: at least `dp` decimals, up to 4 when the rate is finer. */
   rate: (n: number) => string;
 }
 
 /**
- * Currency formatter pair for a locale. An unrecognised currency degrades to a
- * plain localized number with the raw code appended ("65 812,50 XYZ") — wrong
- * symbol beats wrong amount, and a silently dropped code would be worse still.
+ * Amount and rate formatters for a locale. An unusable currency code falls back
+ * to a plain localized number with the code appended ("65 812,50 XYZ"), so the
+ * amount and the code are never lost.
  */
 export function makeMoney(localeTag: string, currency: string): MoneyFormat {
   const minor = currencyMinorUnits(currency);
@@ -91,16 +85,15 @@ export function makeMoney(localeTag: string, currency: string): MoneyFormat {
 
 /**
  * Largest-remainder allocation: round `exact` to `dp` decimals so the rounded
- * rows sum *exactly* to the rounded total.
+ * rows sum to the rounded total.
  *
- * Rounding each row on its own drifts — 7 h and 9 h are both half a hundredth
- * of an MD off, so a month of them lands on 8.02 MD against an 8.00 header.
- * Instead: work in whole units of the last decimal place, floor every row, then
- * hand the shortfall to the rows that lost the most in flooring. Ties go to the
- * earlier row so the output is stable across runs.
+ * Rounding rows independently drifts: 7 h and 9 h are 0.875 and 1.125 MD, both
+ * round up, and twenty such days print 20.10 MD against a 20.00 total. Instead,
+ * work in units of the last decimal place, floor every row, and give the
+ * shortfall to the rows that lost most in flooring. Ties go to the earlier row
+ * so output is stable.
  *
- * Returns numbers, not strings — the caller formats them with exactly `dp`
- * decimals, which is what makes the printed column add up.
+ * The caller must format the result with exactly `dp` decimals.
  */
 export function allocate(exact: number[], dp: number): { rows: number[]; total: number } {
   const scale = 10 ** dp;
@@ -115,8 +108,7 @@ export function allocate(exact: number[], dp: number): { rows: number[]; total: 
     .map((v, i) => ({ loss: v - Math.floor(v + EPS), i }))
     .sort((a, b) => b.loss - a.loss || a.i - b.i);
   for (let k = 0; k < byLoss.length && leftover > 0; k++, leftover--) units[byLoss[k].i] += 1;
-  // Defensive: float noise can in principle overshoot. Claw back from the rows
-  // that gained the least, so a row never drops below its floor.
+  // Float noise could overshoot; take back from the rows with the smallest loss.
   for (let k = byLoss.length - 1; k >= 0 && leftover < 0; k--, leftover++) units[byLoss[k].i] -= 1;
 
   return { rows: units.map((u) => u / scale), total: totalUnits / scale };

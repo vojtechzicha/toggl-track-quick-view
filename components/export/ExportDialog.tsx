@@ -27,8 +27,8 @@ import {
 import { PDF_TEMPLATES, DEFAULT_TEMPLATE_ID, LOCALE_LABELS } from '@/lib/export/pdf';
 import SignatureBlockPreview from './SignatureBlockPreview';
 import { HOURS_PER_MD } from '@/lib/export/pdf/money';
-// Types and defaults only — the signing stage itself (pdf-lib, PKI.js,
-// @signpdf) is dynamically imported, and only once the user turns signing on.
+// Types and defaults only; the signing stage (pdf-lib, PKI.js, @signpdf) is
+// imported dynamically once signing is switched on.
 import {
   DEFAULT_SIGNATURE_APPEARANCE,
   isEmbeddableSignatureImage,
@@ -36,19 +36,15 @@ import {
   type SignatureAppearance,
   type SignatureLayout,
 } from '@/lib/export/pdf/sign/types';
-// The bridge contract, types only — ./tokenBridge carries no implementation and
-// so drags neither the signing stack nor PKI.js into this bundle.
+// Types only; tokenBridge has no implementation, so nothing heavy is bundled.
 import type {
   BridgeReadiness,
   TokenBridge,
   TokenCertificate,
 } from '@/lib/export/pdf/sign/tokenBridge';
 
-// Identity fields some PDF templates print (role / company / client / approver /
-// rate). Their values are user-entered and handed in by the page: they are
-// remembered with the workspace being billed (see lib/exportFields), and carried
-// to other devices by settings sync when the deployment has one. The app itself
-// ships no company names or rates.
+// Identity fields some PDF templates print, remembered per workspace
+// (see lib/exportFields).
 import {
   engagementKey,
   MAX_SIGNATURE_IMAGE_CHARS,
@@ -56,9 +52,8 @@ import {
 } from '@/lib/exportFields';
 
 /**
- * Default document reference for a range — the year and month it starts in.
- * Only a suggestion: the reference identifies the document to the client, so it
- * is theirs to set, and it is remembered per device once edited.
+ * Default document reference: the year and month the range starts in. Once the
+ * user types their own it is remembered with the workspace.
  */
 const defaultReference = (fromMs: number): string => {
   const d = new Date(fromMs);
@@ -72,17 +67,8 @@ const parseRate = (s: string): number | null => {
 };
 
 /**
- * Recorded as the signature dictionary's /Reason, which is what a viewer's
- * signature panel shows. Fixed rather than a field: this document has exactly
- * one reason to be signed, and an empty or improvised one reads worse than none.
- */
-/**
- * One sentence for whatever is stopping the hardware bridge.
- *
- * Each state has a different fix, which is the whole reason the bridge reports
- * a state rather than a boolean: "install the extension", "install the helper"
- * and "put the card in" are not interchangeable, and a single "unavailable"
- * sends people to the wrong one.
+ * One sentence on what is stopping the hardware bridge. Each state has a
+ * different fix (install the extension, install the helper, insert the card).
  */
 function describeReadiness(readiness: BridgeReadiness | null): React.ReactNode {
   if (!readiness || readiness.state === 'ready') return null;
@@ -99,15 +85,15 @@ function describeReadiness(readiness: BridgeReadiness | null): React.ReactNode {
     case 'helper-missing':
       return (
         <>
-          The extension is here but its <a href={readiness.installUrl} target="_blank" rel="noreferrer">
-          helper app</a> is not — both halves are needed.
+          The extension is installed but its <a href={readiness.installUrl} target="_blank" rel="noreferrer">
+          helper app</a> is not. Both are needed.
         </>
       );
     case 'helper-outdated':
       return (
         <>
-          The helper is version {readiness.have} and this build needs {readiness.need} —{' '}
-          <a href={readiness.installUrl} target="_blank" rel="noreferrer">update it</a>.
+          The helper is version {readiness.have}; this app needs {readiness.need}.{' '}
+          <a href={readiness.installUrl} target="_blank" rel="noreferrer">Update it</a>.
         </>
       );
     case 'not-paired':
@@ -118,12 +104,9 @@ function describeReadiness(readiness: BridgeReadiness | null): React.ReactNode {
 }
 
 /**
- * One line naming a certificate in the picker.
- *
- * The CN alone is not enough to choose by: a TWINS card carries two
- * certificates issued to the same person, differing only in what they are for,
- * and a machine with a token plugged in also has whatever sits in its software
- * key store. So the line says who, where, and whether it is the qualified one.
+ * One line naming a certificate in the picker. The CN alone is ambiguous: a
+ * TWINS card holds two certificates for the same person, and the software key
+ * store may hold more. So the line gives who, what kind, and where.
  */
 function describeCertificate(c: TokenCertificate): string {
   const kind = c.qualified ? 'qualified' : c.forSignature ? 'signing' : 'authentication';
@@ -132,19 +115,21 @@ function describeCertificate(c: TokenCertificate): string {
     month: 'short',
     day: 'numeric',
   });
-  // Kind before provider, and right after the name: a native <select> truncates,
-  // and on a card holding two certificates for the same person the CN is
-  // identical — what tells them apart has to appear at the first difference.
+  // Kind right after the name: a native <select> truncates, and the kind is
+  // what distinguishes two certificates with the same CN.
   return `${c.subjectCN} (${kind}) — ${c.providerName}, to ${expires}`;
 }
 
+/**
+ * The signature's /Reason, shown in a viewer's signature panel. Fixed: the
+ * document has one reason to be signed.
+ */
 const SIGN_REASON: Record<'en' | 'cs', string> = {
   en: 'Approval of the timesheet',
   cs: 'Schválení výkazu práce',
 };
 
-// The presets offered in the dropdown, in order. "custom" is added automatically
-// once the user edits a date by hand.
+// Presets in dropdown order. "custom" appears once a date is edited by hand.
 const PRESETS: ExportPreset[] = [
   'current-week',
   'selected-week',
@@ -157,7 +142,6 @@ export interface ExportDialogProps {
   view: TimesheetMode;
   projects: SelectedProject[];
   multi: boolean;
-  /** Live entries (current week) — used only as a fallback; the dialog fetches its own range. */
   nowMs: number;
   /** Saturday-start of the week currently shown on the page (anchors "selected week"). */
   selectedWeekStart: number | null;
@@ -165,7 +149,7 @@ export interface ExportDialogProps {
   billingTagPrefix: string;
   /** Rounding granularity in seconds (900 = 15 min default, 720 = 12 min). */
   roundingSeconds: number;
-  /** Grid the Individual view's start times anchor to, in seconds (see lib/calc). */
+  /** Grid the Individual view's start times snap to, in seconds (see lib/timesheet/individual). */
   startWindowSeconds: number;
   /** Optional cap (characters) on merged descriptions; null = no limit. */
   maxDescriptionLength: number | null;
@@ -186,9 +170,8 @@ export interface ExportDialogProps {
   /** Person the timesheet is for (resolved name, may be empty). */
   personName: string;
   /**
-   * Entries already in memory (the week currently on screen) and the half-open
-   * range they fully cover. When the requested export range fits inside this, the
-   * dialog reuses them instead of spending another Toggl request.
+   * Entries already loaded (the week on screen) and the half-open range they
+   * cover. An export range inside it reuses them instead of fetching again.
    */
   prefetched: { fromMs: number; toMs: number; entries: TimeEntry[] } | null;
   loadRange: (startISO: string, endISO: string, opts?: { force?: boolean }) => Promise<FetchedEntries>;
@@ -228,12 +211,11 @@ export default function ExportDialog({
   onClose,
 }: ExportDialogProps) {
   const [preset, setPreset] = useState<ExportPreset>('current-month');
-  // The workspace's first billable day; every preset is clipped to it, so a
-  // mid-month engagement start never exports a document claiming the full month.
+  // The workspace's first billable day; presets are clipped to it.
   const [startDate, setStartDate] = useState(fields.startDate);
   const initial = useMemo(
     () => clipRangeToStart(resolvePreset('current-month', nowMs, selectedWeekStart), fields.startDate),
-    // Seed once on mount; later preset changes update the inputs explicitly.
+    // Seed once on mount; preset changes update the inputs directly.
     // eslint-disable-next-line react-hooks/exhaustive-deps
     []
   );
@@ -241,16 +223,13 @@ export default function ExportDialog({
   const [toStr, setToStr] = useState(() => toDateInput(initial.toMs - 1)); // inclusive last day
   const [format, setFormat] = useState<ExportFormat>('xlsx');
   const [templateId, setTemplateId] = useState<string>(DEFAULT_TEMPLATE_ID);
-  // PDF only, and only when a description limit is set: a PDF is read by people,
-  // not pasted into the client's system, so it defaults to the full text; the
-  // technical formats (CSV/XLSX) always honour the limit.
+  // PDF only, when a description limit is set. PDFs default to full text;
+  // CSV/XLSX always apply the limit.
   const [pdfDescs, setPdfDescs] = useState<'full' | 'short'>('full');
   const [name, setName] = useState(personName);
-  // Seeded once from the workspace's remembered fields; written back on export
-  // (and, for the engagement note and start date, as they are typed).
-  // Like the engagement note, the role is per-language ("Integration
-  // architect" / "Integrační architekt") — the box shows the selected
-  // template's, so switching language never overwrites the other text.
+  // Seeded from the workspace's remembered fields and written back on export
+  // (the engagement note and start date as they are typed). The role is kept
+  // per language; the box shows the selected template's.
   const [roles, setRoles] = useState<Record<'en' | 'cs', string>>(() => ({
     en: fields.role,
     cs: fields.roleCs,
@@ -258,36 +237,28 @@ export default function ExportDialog({
   const [company, setCompany] = useState(fields.company);
   const [client, setClient] = useState(fields.client);
   const [approver, setApprover] = useState(fields.approver);
-  // The reference tracks the chosen range (TS-2026-07) until the user types one
-  // of their own — a PO or contract number, say — after which it is left alone
-  // and remembered. Clearing the box hands it back to the range.
+  // The reference follows the range (TS-2026-07) until the user types one;
+  // clearing the box makes it follow the range again.
   const [reference, setReference] = useState(fields.reference || defaultReference(initial.fromMs));
   const [refEdited, setRefEdited] = useState(fields.reference !== '');
-  // Both languages' notes are held at once; the box shows the selected
-  // template's, so switching language never overwrites the other text.
+  // Both languages' notes are held; the box shows the selected template's.
   const [engagements, setEngagements] = useState<Record<'en' | 'cs', string>>(() => ({
     en: fields.engagementEn,
     cs: fields.engagementCs,
   }));
   const [rateStr, setRateStr] = useState(fields.rate);
-  // What the rate is quoted per. Stored as 'md' when the contract quotes a
-  // man-day rate; every other stored value (the pre-basis '' included) is hourly.
+  // Stored as 'md' for a man-day rate; any other value is hourly.
   const [rateBasis, setRateBasis] = useState<'hourly' | 'md'>(
     fields.rateBasis === 'md' ? 'md' : 'hourly'
   );
   const [currency, setCurrency] = useState(fields.currency);
-  // Digital signature (see lib/export/pdf/sign). Off by default and offered
-  // only by templates that reserve an area for the widget: an export nobody
-  // asked to sign has to come out exactly as it always did.
+  // Digital signature (lib/export/pdf/sign). Off by default; offered only for
+  // templates that reserve a signature area.
   const [signing, setSigning] = useState(false);
-  // Whether this deployment has a TSA configured (TSA_URL). Null until asked.
-  // Timestamping is not offered as a choice: when the server can do it, every
-  // signature gets one, because a signature that outlives its certificate is
-  // strictly better and there is no reason anyone would want the weaker file.
+  // Whether the deployment has a TSA configured (TSA_URL); null until asked.
+  // Not a user choice: when available, every signature is timestamped.
   const [canTimestamp, setCanTimestamp] = useState<boolean | null>(null);
-  // A remembered scan is only usable if pdfmake can embed it. One stored by an
-  // earlier build (the picker used to accept WebP) is dropped rather than
-  // carried into an export that would fail on it.
+  // Drop a remembered scan pdfmake cannot embed (e.g. a stored WebP).
   const rememberedImage = isEmbeddableSignatureImage(fields.signatureImage)
     ? fields.signatureImage
     : '';
@@ -297,48 +268,36 @@ export default function ExportDialog({
   );
   const [signatureNote, setSignatureNote] = useState<string | null>(
     fields.signatureImage && !rememberedImage
-      ? 'The remembered signature scan is not a PNG or a JPEG and cannot be embedded — pick the file again.'
+      ? 'The saved signature scan is not a PNG or JPEG, so it can’t be used. Choose a new file.'
       : null
   );
-  // Where the signature comes from, and which certificate on it. Discovered
-  // when signing is switched on; the certificate is chosen, never assumed —
-  // I.CA's TWINS card carries a qualified signing certificate AND a commercial
-  // authentication one, and picking the second produces a file that verifies
-  // and is not a qualified signature.
+  // The signing bridge and certificate, discovered when signing is switched
+  // on. The certificate is always the user's choice: an I.CA TWINS card holds
+  // a qualified signing certificate and an authentication one, and signing
+  // with the latter gives a valid signature that is not qualified.
   const [bridgeChoices, setBridgeChoices] = useState<{ id: string; label: string }[] | null>(null);
   const [bridgeId, setBridgeId] = useState('');
   const [certificates, setCertificates] = useState<TokenCertificate[] | null>(null);
   const [certificateId, setCertificateId] = useState('');
   const [pairingCode, setPairingCode] = useState<string | null>(null);
   const [connecting, setConnecting] = useState(false);
-  // What is stopping the preferred bridge, when nothing is offered. Drives one
-  // sentence and one link rather than an error: signing is optional, so a
-  // missing helper is an explanation and never an interruption.
+  // Why the preferred bridge is unavailable. Shown as a hint, not an error,
+  // since signing is optional.
   const [readiness, setReadiness] = useState<BridgeReadiness | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [done, setDone] = useState<string | null>(null);
 
-  // The chosen template drives the rest of the dialog: which identity inputs
-  // appear, what they are prompted with, which language the notes are written
-  // in, and whether signing is offered at all. Nothing here knows any template
-  // by name (see lib/export/pdf/types).
+  // The chosen template decides which identity inputs appear, their
+  // placeholders, the notes' language and whether signing is offered. No
+  // template is referenced by name (see lib/export/pdf/types).
   const template = format === 'pdf' ? PDF_TEMPLATES.find((t) => t.id === templateId) : undefined;
-  // Language the selected PDF template prints in — drives which engagement note
-  // is shown and stored.
   const tplLocale = template?.locale ?? 'en';
-  // Identity inputs (role / company) appear only when the chosen PDF template
-  // actually prints them.
   const templateFields = template?.fields ?? [];
-  // Only a template that reserves a signature area can carry a widget; for the
-  // rest the signing section is not offered at all. This is the entire extent
-  // to which the dialog is template-aware about signing.
   const signatureWidget = template?.signatureWidget;
 
-  // The bridge objects themselves, built once per dialog rather than per
-  // render: each one holds live state — the extension port and the certificates
-  // it listed, or the throwaway key whose CN is already in the preview — and
-  // rebuilding it would silently throw that away mid-flow.
+  // Built once per dialog: each bridge holds live state (the extension port and
+  // its listed certificates, or the throwaway key shown in the preview).
   const bridgesRef = useRef<TokenBridge[] | null>(null);
   const loadBridges = async (): Promise<TokenBridge[]> => {
     if (!bridgesRef.current) {
@@ -354,9 +313,9 @@ export default function ExportDialog({
   const certificate = certificates?.find((c) => c.id === certificateId) ?? null;
 
   /**
-   * The signature block's design, as previewed and as signed. The date is
-   * filled in at the moment of signing so the printed date and the signature
-   * dictionary's /M agree; the preview uses the page's clock instead.
+   * The signature block as previewed and signed. The date is set at signing
+   * time so the printed date matches the signature's /M; the preview uses
+   * `nowMs`.
    */
   const appearance: SignatureAppearance = useMemo(
     () => ({
@@ -370,9 +329,8 @@ export default function ExportDialog({
     [signatureImage, name, personName, certificate, signatureLayout, tplLocale]
   );
 
-  // Switching signing on is what pulls the signing stage into the page, and
-  // what asks the machine what it can sign with. Nothing is connected here:
-  // discovery must not put a pairing window or a PIN prompt in front of anyone.
+  // Switching signing on loads the signing stage and discovers bridges.
+  // Discovery connects nothing, so it never triggers a pairing or PIN prompt.
   useEffect(() => {
     if (!signing || !signatureWidget) return;
     let cancelled = false;
@@ -385,8 +343,8 @@ export default function ExportDialog({
           offered.push({ id: bridge.id, label: bridge.label });
           continue;
         }
-        // Why the PREFERRED bridge is missing, not the last one: the throwaway
-        // key is always available, so the last answer is never interesting.
+        // Report the first (preferred) bridge's problem; the throwaway key at
+        // the end is always available.
         if (!firstProblem && bridge.readiness) firstProblem = await bridge.readiness();
       }
       if (cancelled) return;
@@ -404,8 +362,8 @@ export default function ExportDialog({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [signing, signatureWidget]);
 
-  // Asked once, when signing is switched on rather than on mount: a dialog
-  // opened to export an XLSX has no business calling /api/config.
+  // Asked once signing is switched on, not on mount, so a plain export makes
+  // no /api/config request.
   useEffect(() => {
     if (!signing || canTimestamp !== null) return;
     let cancelled = false;
@@ -414,8 +372,7 @@ export default function ExportDialog({
         if (!cancelled) setCanTimestamp(config.timestamp.enabled);
       },
       () => {
-        // A config that will not load means no timestamp rather than a broken
-        // dialog: signing still works, at B-B.
+        // No config: sign without a timestamp (B-B).
         if (!cancelled) setCanTimestamp(false);
       }
     );
@@ -424,9 +381,8 @@ export default function ExportDialog({
     };
   }, [signing, canTimestamp]);
 
-  // A bridge that lists without asking anything is listed straight away — the
-  // throwaway key, whose CN the preview then shows. An interactive one waits
-  // for the button below.
+  // A non-interactive bridge (the throwaway key) is listed immediately so the
+  // preview can show its CN. An interactive one waits for the Connect button.
   useEffect(() => {
     setCertificates(null);
     setCertificateId('');
@@ -450,7 +406,7 @@ export default function ExportDialog({
     };
   }, [bridgeId]);
 
-  /** Pair, unlock and list — the step that is allowed to prompt. */
+  /** Pair, unlock and list certificates; the only step allowed to prompt. */
   const connectBridge = async () => {
     const bridge = bridgesRef.current?.find((b) => b.id === bridgeId);
     if (!bridge) return;
@@ -459,17 +415,12 @@ export default function ExportDialog({
     setDone(null);
     try {
       const all = await bridge.listCertificates();
-      // Only what this device can actually sign with. A card reports its
-      // issuer's CA certificates alongside its own — around thirty of them on
-      // an I.CA card — and every one is a certificate with no private key here.
-      // Offering them is offering a PIN prompt that ends in "no private key",
-      // so they are counted and dropped rather than listed.
+      // Only certificates with a private key. A card also reports its issuer's
+      // CA certificates (about thirty on an I.CA card), which cannot sign.
       const list = all.filter((c) => c.hasKey);
       setCertificates(list);
-      // Preselect what the document actually needs: a qualified certificate
-      // whose key usage allows non-repudiation. The alternative — first in the
-      // list — is how the authentication half of a TWINS card ends up signing
-      // an acceptance sheet.
+      // Preselect a qualified certificate with non-repudiation key usage, so
+      // the TWINS authentication certificate is not picked by default.
       const preferred =
         list.find((c) => c.qualified && c.forSignature) ??
         list.find((c) => c.forSignature) ??
@@ -478,11 +429,10 @@ export default function ExportDialog({
       if (!list.length) {
         setError(
           all.length
-            ? `That device carries ${all.length} certificate${all.length === 1 ? '' : 's'} and the ` +
-                'private key of none of them — which is what a card looks like before its own ' +
-                'certificate has been issued onto it.'
-            : 'That device holds no usable certificate. A card with no certificate on it yet, ' +
-                'or one whose certificates have expired, both look like this.'
+            ? `The device has ${all.length} certificate${all.length === 1 ? '' : 's'} but no ` +
+                'private key for any of them. Usually no certificate has been issued to the card yet.'
+            : 'The device has no usable certificate. The card may have none issued yet, ' +
+                'or its certificates may have expired.'
         );
       }
     } catch (e) {
@@ -493,7 +443,7 @@ export default function ExportDialog({
     }
   };
 
-  /** Read a picked scan into a data: URL — it never leaves the browser. */
+  /** Read a picked scan into a data: URL. */
   const pickSignatureImage = async (file: File | null) => {
     if (!file) return;
     setDone(null);
@@ -503,14 +453,11 @@ export default function ExportDialog({
       reader.onerror = () => reject(reader.error);
       reader.readAsDataURL(file);
     });
-    // Judged by the file's own bytes, not by the type it claims: PDFKit — which
-    // is what pdfmake embeds images through — reads PNG and JPEG and nothing
-    // else, and a browser will display a WebP quite happily right up to the
-    // point where the export cannot be produced.
+    // Checked by the file's bytes, not its claimed type: pdfmake (via PDFKit)
+    // embeds only PNG and JPEG.
     if (!isEmbeddableSignatureImage(dataUrl)) {
       setError(
-        'The signature has to be a PNG or a JPEG — those are the formats a PDF can carry. ' +
-          'A WebP or HEIC will need converting first.'
+        'The signature must be a PNG or JPEG. Convert WebP or HEIC files first.'
       );
       return;
     }
@@ -518,8 +465,8 @@ export default function ExportDialog({
     setSignatureImage(dataUrl);
     setSignatureNote(
       dataUrl.length > MAX_SIGNATURE_IMAGE_CHARS
-        ? 'This scan is too large to remember with the workspace — it will be used for ' +
-            'this export only. A trimmed PNG under ~190 kB is remembered.'
+        ? 'This scan is too large to save, so it will be used for this export only. ' +
+            'A cropped PNG under about 190 kB is saved.'
         : null
     );
   };
@@ -537,12 +484,9 @@ export default function ExportDialog({
   const editStartDate = (v: string) => {
     setStartDate(v);
     setDone(null);
-    // Saved as typed (not on export): this is set up once when the workspace is
-    // created, quite possibly without exporting anything yet, and every later
-    // month export leans on it.
+    // Saved as typed rather than on export: it is often set before any export.
     onFieldsChange({ ...fields, startDate: v });
-    // Re-resolve the current preset so the dates show the clip immediately; a
-    // hand-edited custom range stays the user's own.
+    // Re-apply the preset so the clip shows at once; a custom range is kept.
     if (preset !== 'custom') applyPreset(preset, v);
   };
 
@@ -564,16 +508,15 @@ export default function ExportDialog({
   const handleExport = async () => {
     const range = rangeFromInputs(fromStr, toStr);
     if (!range) {
-      setError('Pick a valid date range — the “to” date must be on or after the “from” date.');
+      setError('Pick a valid range: the “to” date must be on or after the “from” date.');
       return;
     }
     setBusy(true);
     setError(null);
     setDone(null);
     try {
-      // Reuse the on-screen week's entries when they already cover the request
-      // (e.g. exporting the very week you're viewing); otherwise fetch the range,
-      // which goes through the shared server cache when one is configured.
+      // Reuse the on-screen week's entries when they cover the range; otherwise
+      // fetch it (through the server cache when one is configured).
       const covered =
         prefetched != null &&
         range.fromMs >= prefetched.fromMs &&
@@ -603,8 +546,7 @@ export default function ExportDialog({
         billByProject,
         title,
         personName: name.trim(),
-        // The template's own language, or the other one when it is empty — a
-        // role that reads the same in both only has to be typed once.
+        // The template's language, falling back to the other when empty.
         role: roles[tplLocale].trim() || roles[tplLocale === 'cs' ? 'en' : 'cs'].trim(),
         company: company.trim(),
         client: client.trim(),
@@ -615,9 +557,7 @@ export default function ExportDialog({
         rateBasis,
         currency: currency.trim().toUpperCase(),
       });
-      // Remember the identity fields for the next export of this workspace. The
-      // engagement notes are saved as they are typed (see the textarea), since
-      // losing a paragraph to a failed export would be the expensive mistake.
+      // Remember the fields for this workspace's next export.
       onFieldsChange({
         ...fields,
         role: roles.en.trim(),
@@ -629,13 +569,11 @@ export default function ExportDialog({
         rate: rateStr.trim(),
         rateBasis,
         currency: currency.trim().toUpperCase(),
-        // A derived reference is dropped rather than stored, so next month's
-        // export starts from that month again.
+        // Store only a hand-typed reference; a derived one follows the month.
         reference: refEdited ? reference.trim() : '',
         engagementEn: engagements.en.trim(),
         engagementCs: engagements.cs.trim(),
-        // A scan too large to sync is used for this export and not stored —
-        // whatever was remembered before stays remembered.
+        // A scan too large to store is used once; the previous one is kept.
         signatureImage:
           signatureImage.length <= MAX_SIGNATURE_IMAGE_CHARS
             ? signatureImage
@@ -643,16 +581,11 @@ export default function ExportDialog({
         signatureLayout,
       });
 
-      // Signing is the last thing that happens and the only optional one: with
-      // it off, `runExport` downloads exactly the blob the template rendered.
-      //
-      // The level is reported back out of the signer rather than returned,
-      // because a timestamp can fail after the card has already signed — the
-      // file still ships, one level lower, and saying so is the whole point of
-      // tracking it (see lib/export/pdf/sign/signer.ts).
-      // An object rather than two `let`s so the compiler keeps the union:
-      // nothing assigns to them in a straight line, only the callback does, and
-      // control-flow analysis narrows a `let` to its initialiser regardless.
+      // The signer reports the level through a callback because the timestamp
+      // can fail after the card has signed; the file still downloads at B-B
+      // and the message says so (see lib/export/pdf/sign/signer.ts).
+      // An object rather than two `let`s: TypeScript would narrow a `let` to its
+      // initial value, since only the callback assigns it.
       const outcome: { level: 'B-B' | 'B-T'; timestampError: Error | null } = {
         level: 'B-B',
         timestampError: null,
@@ -669,12 +602,12 @@ export default function ExportDialog({
           appearance: {
             ...appearance,
             certificateCN: certificate.subjectCN,
-            // One clock for the printed date and the /M entry.
+            // One timestamp for the printed date and the /M entry.
             signedAtMs: Date.now(),
           },
           reason: SIGN_REASON[tplLocale],
-          // The session token, because the timestamp route is gated the way the
-          // Toggl proxy is. Absent on a deployment with no password gate.
+          // The timestamp route is behind the password gate; no token when
+          // the deployment has no gate.
           timestamp: canTimestamp ? { appAuth: loadAuth()?.token ?? null } : false,
           onLevel: (level, timestampError) => {
             outcome.level = level;
@@ -685,7 +618,7 @@ export default function ExportDialog({
 
       const ok = await runExport(doc, format, templateId, signRequest);
       if (!ok) {
-        setError('No entries in this range — nothing to export.');
+        setError('No entries in this range.');
         return;
       }
       if (!signRequest) {
@@ -693,16 +626,14 @@ export default function ExportDialog({
       } else if (outcome.level === 'B-T') {
         setDone(
           `Exported as ${FORMAT_LABELS[format]}, digitally signed and timestamped ` +
-            '(PAdES-B-T) — it stays verifiable after the certificate expires.'
+            '(PAdES-B-T). The signature stays verifiable after the certificate expires.'
         );
       } else if (outcome.timestampError) {
-        // Not an error: the signature is real and the file is downloaded. But
-        // it is a level lower than was asked for, and only saying "signed"
-        // would be telling someone they have a timestamp they do not have.
+        // Signed and downloaded, but without the timestamp; say so.
         setDone(
-          `Exported as ${FORMAT_LABELS[format]}, digitally signed (PAdES-B-B). The ` +
-            `timestamp could not be obtained, so this signature stops verifying when the ` +
-            `certificate expires — ${outcome.timestampError.message}`
+          `Exported as ${FORMAT_LABELS[format]}, digitally signed without a timestamp ` +
+            `(PAdES-B-B), so the signature stops verifying when the certificate expires. ` +
+            `Timestamp error: ${outcome.timestampError.message}`
         );
       } else {
         setDone(`Exported as ${FORMAT_LABELS[format]}, digitally signed (PAdES-B-B).`);
@@ -711,22 +642,18 @@ export default function ExportDialog({
       if (e instanceof Error && e.name === 'TokenBridgeUnavailableError') {
         setError(e.message);
       } else if (isAuthRequired(e)) {
-        setError('Session expired — return to the timesheet to sign in again, then retry.');
+        setError('Session expired. Go back to the timesheet, sign in again, then retry.');
       } else if (isRateLimit(e)) {
-        setError('Toggl rate limit reached — wait a moment, then try again.');
+        setError('Toggl rate limit reached. Wait a moment, then try again.');
       } else {
-        // Everything else, said as it happened rather than guessed at. This
-        // branch used to blame Toggl for anything it did not recognise, which
-        // covers the whole render-and-sign half of the pipeline too: a font
-        // that would not load, a widget that would not fit, a card pulled
-        // mid-signature all reported themselves as a failed download, and the
-        // only honest next step was the console.
+        // Anything else can come from fetching, rendering or signing; show
+        // the error's own message.
         console.error('Export failed', e);
         const detail = e instanceof Error ? e.message : String(e);
         setError(
           detail
             ? `The export failed: ${detail}`
-            : 'The export failed, and gave no reason. The browser console has the error.'
+            : 'The export failed with no message. See the browser console for details.'
         );
       }
     } finally {
@@ -742,8 +669,8 @@ export default function ExportDialog({
       <div className="panel">
         <h2>Export timesheet</h2>
         <p className="hint">
-          Exports the <strong>{viewLabel}</strong> view exactly as shown — same
-          rounding and grouping, not the raw Toggl entries.
+          Exports the <strong>{viewLabel}</strong> view as shown, with its rounding
+          and grouping, not the raw entries.
         </p>
 
         <div className="field">
@@ -775,9 +702,8 @@ export default function ExportDialog({
 
         {!rangeValid && (
           <p className="err-msg">
-            Empty range — the “to” day is before the “from” day. A week or month preset
-            collapses like this when it ends before the workspace start date below: there is
-            nothing billable to export there.
+            The range is empty: the “to” date is before the “from” date. A preset that
+            ends before the workspace start date below has nothing to export.
           </p>
         )}
 
@@ -790,12 +716,10 @@ export default function ExportDialog({
             onChange={(e) => editStartDate(e.target.value)}
           />
           <p className="hint">
-            First billable day of this engagement. The week and month presets never reach
-            before it — a workspace that started mid-month exports, say, Aug 16–31 as its
-            first month instead of a document claiming the whole of August. Remembered with{' '}
-            {fieldsScope ? <strong>{fieldsScope}</strong> : 'this device'} as you type; leave
-            it empty when the engagement began on (or before) a clean month. Hand-edited
-            dates are yours — only the presets are clipped.
+            First billable day of this engagement. Week and month presets start no earlier
+            than this, so a workspace that began on Aug 16 exports Aug 16–31 as its first
+            month. Dates you edit by hand are not changed. Saved with{' '}
+            {fieldsScope ? <strong>{fieldsScope}</strong> : 'this device'} as you type.
           </p>
         </div>
 
@@ -848,10 +772,8 @@ export default function ExportDialog({
               <option value="short">Shortened to {maxDescriptionLength} characters (as on screen)</option>
             </select>
             <p className="hint">
-              A PDF is read by people, not pasted into the client&apos;s system, so it shows the
-              full descriptions by default even though a {maxDescriptionLength}-character limit is
-              set. Pick <strong>Shortened</strong> to match the on-screen (and CSV/XLSX) text
-              instead.
+              PDFs show full descriptions by default, ignoring the {maxDescriptionLength}-character
+              limit. Pick Shortened to match the on-screen and CSV/XLSX text.
             </p>
           </div>
         )}
@@ -879,8 +801,8 @@ export default function ExportDialog({
               value={roles[tplLocale]}
               placeholder={
                 roles[tplLocale === 'cs' ? 'en' : 'cs'].trim()
-                  ? `Empty = “${roles[tplLocale === 'cs' ? 'en' : 'cs'].trim()}”`
-                  : 'e.g. your role on the project'
+                  ? `Leave empty to use “${roles[tplLocale === 'cs' ? 'en' : 'cs'].trim()}”`
+                  : 'Your role on the project'
               }
               onChange={(e) => {
                 const v = e.target.value;
@@ -889,20 +811,17 @@ export default function ExportDialog({
               }}
             />
             <p className="hint">
-              Each template language keeps its own wording (Integration architect /
-              Integrační architekt); switching template shows the other one, and a language
-              left empty prints the other language&apos;s text.{' '}
+              Kept separately per template language (Integration architect / Integrační
+              architekt). If this language is empty, the other one is printed.{' '}
               {fieldsScope ? (
                 <>
-                  These details are remembered for the next export of{' '}
-                  <strong>{fieldsScope}</strong> — every workspace keeps its own set, so another
-                  client&apos;s company or rate never lands on this sheet.
+                  These details are saved with <strong>{fieldsScope}</strong>; each workspace
+                  has its own.
                 </>
               ) : (
-                <>These details are remembered on this device for the next export.</>
+                <>These details are saved on this device.</>
               )}{' '}
-              They follow you across devices when settings sync is on. The app itself ships no
-              names or rates.
+              Settings sync, when on, carries them to your other devices.
             </p>
           </div>
         )}
@@ -950,16 +869,15 @@ export default function ExportDialog({
               onChange={(e) => {
                 const v = e.target.value;
                 setReference(v);
-                // Emptying the box is how you go back to the month default.
+                // Emptying the box restores the month default.
                 setRefEdited(v.trim() !== '');
                 setDone(null);
               }}
             />
             <p className="hint">
-              Printed on the cover, in every page footer and in the approval declaration.
-              Follows the exported month until you type your own — a PO, contract or invoice
-              number — which is then remembered for next time. Clear the box to hand it back
-              to the month.
+              Printed on the cover, in each page footer and in the approval declaration.
+              Defaults to the exported month. Type your own (a PO, contract or invoice
+              number) to keep it for next time; clear the box to return to the default.
             </p>
           </div>
         )}
@@ -971,7 +889,7 @@ export default function ExportDialog({
               id="exp-approver"
               type="text"
               value={approver}
-              placeholder="e.g. Project Manager — left blank to fill by hand"
+              placeholder="e.g. Project Manager; leave blank to fill in by hand"
               onChange={(e) => {
                 setApprover(e.target.value);
                 setDone(null);
@@ -993,19 +911,17 @@ export default function ExportDialog({
               onChange={(e) => {
                 const v = e.target.value;
                 setEngagements((prev) => ({ ...prev, [tplLocale]: v }));
-                // Saved as typed: this is the one field long enough that losing
-                // it to a failed export or a closed dialog would sting.
+                // Saved as typed so a long note survives a failed export or a
+                // closed dialog.
                 onFieldsChange({ ...fields, [engagementKey(tplLocale)]: v.trim() });
                 setDone(null);
               }}
             />
             <p className="hint">
-              Printed word for word where the template puts its basis-of-preparation
-              wording — so write it in {LOCALE_LABELS[tplLocale]}, with the contract, order
-              and end customer named however this engagement identifies them. Each language
-              keeps its own text; switching template shows the other one. The standing
-              wording around it (billing codes, rounding, the man-day basis,
-              confidentiality) is added for you.
+              Printed verbatim in the template&apos;s basis-of-preparation section, so write it
+              in {LOCALE_LABELS[tplLocale]}. Name the contract, order and end customer. Each
+              language has its own note. The template adds the standard wording (billing
+              codes, rounding, man-day basis, confidentiality).
             </p>
           </div>
         )}
@@ -1026,9 +942,9 @@ export default function ExportDialog({
                 <option value="md">Man-day (MD rate, {HOURS_PER_MD} h = 1 MD)</option>
               </select>
               <p className="hint">
-                Pick the unit your contract quotes the rate in. The report&apos;s fee
-                tables and wording follow it — an MD engagement reads man-days × MD rate
-                throughout, never a recomputed hourly figure.
+                The unit your contract quotes the rate in. Fee tables and wording use it
+                throughout: an MD rate is shown as man-days × MD rate, not converted to
+                hourly.
               </p>
             </div>
             <div className="exp-dates">
@@ -1041,7 +957,7 @@ export default function ExportDialog({
                   type="text"
                   inputMode="decimal"
                   value={rateStr}
-                  placeholder="Empty = no fees in the report"
+                  placeholder="Leave empty for no fees"
                   onChange={(e) => {
                     setRateStr(e.target.value);
                     setDone(null);
@@ -1081,11 +997,9 @@ export default function ExportDialog({
               <option value="on">Sign the PDF</option>
             </select>
             <p className="hint">
-              The <strong>Prepared by</strong> box on the sign-off page becomes a real
-              signature field — the issuer&apos;s box; the client&apos;s stays blank for them
-              to sign. The handwritten image is cosmetic: what makes the document signed is
-              the certificate, so an export with signing off stays exactly the document it
-              has always been.
+              Turns the Prepared by box on the sign-off page into a signature field. The
+              client&apos;s box stays blank for them. The certificate makes the signature;
+              the handwritten image is only visual.
             </p>
           </div>
         )}
@@ -1114,9 +1028,8 @@ export default function ExportDialog({
                 ))}
               </select>
               <p className="hint">
-                The private key never leaves the token, so the browser cannot reach it on its
-                own — <strong>Sign Bridge</strong> is the extension and helper that carry the
-                request to the card and back. {describeReadiness(readiness)}
+                The private key stays on the token. Sign Bridge, a browser extension with a
+                helper app, passes the signing request to it. {describeReadiness(readiness)}
               </p>
             </div>
 
@@ -1153,31 +1066,29 @@ export default function ExportDialog({
               )}
               {pairingCode && (
                 <p className="hint">
-                  Approve the window that just appeared <strong>only</strong> if it shows the
-                  code <strong>{pairingCode}</strong>. Matching them is what tells you the
-                  window belongs to this page and not to something else.
+                  Approve the window that just opened <strong>only</strong> if it shows the
+                  code <strong>{pairingCode}</strong>. A matching code confirms the request
+                  came from this page.
                 </p>
               )}
               {certificate && !certificate.qualified && (
                 <p className="hint">
-                  This certificate does not claim to be a qualified one on a qualified device,
-                  so the export will carry a valid signature that is <strong>not</strong> a
-                  QES — fine for testing the pipeline, not for a document anyone signs off.
+                  This is not a qualified certificate on a qualified device. The signature
+                  will be valid but <strong>not</strong> a qualified electronic signature
+                  (QES). Fine for testing, not for real sign-off.
                 </p>
               )}
               {certificate && !certificate.forSignature && (
                 <p className="hint">
-                  This certificate&apos;s key usage does not include non-repudiation, which
-                  makes it an <strong>authentication</strong> certificate rather than a signing
-                  one. On a TWINS card the other entry is the one to pick.
+                  This certificate&apos;s key usage lacks non-repudiation, so it is for
+                  authentication, not signing. On a TWINS card, pick the other entry.
                 </p>
               )}
               {selectedBridge?.interactive && !pairingCode && (
                 <p className="hint">
                   Connecting asks {selectedBridge.label.includes('Sign Bridge') ? 'Sign Bridge' : 'the helper'}{' '}
-                  to approve this site once. Signing then asks for the token PIN in its own
-                  window — that prompt is the signature being made, and the PIN is never typed
-                  into this page.
+                  to approve this site (once). Signing then asks for the token PIN in a
+                  separate window; the PIN is never entered on this page.
                 </p>
               )}
             </div>
@@ -1191,7 +1102,7 @@ export default function ExportDialog({
                   accept={SIGNATURE_IMAGE_ACCEPT}
                   onChange={(e) => {
                     void pickSignatureImage(e.target.files?.[0] ?? null);
-                    // Let the same file be picked again after a mistake.
+                    // Allow picking the same file again.
                     e.target.value = '';
                   }}
                 />
@@ -1209,24 +1120,19 @@ export default function ExportDialog({
                 )}
               </div>
               {signatureImage && (
-                // A file input cannot be given a value, so it says "No file
-                // chosen" even when a remembered scan is in use and showing in
-                // the preview below — which reads as "nothing is set" next to a
-                // Remove button that plainly disagrees. Said in words instead.
+                // A file input can't show a remembered scan (it says "No file
+                // chosen"), so say it in words.
                 <p className="hint sig-in-use">
-                  A signature scan is in use — it is the one in the preview below. Choosing a
-                  file replaces it; <strong>Remove</strong> clears it.
+                  Using the signature scan shown in the preview. Choose a file to replace it,
+                  or Remove to clear it.
                 </p>
               )}
               <p className="hint">
-                Your own scan as a <strong>PNG or JPEG</strong>, on a transparent or white
-                background. It is embedded into the signature block of this export and
-                remembered with{' '}
-                {fieldsScope ? <strong>{fieldsScope}</strong> : 'this device'} so you need not
-                pick it again — which means that, like the other export details, it is
-                uploaded to your deployment and travels between your devices when settings
-                sync is on. The app ships no signature image, and none is ever committed to
-                the repository.
+                A PNG or JPEG scan on a transparent or white background, placed in the
+                signature block. Saved with{' '}
+                {fieldsScope ? <strong>{fieldsScope}</strong> : 'this device'}; with settings
+                sync on, it is stored on the server and synced to your other devices like the
+                other export details.
               </p>
             </div>
 
@@ -1254,8 +1160,8 @@ export default function ExportDialog({
                 />
               </div>
               <p className="hint">
-                The signature block at its printed size, {Math.round(signatureWidget.rect.width)}
-                &nbsp;&times;&nbsp;{Math.round(signatureWidget.rect.height)}&nbsp;pt — it fills the
+                Printed size {Math.round(signatureWidget.rect.width)}
+                &nbsp;&times;&nbsp;{Math.round(signatureWidget.rect.height)}&nbsp;pt, filling the
                 dashed box on the last page. {signatureNote}
               </p>
             </div>

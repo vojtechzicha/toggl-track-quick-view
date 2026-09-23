@@ -1,8 +1,7 @@
-// Date-range presets and helpers for the export dialog. A range is always a
-// half-open [fromMs, toMs) interval in local time (toMs is the exclusive end, i.e.
-// the midnight after the last included day). The on-screen views are week-based
-// (Saturday-start), so a month export is rendered as the Saturday-weeks it spans —
-// `weeksInRange` enumerates them.
+// Date-range presets and helpers for the export dialog. A range is a half-open
+// [fromMs, toMs) interval in local time; toMs is the midnight after the last
+// included day. The views are built per Saturday-start week, so a month export
+// is rendered as the weeks it overlaps (`weeksInRange`).
 
 import { startOfDay, startOfWeek } from '@/lib/calc';
 import { DAY_MS } from '@/lib/timesheet/constants';
@@ -24,7 +23,7 @@ export const PRESET_LABELS: Record<ExportPreset, string> = {
   custom: 'Custom range',
 };
 
-/** Half-open day range [fromMs, toMs) — toMs is the midnight after the last day. */
+/** Half-open day range [fromMs, toMs); toMs is the midnight after the last day. */
 export interface DateRange {
   fromMs: number;
   toMs: number;
@@ -43,10 +42,9 @@ export function startOfNextMonth(d: Date): Date {
 }
 
 /**
- * Resolve a preset to a concrete [from, to) range.
- * `selectedWeekStart` anchors "selected week" (the week being viewed on the page);
- * it falls back to the current week when absent. "Selected month" and "custom" both
- * just seed the current month — the user then edits the from/to inputs directly.
+ * Resolve a preset to a concrete range. `selectedWeekStart` is the week shown on
+ * the page and anchors "selected week"; without it, the current week is used.
+ * "Selected month" and "custom" seed the current month for the user to edit.
  */
 export function resolvePreset(
   preset: ExportPreset,
@@ -75,11 +73,7 @@ export function resolvePreset(
   }
 }
 
-/**
- * The Saturday-week starts (ms) whose 7-day span overlaps [fromMs, toMs), in order.
- * Each is a week the summary/individual builders can render. Empty when the range
- * is empty.
- */
+/** Start (ms) of each Saturday-start week that overlaps [fromMs, toMs), in order. */
 export function weeksInRange(fromMs: number, toMs: number): number[] {
   if (!(toMs > fromMs)) return [];
   const first = startOfWeek(new Date(fromMs)).getTime();
@@ -108,16 +102,14 @@ export function fromDateInput(s: string): number | null {
 }
 
 /**
- * Clip a preset-resolved range to the engagement's first billable day (the
- * workspace's stored `startDate`, `yyyy-mm-dd`; empty = no start date). A month
- * preset on a workspace that started Aug 16 then yields Aug 16–31 rather than a
- * document claiming the whole of August. Only the *from* edge moves, and only
- * forward. A range that lies entirely before the start date ("Last month" on an
- * engagement that began this month) collapses to the empty [start, start) —
- * never the original pre-engagement range, which would let a billing document
- * pick up work from before the engagement. The dialog's date inputs reject the
- * collapsed range, so such a preset cannot be exported. Callers apply this to
- * preset resolutions only — a hand-edited custom range is the user's own to set.
+ * Clip a preset range to the engagement's first billable day (`startDate`,
+ * `yyyy-mm-dd`; empty = none). A month preset on a workspace that started
+ * Aug 16 yields Aug 16–31. Only the start moves, and only forward.
+ *
+ * A range entirely before the start date collapses to the empty
+ * [start, start), never the original range, so a billing document cannot pick
+ * up pre-engagement work. The dialog rejects the empty range. Apply this to
+ * presets only; a hand-edited range is left as typed.
  */
 export function clipRangeToStart(range: DateRange, startDate: string): DateRange {
   const startMs = startDate ? fromDateInput(startDate) : null;
@@ -133,7 +125,7 @@ export function rangeFromInputs(fromStr: string, toStr: string): DateRange | nul
   const fromMs = fromDateInput(fromStr);
   const toDay = fromDateInput(toStr);
   if (fromMs == null || toDay == null) return null;
-  const toMs = toDay + DAY_MS; // make the end exclusive (include the whole `to` day)
+  const toMs = toDay + DAY_MS; // exclusive end: include the whole `to` day
   if (!(toMs > fromMs)) return null;
   return { fromMs, toMs };
 }

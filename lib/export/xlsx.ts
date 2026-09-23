@@ -1,7 +1,6 @@
-// XLSX serializer for an export document, built on SheetJS (lazy-loaded so the
-// library only ships to the browser when an export actually runs). One worksheet:
-// stacked week tables for the summary view, a flat entry table for the individual
-// view. Hours are real numbers so the cells are sum-able in a spreadsheet.
+// XLSX serializer on SheetJS (loaded on demand). One worksheet: stacked week
+// tables for the summary view, one entry table for the individual view. Hours
+// are numeric cells so they can be summed.
 
 import { type ExportDoc, periodLabel, secsToHoursNum } from './model';
 
@@ -19,8 +18,7 @@ function summaryAOA(doc: Extract<ExportDoc, { view: 'summary' }>): Cell[][] {
   aoa.push([]);
   for (const week of doc.weeks) {
     aoa.push([week.label]);
-    // What the billing column holds: billing codes, or — for a workspace that
-    // doesn't use them — the project each entry belongs to.
+    // A workspace that bills by project has project names in this column.
     aoa.push([doc.billByProject ? 'Project' : 'Billing tag', ...week.dayLabels, 'Total', 'Description']);
     for (const r of week.rows) {
       aoa.push([r.label, ...r.cells.map(hoursCell), secsToHoursNum(r.total), r.desc]);
@@ -55,8 +53,7 @@ export async function toXLSX(doc: ExportDoc): Promise<Blob> {
   const aoa = doc.view === 'summary' ? summaryAOA(doc) : individualAOA(doc);
   const ws = XLSX.utils.aoa_to_sheet(aoa);
 
-  // Reasonable column widths: a wide first column and description column, the rest
-  // narrow. (Width is in characters.)
+  // Widths in characters: wide first and last (description) columns.
   const colCount = aoa.reduce((m, r) => Math.max(m, r.length), 0);
   ws['!cols'] = Array.from({ length: colCount }, (_, i) => {
     if (i === 0) return { wch: 22 };

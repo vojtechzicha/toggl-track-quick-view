@@ -1,12 +1,10 @@
 #!/usr/bin/env node
-// Runs the template pack's own checks, if a pack is checked out. Run with:
-//   npm run check:pack
+// Runs the template pack's own checks, if a pack is checked out
+// (`pnpm check:pack`).
 //
-// A pack's checks live in `pdf-templates/checks/*.ts` and are ordinary scripts:
-// each one is executed on its own, so a check that stubs a module (pdfmake, in
-// particular) cannot leak that stub into the next. With no pack, or a pack that
-// ships none, this prints a line and passes — the app's own checks cover the
-// app's own templates.
+// Each `pdf-templates/checks/*.ts` runs in its own process, so a check that
+// stubs a module (e.g. pdfmake) can't affect the next. With no pack, or no
+// checks, it prints a line and passes.
 
 import { existsSync, readdirSync } from 'node:fs';
 import path from 'node:path';
@@ -17,7 +15,7 @@ const root = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
 const CHECKS = path.join(root, 'pdf-templates', 'checks');
 
 if (!existsSync(path.join(root, 'pdf-templates', 'index.ts'))) {
-  console.log('✓ no template pack checked out — nothing to check (see README.md).');
+  console.log('✓ no template pack checked out; nothing to check.');
   process.exit(0);
 }
 
@@ -28,7 +26,7 @@ const files = existsSync(CHECKS)
   : [];
 
 if (files.length === 0) {
-  console.log('✓ the template pack ships no checks of its own.');
+  console.log('✓ the template pack has no checks.');
   process.exit(0);
 }
 
