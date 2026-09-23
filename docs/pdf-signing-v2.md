@@ -328,11 +328,13 @@ the Trust List. That is the right way round for warning someone before they sign
 `require('pdf-lib')` while this code imports `@cantoo/pdf-lib`. Two things follow.
 `pdf-lib` is declared in package.json as an alias for the fork, and both specifiers are
 pinned to the fork's ES build (`next.config.js` for the bundle,
-`scripts/signatureFixture.ts` for the checks) because the package's exports map answers
+`scripts/resolve-hooks.mjs` for the checks) because the package's exports map answers
 `require` and `import` with *different builds*. Two builds means two PDFName pools, and
 pdf-lib keys dictionaries by PDFName identity — so the placeholder would write an
 `/AcroForm` that the code looking for the widget cannot see. It fails silently and only
-at the point where the appearance is attached.
+at the point where the appearance is attached. On Node 22 the checks' pin also depends
+on registering no `load` hook: with one, the `require()` inside an imported CommonJS
+module skips the resolve hooks, and the placeholder gets `cjs/` again.
 
 Design rules:
 
