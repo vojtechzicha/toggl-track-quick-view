@@ -1,12 +1,8 @@
 'use client';
 
-// One entry in the tracker list. Everything edits inline:
-//  - description: click → input (Enter/blur commits)
-//  - billing tag chip: click → TagCombobox popover
-//  - times: click → popover with two datetime-local inputs (a running entry
-//    exposes only its start; it keeps running)
-//  - continue ▶ starts a new running entry copying description/tag/workspace
-//  - delete asks for confirmation
+// One tracker entry, edited inline: description, billing tag, and times
+// (start only for a running entry). ▶ continues it as a new timer; delete
+// asks for confirmation.
 
 import { useState } from 'react';
 import TagCombobox from './TagCombobox';
@@ -29,11 +25,11 @@ export default function EntryRow({
   entry: TimeEntry;
   nowMs: number;
   workspaces: StoreWorkspace[];
-  /** The billing prefix of THIS entry's workspace. */
+  /** Billing prefix of this entry's workspace. */
   prefix: string;
-  /** THIS entry's workspace bills by project — it has no billing tag to show. */
+  /** This entry's workspace bills by project, so there is no tag to show. */
   byProject: boolean;
-  /** Show the workspace chip (only useful once several workspaces exist). */
+  /** Show the workspace chip (when there are several workspaces). */
   showChip: boolean;
   onEdit: (id: number, patch: EntryInput) => void;
   onContinue: (entry: TimeEntry) => void;
@@ -43,9 +39,9 @@ export default function EntryRow({
   const startMs = Date.parse(entry.start);
   const stopMs = running ? nowMs : Date.parse(entry.stop as string);
   const tag = billingTagOf(entry.tags, prefix);
-  // Support tickets: an untagged entry whose description opens with "[ticket]"
-  // bills to that ticket — its chip shows the derived code (dashed) rather than
-  // the missing-tag warning. An explicit tag can still be set and then wins.
+  // An untagged entry whose description starts with "[ticket]" bills to that
+  // ticket; show the derived code instead of the missing-tag warning. An
+  // explicit tag wins.
   const ticket = tag === null ? supportTicketCode(entry.description) : null;
   const ws = workspaces.find((w) => w.id === entry.project_id);
 
@@ -123,8 +119,7 @@ export default function EntryRow({
           </button>
         )}
 
-        {/* A workspace that bills by project has no billing tag to edit —
-            the workspace chip below already says what the entry bills to. */}
+        {/* Bills-by-project workspaces have no billing tag to edit. */}
         {!byProject && (
         <span className="tr-tagwrap">
           {tagOpen ? (
@@ -143,8 +138,8 @@ export default function EntryRow({
                 tag
                   ? 'Change billing tag'
                   : ticket
-                  ? `Bills to ${ticket} (support ticket from the description) — click to set an explicit tag instead`
-                  : 'No billing tag — click to add one'
+                  ? `Bills to support ticket ${ticket} from the description. Click to set a tag instead.`
+                  : 'No billing tag. Click to add one.'
               }
               onClick={() => setTagOpen(true)}
             >
@@ -208,7 +203,7 @@ export default function EntryRow({
         <button
           type="button"
           className="ws-icon"
-          title="Continue — start a new timer with this description and tag"
+          title="Start a new timer with this description and tag"
           onClick={() => onContinue(entry)}
         >
           ▶

@@ -1,18 +1,14 @@
 'use client';
 
-// Toggl history importer (standalone mode) — the one-off, re-runnable
-// migration that brings a Toggl account's history into the app's own store so
-// timesheets and exports keep working across the switch.
+// Toggl history importer (standalone mode). Copies a Toggl account's history
+// into the store.
 //
-// Flow: connect with a browser-entered Toggl API token (through the existing
-// proxy — no new Toggl code), map each Toggl project to a stored workspace
-// (an existing one, a new one prefilled with the project's name and color, or
-// skip), pick a date range, run. History is paged oldest-first in ~90-day
-// windows through the same GET me/time_entries the poll uses, metered against
-// the same 30 requests/hour budget (auto-pausing when it runs dry or Toggl
-// rate-limits), and each window is bulk-POSTed to /api/store/import. Imported
-// entries keep their Toggl id, so re-running skips what's already in — an
-// interrupted import is simply started again.
+// Connect with a Toggl API token (via the proxy), map each Toggl project to a
+// workspace (existing, new, or skip), pick a date range, run. History is read
+// oldest first in 90-day windows via GET me/time_entries, metered against the
+// shared 30 requests/hour budget, pausing when it runs out or Toggl rate
+// limits. Each window is POSTed to /api/store/import. Entries keep their
+// Toggl id, so an interrupted import can be re-run.
 
 import { useMemo, useRef, useState } from 'react';
 import Link from 'next/link';
@@ -33,7 +29,7 @@ import { addDays } from '@/lib/calc';
 const DAY_MS = 24 * 3600 * 1000;
 const WINDOW_MS = 90 * DAY_MS; // page size through Toggl history
 const BATCH = 1000; // entries per bulk POST (server caps at 2000)
-const BUDGET_RESERVE = 1; // requests left untouched in the hourly budget
+const BUDGET_RESERVE = 1; // requests kept free in the hourly budget
 const MAX_ERROR_RETRIES = 3;
 
 /** A mapping-table row: a Toggl project, or one of the two catch-all rows. */
@@ -109,7 +105,7 @@ export default function ImportPage() {
   const [runError, setRunError] = useState<string | null>(null);
   const [progress, setProgress] = useState({ done: 0, total: 0 });
   const [stats, setStats] = useState<ImportResult>(ZERO_STATS);
-  // A live wait the run is sitting out (budget dry / rate limited / retrying).
+  // Current wait (budget used up, rate limited, or retrying).
   const [pause, setPause] = useState<{ until: number; reason: string } | null>(null);
   const cancelRef = useRef(false);
 
@@ -118,8 +114,7 @@ export default function ImportPage() {
     return [
       ...connected.projects.map((p) => ({ key: String(p.id), name: p.name, color: p.color })),
       { key: '0', name: 'Entries without a project', pseudo: true },
-      // History can reference projects the (active-only) projects API no
-      // longer returns — archived ones land here instead of vanishing.
+      // Archived projects: the projects API returns only active ones.
       { key: '*', name: 'Any other project (archived / not listed)', pseudo: true },
     ];
   }, [connected]);
@@ -131,9 +126,8 @@ export default function ImportPage() {
       recordTogglRequests(2); // me + projects
       const info = await togglBackend.connect(token);
       setConnected({ accountName: info.accountName, projects: info.projects });
-      // Sensible defaults: a project whose name matches an existing workspace
-      // maps there; anything else becomes a new workspace. The catch-all rows
-      // start on "skip" — importing those is an explicit decision.
+      // Defaults: map to a workspace with the same name, else a new one. The
+      // catch-all rows start on "skip".
       const byName = new Map(t.workspaces.map((w) => [w.name.trim().toLowerCase(), w.id]));
       const next: Record<string, Choice> = { '0': 'skip', '*': 'skip' };
       for (const p of info.projects) {
@@ -144,9 +138,9 @@ export default function ImportPage() {
     } catch (e) {
       setConnectError(
         isAuthRequired(e)
-          ? 'Session expired — enter the app password again, then reconnect.'
+          ? 'Session expired. Enter the app password again, then reconnect.'
           : isRateLimit(e)
-          ? 'Toggl rate limit reached — wait a bit, then try again.'
+          ? 'Toggl rate limit reached. Wait a bit, then try again.'
           : 'Could not connect to Toggl. Check the API token.'
       );
     } finally {
@@ -154,8 +148,7 @@ export default function ImportPage() {
     }
   };
 
-  // Wait out `ms` in 1s slices so Cancel stays responsive; the countdown
-  // renders from the `pause` state and the hook's 1s clock.
+  // Wait in 1s slices so Cancel stays responsive.
   const waitOut = async (ms: number, reason: string) => {
     setPause({ until: Date.now() + ms, reason });
     const end = Date.now() + ms;
@@ -187,9 +180,8 @@ export default function ImportPage() {
     setProgress({ done: 0, total: windows.length });
 
     try {
-      // Resolve every assignment to a workspace id up front, creating the
-      // "new" ones. Same-name workspaces are reused (and the choice pinned to
-      // them), so re-running an interrupted import never duplicates targets.
+      // Resolve assignments to workspace ids, creating "new" ones. Reuse a
+      // workspace with the same name, so a re-run does not create duplicates.
       const mapping: Record<string, number> = {};
       const createdByName = new Map<string, number>();
       for (const row of rows) {
@@ -219,12 +211,11 @@ export default function ImportPage() {
         setChoices((prev) => ({ ...prev, [row.key]: `ws:${created.id}` }));
       }
       if (Object.keys(mapping).length === 0) {
-        throw new Error('Nothing to import — every row is set to “Skip”.');
+        throw new Error('Nothing to import: every row is set to “Skip”.');
       }
 
-      // Page through history, oldest first. Each window: wait for budget,
-      // fetch, bulk-POST; on a rate limit back off exponentially (the poll's
-      // pattern) and retry the same window — the run pauses, never dies.
+      // Per window: wait for budget, fetch, POST. On a rate limit, back off
+      // exponentially and retry the same window.
       for (const [winStart, winEnd] of windows) {
         let rateStep = 0;
         let errorTries = 0;
@@ -234,7 +225,7 @@ export default function ImportPage() {
             return;
           }
           if (togglRequestsThisHour() >= HOURLY_LIMIT - BUDGET_RESERVE) {
-            await waitOut(60_000, 'Hourly Toggl request budget used up — resuming automatically');
+            await waitOut(60_000, 'Hourly Toggl request budget used up. Resuming automatically');
             continue;
           }
           try {
@@ -263,20 +254,20 @@ export default function ImportPage() {
             }
             if (isAuthRequired(e)) {
               throw new Error(
-                'Session expired — log in and start the import again (everything already imported is skipped).'
+                'Session expired. Log in and start the import again; entries already imported are skipped.'
               );
             }
             if (isRateLimit(e)) {
               rateStep = Math.min(rateStep + 1, 4);
               await waitOut(
                 Math.min(60_000 * 2 ** rateStep, 15 * 60_000),
-                'Rate limited by Toggl — backing off, resuming automatically'
+                'Rate limited by Toggl. Resuming automatically'
               );
               continue;
             }
             errorTries++;
             if (errorTries >= MAX_ERROR_RETRIES) throw e;
-            await waitOut(5_000 * errorTries, 'Request failed — retrying');
+            await waitOut(5_000 * errorTries, 'Request failed. Retrying');
           }
         }
         setProgress((prev) => ({ ...prev, done: prev.done + 1 }));
@@ -299,10 +290,7 @@ export default function ImportPage() {
   if (!standalone) {
     return (
       <div className="center-msg" style={{ flexDirection: 'column', gap: 12 }}>
-        <span>
-          The importer is part of standalone mode — this deployment reads straight from Toggl
-          Track, so there is nothing to import into.
-        </span>
+        <span>This deployment reads from Toggl Track, so there is nothing to import into.</span>
         <Link className="navbtn" href="/">
           <span className="navbtn-icon">⌂</span>
           <span className="navbtn-text">Back to the dashboard</span>
@@ -321,7 +309,7 @@ export default function ImportPage() {
         <header className="topbar">
           <div className="brand">
             <h1>Import from Toggl</h1>
-            <p>Bring your Toggl Track history into this app&apos;s own store</p>
+            <p>Copy your Toggl Track history into this app</p>
           </div>
           <div className="topbar-actions">
             <Link className="navbtn" href="/" aria-label="Dashboard">
@@ -342,7 +330,7 @@ export default function ImportPage() {
           <h2>1 · Connect to Toggl</h2>
           {connected ? (
             <p className="hint">
-              Connected{connected.accountName ? ` as ${connected.accountName}` : ''} —{' '}
+              Connected{connected.accountName ? ` as ${connected.accountName}` : ''}.{' '}
               {connected.projects.length} active project
               {connected.projects.length === 1 ? '' : 's'} found.
             </p>
@@ -353,8 +341,7 @@ export default function ImportPage() {
                 <a href="https://track.toggl.com/profile" target="_blank" rel="noreferrer">
                   track.toggl.com/profile
                 </a>
-                , bottom of the page). It stays in this browser and is only used to read your
-                history through this app&apos;s own proxy.
+                , bottom of the page). It is not saved and is only used to read your history.
               </p>
               <div className="imp-connect">
                 <input
@@ -380,8 +367,8 @@ export default function ImportPage() {
           <section className="imp-card">
             <h2>2 · Map projects to workspaces</h2>
             <p className="hint">
-              Each Toggl project&apos;s entries land in the workspace you pick — an existing one,
-              a new one created with the project&apos;s name and color, or skipped entirely.
+              Pick where each project&apos;s entries go: an existing workspace, a new one with the
+              project&apos;s name and color, or nowhere.
             </p>
             <div className="imp-maptable">
               {rows.map((row) => (
@@ -398,7 +385,7 @@ export default function ImportPage() {
                       setChoices((prev) => ({ ...prev, [row.key]: e.target.value }))
                     }
                   >
-                    <option value="skip">Skip — don&apos;t import</option>
+                    <option value="skip">Skip</option>
                     <option value="new">➕ New workspace “{row.name}”</option>
                     {t.workspaces.map((w) => (
                       <option key={w.id} value={`ws:${w.id}`}>
@@ -436,11 +423,10 @@ export default function ImportPage() {
               </label>
             </div>
             <p className="hint">
-              History is fetched in ~90-day windows, oldest first — this range takes{' '}
-              <strong>{windowCount}</strong> Toggl request{windowCount === 1 ? '' : 's'} of the{' '}
-              {HOURLY_LIMIT}/hour budget ({t.reqThisHour} used in the last hour). Set an earlier
-              &ldquo;From&rdquo; if your history goes back further; empty windows are cheap. The
-              import is safe to re-run — entries already brought in are skipped, never duplicated.
+              This range takes <strong>{windowCount}</strong> Toggl request
+              {windowCount === 1 ? '' : 's'} (one per 90 days) of the {HOURLY_LIMIT}/hour budget
+              ({t.reqThisHour} used in the last hour). You can re-run the import safely: entries
+              already imported are skipped.
             </p>
 
             {phase === 'setup' && (
@@ -486,9 +472,8 @@ export default function ImportPage() {
                 )}
                 {phase === 'done' && (
                   <p className="imp-done">
-                    ✓ Import finished. Look around the <Link href="/tracker">Tracker</Link> — and
-                    check a historical week&apos;s <Link href="/timesheet">timesheet</Link> against
-                    what Toggl mode showed.
+                    ✓ Import finished. Open the <Link href="/tracker">Tracker</Link>, or compare a
+                    past week&apos;s <Link href="/timesheet">timesheet</Link> with Toggl.
                   </p>
                 )}
                 {phase === 'error' && runError && (

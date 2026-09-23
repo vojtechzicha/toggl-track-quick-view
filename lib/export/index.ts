@@ -1,6 +1,6 @@
-// Export orchestration: turn a built document into a downloaded file in the chosen
-// format. Format-specific work (and the heavy libraries it needs) lives behind the
-// individual serializers, which are dynamically imported on demand.
+// Export orchestration: serialize a built document in the chosen format and
+// download it. The XLSX and PDF serializers are imported on demand so their
+// libraries stay out of the main bundle.
 
 import { type ExportDoc, isEmptyDoc } from './model';
 import { toCSV } from './csv';
@@ -33,7 +33,7 @@ export function downloadBlob(blob: Blob, filename: string): void {
   document.body.appendChild(a);
   a.click();
   a.remove();
-  // Revoke after a tick so the download has reliably started.
+  // Revoke later so the download has started.
   setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
 
@@ -58,16 +58,13 @@ export async function serialize(
 }
 
 /**
- * What the export dialog asks for when the user wants the PDF signed. Absent —
- * which is the case for every other format, and for PDF with signing switched
- * off — and the export runs exactly as it always has.
+ * What the export dialog passes when the user wants the PDF signed; null for
+ * an unsigned export.
  *
- * The bridge and its certificate are chosen by the dialog rather than here:
- * that is where the user picks them, where a missing bridge has to be reported
- * before anything is generated, and where the certificate's CN is needed for
- * the preview. The types are referenced inline so this module keeps naming them
- * without importing the signing stage (and with it pdf-lib and PKI.js) into
- * every bundle that touches an export.
+ * The dialog picks the bridge and certificate, since it has to report a missing
+ * bridge before anything is generated and show the certificate's CN in the
+ * preview. The types are referenced inline so this module does not import the
+ * signing stage (pdf-lib, PKI.js) into every bundle that touches an export.
  */
 export interface SignRequest {
   appearance: import('./pdf/sign/types').SignatureAppearance;
@@ -79,16 +76,14 @@ export interface SignRequest {
   documentName?: string;
   /** Ask the configured TSA for an RFC 3161 token (PAdES-B-T); see ./pdf/sign/timestamp. */
   timestamp?: import('./pdf/sign/timestamp').TimestampOptions | false;
-  /** Told which level was actually produced, since a timestamp may fail after signing. */
+  /** Reports the level produced; the timestamp can fail after signing succeeds. */
   onLevel?: (level: 'B-B' | 'B-T', timestampError: Error | null) => void;
 }
 
 /**
- * Sign a rendered PDF, or hand it back untouched when there is nothing to sign.
- *
- * The signing stage is imported here and only here in the export path, so it
- * stays out of the bundle until an export actually asks for a signature — and
- * an unsigned export returns the very blob `serialize` produced, byte for byte.
+ * Sign a rendered PDF, or return it unchanged when there is nothing to sign.
+ * This is the only place the export path imports the signing stage, so it
+ * loads only when a signature is requested.
  */
 async function maybeSign(
   blob: Blob,
@@ -102,15 +97,13 @@ async function maybeSign(
   const { getTemplate } = await import('./pdf/templates');
   const template = getTemplate(pdfTemplateId);
   const widget = template.signatureWidget;
-  // A template with no reserved area cannot carry a widget; exporting it
-  // unsigned beats putting one somewhere arbitrary.
+  // No reserved area: export unsigned rather than place a widget arbitrarily.
   if (!widget) return blob;
 
   const { signPdf } = await import('./pdf/sign');
   return signPdf(blob, {
     widget,
-    // The stamp renders in the template's own cuts, so it reads as part of the
-    // document rather than pasted onto it.
+    // The stamp is set in the template's own fonts.
     loadFonts: template.loadFonts,
     appearance: request.appearance,
     bridge: request.bridge,
@@ -131,8 +124,8 @@ export async function runExport(
   sign: SignRequest | null = null
 ): Promise<boolean> {
   if (isEmptyDoc(doc)) return false;
-  // The filename is settled before signing, so the name a hardware bridge shows
-  // in its confirmation is the name the file will actually be saved under.
+  // Settled before signing so the name a bridge shows in its confirmation
+  // matches the saved file.
   const filename = exportFilename(doc, format);
   const blob = await maybeSign(
     await serialize(doc, format, pdfTemplateId),

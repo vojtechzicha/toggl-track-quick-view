@@ -1,12 +1,9 @@
-// Content checks for the Individual view's start-time window — the setting that
-// unlinks *when a line may start* from the unit its duration is rounded to. Run with:
-//   npm run check:windows
+// Checks for the Individual view's start-time window, which sets where a line
+// may start independently of the rounding unit. Run with `pnpm check:windows`.
 //
-// The load-bearing claims: durations keep rounding on the rounding unit (the window
-// never touches an hours figure), every displayed start lands on a window mark —
-// including a line pushed forward by the one before it, which moves on to the NEXT
-// mark rather than drifting off the window — and a window that isn't coarser than
-// the rounding unit is exactly the old linked behaviour.
+// Checked: durations still round on the rounding unit; every start is on a
+// window mark, including a line pushed forward by the previous one (it moves to
+// the next mark); and a window no coarser than the rounding unit has no effect.
 
 import assert from 'node:assert/strict';
 import { registerHooks } from 'node:module';
@@ -49,22 +46,21 @@ const ok = (cond: unknown, msg: string) => {
 
 {
   eq(startWindowUnitSeconds(null, 900), 900, 'no window: start times follow the rounding unit');
-  eq(startWindowUnitSeconds(undefined, 720), 720, 'same for settings stored before the window existed');
+  eq(startWindowUnitSeconds(undefined, 720), 720, 'same for an absent window');
   eq(startWindowUnitSeconds(0.5, 900), 1800, 'a coarser window is what the times snap to');
-  eq(startWindowUnitSeconds(0.25, 900), 900, 'a window equal to the unit is the linked default');
-  eq(startWindowUnitSeconds(0.25, 3600), 3600, 'a finer window can never take times off the unit');
+  eq(startWindowUnitSeconds(0.25, 900), 900, 'a window equal to the unit is the unit');
+  eq(startWindowUnitSeconds(0.25, 3600), 3600, 'a finer window falls back to the unit');
   eq(startWindowUnitSeconds(1, 720), 3600, 'the two grids need not divide each other');
 }
 
 // ---- the builder anchors starts to the window ----
 //
-// Every fixture and assertion below is written in *local* clock time, so the same
-// expectations must hold in any timezone. They're replayed in a few (including
-// half-hour offsets, where a grid laid over the epoch would land on :30 instead of
-// the promised :00) — Node re-reads process.env.TZ on the next Date call.
+// Fixtures and assertions use local clock time, so they must hold in every
+// timezone. They run in several, including half-hour offsets, where an
+// epoch-aligned grid would land on :30. Node re-reads process.env.TZ on the next
+// Date call.
 
-// Each with its July offset (minutes east of UTC), so the replay can prove it
-// really switched zone — half-hour offsets are the interesting ones here.
+// Each zone with its July offset (minutes east of UTC), to verify the switch.
 const TIMEZONES: [string, number][] = [
   ['UTC', 0],
   ['Europe/Prague', 120],
@@ -117,9 +113,8 @@ function scenarios(tz: string) {
   const minutes = (week: ReturnType<typeof build>) =>
     week.days.flatMap((d) => d.rows.map((r) => r.rounded / 60));
 
-  // 38 min then 30 min, on different codes so they stay two lines. Rounded on the
-  // 15-min unit the day totals 5 units (75 min): 45 min for the first line (it has
-  // the larger remainder) and 30 for the second.
+  // 38 min then 30 min on different codes, so two lines. On the 15-min unit the
+  // day is 75 min: 45 for the first line (larger remainder) and 30 for the second.
   const morning = [entry(1, [8, 0], [8, 38], 'D1'), entry(2, [8, 40], [9, 10], 'D2')];
 
   {
@@ -127,14 +122,14 @@ function scenarios(tz: string) {
     eq(
       spans(linked),
       ['08:00\u201308:45', '08:45\u201309:15'],
-      'no window: starts snap to the 15-min unit and pack forward, exactly as before' + where
+      'no window: starts snap to the 15-min unit and pack forward' + where
     );
     eq(minutes(linked), [45, 30], 'the day rounds to 45 + 30 min on the 15-min unit' + where);
   }
 
   {
-    // The second line's own mark (08:30) is already behind the first line's end
-    // (08:45), so it moves on to the NEXT half-hour rather than starting at 08:45.
+    // The second line's mark (08:30) is before the first line's end (08:45), so
+    // it moves to the next half-hour instead of starting at 08:45.
     const half = build(morning, 1800);
     eq(
       spans(half),
@@ -181,8 +176,8 @@ function scenarios(tz: string) {
   }
 
   {
-    // A line's own mark never leaves the day it was tracked on: 23:40 is nearest to
-    // tomorrow's 00:00 on both grids, so it falls back to the day's last mark.
+    // A line's start stays on its own day: 23:40 is nearest to tomorrow's 00:00
+    // on an hourly grid, so it falls back to the day's last mark.
     const late = [entry(3, [23, 40], [23, 55], 'D1')];
     eq(
       spans(build(late, 3600)),
@@ -194,8 +189,8 @@ function scenarios(tz: string) {
       ['23:45\u201300:00'],
       'the linked grid keeps its own nearest mark, which is still inside the day' + where
     );
-    // Nearest mark on the linked 15-min grid is tomorrow's 00:00 too, so the same
-    // clamp keeps this one on its own date (it used to be shown under the next day).
+    // 23:53 is nearest to 00:00 on the 15-min grid too, so the same clamp
+    // applies.
     const veryLate = [entry(4, [23, 53], [24, 10], 'D1')];
     eq(
       spans(build(veryLate, null)),
@@ -207,8 +202,7 @@ function scenarios(tz: string) {
 
 for (const [tz, offsetMin] of TIMEZONES) {
   process.env.TZ = tz;
-  // Guard the replay itself: a runtime that ignored the change would silently run
-  // the same zone four times and prove nothing.
+  // Verify the zone switched; otherwise every run would use the same zone.
   eq(
     0 - new Date(2026, 6, 6, 12, 0).getTimezoneOffset() || 0,
     offsetMin,

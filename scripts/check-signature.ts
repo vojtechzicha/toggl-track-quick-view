@@ -1,33 +1,23 @@
 // Checks the PDF signing stage (lib/export/pdf/sign). Run with:
-//   npm run check:signature
+//   pnpm check:signature
 //
-// It does two things:
+//  1. Signs the fixture document with the committed throwaway key and asserts
+//     what a validator cares about: widget placement, the appearance stream,
+//     exactly the three PAdES signed attributes, message-digest over the byte
+//     range, and a signature that verifies. Also asserts that with signing off
+//     the export is the template's own bytes.
 //
-//  1. Builds a signed timesheet report here and now, with the committed
-//     throwaway key, and asserts everything a validator would care about:
-//     where the widget landed, what the appearance stream looks like, that the
-//     signed attributes are EXACTLY the three PAdES allows, that the
-//     message-digest really is the digest of the signed byte range, and that
-//     the signature verifies against the certificate's public key. It also
-//     asserts the load-bearing negative — with signing off, the export is the
-//     template's own bytes, unchanged.
+//  2. Runs pyHanko over the committed scripts/fixtures/signed-report.pdf as an
+//     independent check (different language, ASN.1 stack and PDF parser).
+//     pyHanko checks crypto and trust, not profile conformance; that is the
+//     DSS validator's job (docs/pdf-signing-v2.md).
 //
-//  2. Runs pyHanko over the COMMITTED fixture
-//     (scripts/fixtures/signed-report.pdf), which is the independent
-//     opinion: a different language, a different ASN.1 stack, a different PDF
-//     parser. pyHanko checks crypto and trust and explicitly does not check
-//     profile conformance — that is the DSS validator's job, run by hand at
-//     milestones (see docs/pdf-signing-v2.md).
-//
-// pyHanko ships as the separate `pyhanko-cli` package these days. When it is
-// not installed the script says so and carries on: the assertions in (1) are
-// the ones that catch a regression, and a check chain that fails on a missing
-// Python tool would just be turned off.
+// Without the `pyhanko` binary (package `pyhanko-cli`), step 2 is skipped with a
+// message so a missing Python tool does not fail the check chain.
 
 import assert from 'node:assert/strict';
-// Types only — the VALUES come from the dynamic import below, because the
-// module resolution these modules need is registered by ./signatureFixture.ts
-// at run time and a static import would be resolved before that happens.
+// Types only: values come from dynamic imports, which must run after
+// ./signatureFixture.ts has installed the resolve hooks.
 import type * as PdfLib from '@cantoo/pdf-lib';
 import fs from 'node:fs';
 import { spawnSync } from 'node:child_process';
@@ -61,10 +51,8 @@ const { unsigned, signed, certificateDer, rect } = await buildFixture();
 
 // ---- signing is additive ----
 //
-// The whole design rests on this: turning signing off has to leave the export
-// exactly as it was. So the bytes the export path produces without a
-// SignRequest must be the template's own bytes, not a pdf-lib round trip of
-// them.
+// Without a SignRequest the export path must return the template's own bytes,
+// not a pdf-lib round trip of them.
 {
   const { toPDF } = await import('../lib/export/pdf/index.ts');
   const { serialize } = await import('../lib/export/index.ts');
@@ -76,10 +64,8 @@ const { unsigned, signed, certificateDer, rect } = await buildFixture();
     await (await serialize(fixtureDoc() as any, 'pdf', TEMPLATE_ID)).arrayBuffer()
   );
   ok(direct.length === viaExport.length, 'an unsigned export is the same size as toPDF output');
-  // pdfkit stamps the wall clock into /CreationDate and derives the trailer's
-  // /ID from it, so two renders a second apart differ in exactly those two
-  // places. Normalising them is what lets this compare all the rest byte for
-  // byte — which is the claim worth making.
+  // pdfkit writes the wall clock into /CreationDate and derives the trailer
+  // /ID from it. Normalise those two and compare the rest byte for byte.
   const withoutClock = (bytes: Uint8Array): string =>
     Buffer.from(bytes)
       .toString('latin1')
@@ -95,11 +81,8 @@ const { unsigned, signed, certificateDer, rect } = await buildFixture();
 
 // ---- the stamp's own styling ----
 //
-// STAMP_STYLE is the app's, not a pack's: the stamp is drawn by the signing
-// stage and has to look like something on a deployment with no template pack at
-// all. What a pack MAY do is name the family it wants the block set in
-// (SignatureWidget.fontFamily) — and whether its palette matches its own
-// templates is a claim only that pack can make, so it is checked there.
+// STAMP_STYLE belongs to the app, since a deployment may have no template pack.
+// A pack can only name the font family (SignatureWidget.fontFamily).
 {
   const { STAMP_STYLE } = await import('../lib/export/pdf/sign/types.ts');
   const { appearanceDocDefinition } = await import('../lib/export/pdf/sign/appearance.ts');
@@ -108,9 +91,8 @@ const { unsigned, signed, certificateDer, rect } = await buildFixture();
   const rect = { x: 0, y: 0, width: 216, height: 92 };
   const appearance = { ...DEFAULT_SIGNATURE_APPEARANCE, signerName: 'A Signer' };
 
-  // No family named: pdfmake stays on its bundled Roboto. Naming one that the
-  // template does not load would fail deep inside the renderer, so "leave it
-  // alone" has to be the default rather than a guessed family name.
+  // No family named: pdfmake stays on its bundled Roboto. Guessing a family
+  // the template does not load would fail inside the renderer.
   const plain = appearanceDocDefinition(rect, appearance);
   eq(plain.defaultStyle?.font, undefined, 'with no family named the stamp stays on pdfmake\u2019s default');
 
@@ -125,24 +107,21 @@ const { unsigned, signed, certificateDer, rect } = await buildFixture();
 
 // ---- the stamp fits its box ----
 //
-// The reserve arithmetic in appearance.ts is an estimate, and when it comes out
-// a point short the symptom is not a cramped stamp: pdfmake pushes the overflow
-// onto a SECOND page, only the first is embedded as the appearance, and the
-// date line — the one line a signature stamp cannot do without — disappears
-// with no error anywhere. So: the stamp must always be exactly one page.
+// The reserve arithmetic in appearance.ts is an estimate. If it comes out
+// short, pdfmake moves the overflow to a second page, only the first becomes
+// the appearance, and the date line disappears without error. So the stamp
+// must always be exactly one page.
 //
-// (Not assertable by extracting text from the signed PDF — an annotation's
-// appearance stream is not page content, so it does not come out that way.)
+// (Text extraction from the signed PDF cannot check this: an annotation's
+// appearance stream is not page content.)
 {
   const { PDFDocument } = await import('@cantoo/pdf-lib');
   const { renderAppearance } = await import('../lib/export/pdf/sign/appearance.ts');
   const { DEFAULT_SIGNATURE_APPEARANCE } = await import('../lib/export/pdf/sign/types.ts');
   const { PDF_TEMPLATES } = await import('../lib/export/pdf/templates.ts');
 
-  // The fixture's own signable template, plus any a configured pack contributes.
-  // The fixture one is what keeps this honest: a plain clone has no pack, and
-  // `PDF_TEMPLATES.filter(signatureWidget)` on its own would be an empty list
-  // that passes every assertion by making none.
+  // The fixture's signable template plus any from a configured pack. A plain
+  // clone has no pack, and without the fixture this loop would assert nothing.
   const signable = [fixtureTemplate(), ...PDF_TEMPLATES.filter((t) => t.signatureWidget)];
   ok(signable.length > 0, 'there is at least one signable template to check the stamp against');
 
@@ -151,10 +130,8 @@ const { unsigned, signed, certificateDer, rect } = await buildFixture();
     for (const layout of ['image-above', 'image-left'] as const) {
       for (const locale of ['en', 'cs'] as const) {
         for (const reason of ['', 'Approval of the monthly timesheet']) {
-          // `tpl.loadFonts` is passed for the same reason signPdf passes it: a
-          // widget may NAME a family (SignatureWidget.fontFamily) that only the
-          // template's own loader puts in the VFS, and naming one without
-          // loading it fails inside pdfmake rather than here.
+          // Pass the template's loader, as signPdf does: a family named in
+          // SignatureWidget.fontFamily is only in the VFS once it has run.
           const blob = await renderAppearance(
             tpl.signatureWidget!,
             {
@@ -189,10 +166,8 @@ const { unsigned, signed, certificateDer, rect } = await buildFixture();
 
 // ---- which signature images can be embedded ----
 //
-// pdfmake embeds images through PDFKit, which reads PNG and JPEG only — and its
-// callback API has no error channel, so anything else does not fail, it simply
-// never calls back. Every path an image can take into the appearance is guarded;
-// these assert the guard itself.
+// PDFKit reads only PNG and JPEG, and pdfmake never calls back on anything
+// else. These assert the guard.
 {
   const { isEmbeddableSignatureImage } = await import('../lib/export/pdf/sign/types.ts');
   const { appearanceDocDefinition } = await import('../lib/export/pdf/sign/appearance.ts');
@@ -202,7 +177,7 @@ const { unsigned, signed, certificateDer, rect } = await buildFixture();
     `data:${mime};base64,${Buffer.from(bytes).toString('base64')}`;
   const PNG = [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a];
   const JPEG = [0xff, 0xd8, 0xff, 0xe0, 0x00, 0x10, 0x4a, 0x46];
-  // "RIFF????WEBP" — what the picker used to accept.
+  // "RIFF????WEBP": a format browsers display but PDFKit cannot embed.
   const WEBP = [0x52, 0x49, 0x46, 0x46, 0x00, 0x00, 0x00, 0x00];
 
   ok(isEmbeddableSignatureImage(dataUrl('image/png', PNG)), 'a PNG is embeddable');
@@ -217,8 +192,8 @@ const { unsigned, signed, certificateDer, rect } = await buildFixture();
   ok(!isEmbeddableSignatureImage('data:image/png,%89PNG'), 'a non-base64 data URL is refused');
   ok(isEmbeddableSignatureImage(syntheticSignaturePng()), 'the fixture image is embeddable');
 
-  // The document definition refuses rather than handing pdfmake something it
-  // will silently never finish with.
+  // The document definition throws rather than hand pdfmake an image it will
+  // never finish rendering.
   assert.throws(
     () =>
       appearanceDocDefinition(
@@ -236,19 +211,17 @@ const { unsigned, signed, certificateDer, rect } = await buildFixture();
   const { PDF_TEMPLATES } = await import('../lib/export/pdf/templates.ts');
   const { widgetRectToPdf, widgetRectFits } = await import('../lib/export/pdf/sign/widget.ts');
 
-  // The invariant every widget must hold, whoever declared it. WHICH templates
-  // are signable is a pack's decision and is checked in the pack — the app has
-  // no opinion beyond "if you declare one, it has to fit".
+  // Every declared widget must fit its page. Which templates are signable is
+  // checked in the pack.
   for (const tpl of [fixtureTemplate(), ...PDF_TEMPLATES.filter((t) => t.signatureWidget)]) {
     const { rect: r, page } = tpl.signatureWidget!;
     ok(widgetRectFits(r, page), `${tpl.id}: the declared rect fits its declared page`);
     ok(r.width > 0 && r.height > 0, `${tpl.id}: the rect has a real area`);
   }
 
-  // A widget may name the family its stamp is set in, and that family has to be
-  // one the SAME template loads. Getting this wrong does not degrade gracefully:
-  // pdfmake throws "Font 'X' in style 'normal' is not defined in the font
-  // section" from inside the renderer, at signing time, after the PIN.
+  // A family named by the widget must be loaded by the same template.
+  // Otherwise pdfmake throws "Font 'X' in style 'normal' is not defined in the
+  // font section" at signing time, after the PIN.
   for (const tpl of PDF_TEMPLATES.filter((t) => t.signatureWidget?.fontFamily)) {
     const family = tpl.signatureWidget!.fontFamily!;
     ok(tpl.loadFonts, `${tpl.id}: names the stamp family ${family}, so it must load fonts`);
@@ -259,8 +232,7 @@ const { unsigned, signed, certificateDer, rect } = await buildFixture();
     );
   }
 
-  // The conversion itself: pdfmake measures down from the top-left, PDF up from
-  // the bottom-left. Asserted on a rectangle whose answer is obvious by hand.
+  // pdfmake measures down from the top-left, PDF up from the bottom-left.
   eq(
     widgetRectToPdf({ x: 10, y: 20, width: 100, height: 50 }, 800),
     [10, 730, 110, 780],
@@ -285,8 +257,7 @@ const { unsigned, signed, certificateDer, rect } = await buildFixture();
   const asNumbers = widgetRect.asArray().map((v) => (v as PdfLib.PDFNumber).asNumber());
   eq(asNumbers, rect, 'the widget sits at the rectangle the template declared');
 
-  // The widget must be on the LAST page: that is the half of the contract the
-  // template guarantees with its reserve node and page-break rule.
+  // The template's reserve node and page-break rule guarantee the last page.
   const lastPageRef = pages[pages.length - 1].ref;
   eq(
     (widget.get(PDFName.of('P')) as PdfLib.PDFRef)?.toString(),
@@ -315,8 +286,7 @@ const { unsigned, signed, certificateDer, rect } = await buildFixture();
     [rect[2] - rect[0], rect[3] - rect[1]],
     'the appearance BBox is the size of the widget rect, so it maps onto it 1:1'
   );
-  // The stamp embeds the signature image; if that path broke, the XObject
-  // resource would be gone and the block would print as text alone.
+  // Without the image XObject the block would print as text alone.
   const resources = apDict.lookup(PDFName.of('Resources'), PDFDict);
   ok(
     resources.lookupMaybe(PDFName.of('XObject'), PDFDict) != null,
@@ -358,8 +328,8 @@ const cms = (() => {
     Buffer.from(signed.subarray(a, a + b)),
     Buffer.from(signed.subarray(c, c + d)),
   ]);
-  // Everything except the hex string is covered — that is what "the signature
-  // covers the entire file" means, and what pyHanko reports separately below.
+  // Everything except the hex string is covered ("covers the entire file" in
+  // pyHanko's terms, checked below).
   eq(covered.length, signed.length - (c - b), 'exactly the placeholder is left out');
 
   const hex = text.slice(b + 1, c - 1).replace(/0+$/, '');
@@ -404,7 +374,7 @@ const cms = (() => {
     [...PADES_SIGNED_ATTRIBUTE_OIDS].sort(),
     'the signed attributes are exactly content-type, message-digest and signing-certificate-v2'
   );
-  // The rule this whole custom signer exists for. @signpdf/signer-p12 fails it.
+  // The reason for the custom signer: @signpdf/signer-p12 fails this.
   ok(
     !oids.includes('1.2.840.113549.1.9.5'),
     'there is NO signed signing-time attribute — PAdES baseline forbids it'
@@ -427,16 +397,16 @@ const cms = (() => {
     scv2Der.includes(certHash),
     'signing-certificate-v2 carries the SHA-256 of the signing certificate'
   );
-  // The serial has to survive the encoding — @peculiar/asn1-ess encodes it as 0
-  // if the raw INTEGER bytes are handed to its own IssuerSerial (see cms.ts).
+  // @peculiar/asn1-ess's own IssuerSerial encodes raw INTEGER bytes as 0 (see
+  // cms.ts).
   const serial = Buffer.from(new X509Certificate(fs.readFileSync(CERT_PEM)).serialNumber, 'hex');
   ok(
     scv2Der.includes(serial),
     'signing-certificate-v2 carries the certificate’s real serial number'
   );
 
-  // Finally: does it verify? The signature is over the DER SignedAttributes
-  // re-tagged as a SET, per RFC 5652 §5.4.
+  // The signature is over the DER SignedAttributes re-tagged as a SET, per
+  // RFC 5652 §5.4.
   const toBeSigned = Buffer.from(
     new asn1js.Set({ value: attrs.map((a) => a.toSchema()) }).toBER(false)
   );
@@ -447,7 +417,6 @@ const cms = (() => {
     'the signature verifies against the certificate’s public key'
   );
 
-  // The certificate travels with the signature, or nobody can check any of this.
   eq(
     signedData.certificates?.length,
     1,
@@ -457,11 +426,8 @@ const cms = (() => {
 
 // ---- timestamps (PAdES-B-T) ----
 //
-// A signature carries no trustworthy time of its own, so a certificate's expiry
-// silently takes every signature made under it with it. The RFC 3161 token is
-// what prevents that — and a token nobody verified prevents nothing, because a
-// well-formed token over the WRONG thing parses exactly as cleanly as a right
-// one. So the checks here are almost all about rejection.
+// A well-formed token over the wrong data parses as cleanly as a correct one,
+// so these checks are mostly about rejection.
 {
   const { readToken, requestTimestamp, TimestampError, SIGNATURE_TIMESTAMP_OID, buildCms } =
     await import('../lib/export/pdf/sign/index.ts');
@@ -485,8 +451,7 @@ const cms = (() => {
       why
     );
   };
-  // readToken is synchronous; assert.rejects needs a promise, so each case is
-  // wrapped. The point of each is the same: a response that parses fine.
+  // Each case below is a response that parses fine but must be refused.
   const refuses = (raw: Uint8Array, why: string) => {
     checks++;
     assert.throws(() => readToken(raw, imprint, nonce), { name: 'TimestampError' }, why);
@@ -518,11 +483,8 @@ const cms = (() => {
   );
   refuses(new Uint8Array([0x30, 0x03, 0x02, 0x01, 0x00]), 'a truncated response is refused');
 
-  // The transport, with the network stubbed. What is being checked is that the
-  // request is a DER TimeStampReq carrying the right imprint, and that the
-  // nonce the client generated is the one it then demands back — the fake TSA
-  // echoes whatever it is sent, so a client that failed to check would pass
-  // every case above and still be wrong here.
+  // The transport, with the network stubbed: the request is a DER TimeStampReq
+  // to our own proxy, and the stub echoes the request's nonce and imprint.
   {
     let sentTo = '';
     let sentBody = new Uint8Array();
@@ -545,8 +507,7 @@ const cms = (() => {
     eq(sentTo, '/api/timestamp', 'the request goes to our own proxy, never to a TSA directly');
     eq(sentBody[0], 0x30, 'and it is a DER TimeStampReq');
 
-    // The nonce has to differ per request, or two signatures could be given the
-    // same token by a TSA that caches.
+    // A fresh nonce per request, so a caching TSA cannot hand out one token twice.
     const first = new Uint8Array(sentBody);
     await requestTimestamp(signature, { fetchImpl: stub, endpoint: '/api/timestamp' });
     ok(
@@ -555,7 +516,7 @@ const cms = (() => {
     );
   }
 
-  // A TSA that answers with someone else's nonce must not produce a file.
+  // A TSA answering with another nonce fails the request end to end.
   {
     const liar = (async () =>
       new Response((await fakeTimestampResponse(signature, { nonce: new Uint8Array([7, 7]) })) as unknown as BodyInit, {
@@ -614,9 +575,8 @@ const cms = (() => {
       [SIGNATURE_TIMESTAMP_OID],
       'the token goes in as exactly one unsigned attribute, id-aa-signatureTimeStampToken'
     );
-    // The signed half must be untouched: the card signed those bytes and cannot
-    // be asked again, so a timestamp that changed them would invalidate the
-    // signature it was meant to strengthen.
+    // Adding the timestamp must not change the signed attributes or the
+    // signature, or the signature would no longer verify.
     eq(
       stampedSigner.signedAttrs?.attributes.map((a) => a.type),
       plainSigner.signedAttrs?.attributes.map((a) => a.type),
@@ -630,8 +590,7 @@ const cms = (() => {
     ok(stamped.length > plain.length, 'the timestamped CMS is the larger of the two');
   }
 
-  // A timestamp that fails must not cost the signature: by then the card has
-  // signed and the PIN is spent. The CMS still builds, one level lower.
+  // A failed timestamp still yields a CMS, at B-B: the card has already signed.
   {
     const degraded = await buildCms({
       certificate: certificateDer,
@@ -655,21 +614,18 @@ const cms = (() => {
   }
 }
 
-// ---- the bridge seam ----
+// ---- the bridges ----
 //
-// The hardware path minus the hardware. A token cannot be part of a check — it
-// needs a card, a PIN and a person — so what is pinned here is everything
-// around it: which bridges are offered and in what order, and the chain walk,
-// which is the one piece of pipeline only the hardware bridge exercises and the
-// one that decides whether a validator can build a path without the network.
+// A token needs a card, a PIN and a person, so this covers what surrounds it:
+// which bridges are offered and in what order, and the hardware bridge's chain
+// walk.
 {
   const { ExtensionBridge, WebCryptoBridge, availableBridges } = await import(
     '../lib/export/pdf/sign/bridge.ts'
   );
 
-  // isAvailable() runs before the user has asked for anything, on every bridge
-  // the dialog offers. It must answer rather than throw, whatever is or is not
-  // installed — here, nothing: there is no `chrome` outside a browser.
+  // isAvailable() must answer, not throw, whatever is installed. Outside a
+  // browser there is no `chrome` at all.
   const extension = new ExtensionBridge();
   eq(await extension.isAvailable(), false, 'the Sign Bridge bridge reports itself absent outside a browser');
   eq(
@@ -685,15 +641,11 @@ const cms = (() => {
     ['sign-bridge', 'webcrypto'],
     'the hardware bridge is preferred, and the throwaway one is always last'
   );
-  // Order is the whole point of this assertion: the export dialog offers the
-  // first bridge that reports itself available, so a throwaway key ending up
-  // ahead of a token would be a silent downgrade from a qualified signature to
-  // one that is not.
+  // The dialog offers the first available bridge, so the throwaway key ahead of
+  // a token would silently downgrade a qualified signature.
   eq(bridges[bridges.length - 1].id, 'webcrypto', 'the throwaway key is never preferred to hardware');
 
-  // The flag the export dialog warns off. A signature made with the throwaway
-  // key is a real signature and not a qualified one, and the certificate has to
-  // say so itself — the dialog must not be the only thing that knows.
+  // The export dialog warns based on these flags.
   const [throwaway] = await new WebCryptoBridge().listCertificates();
   eq(throwaway.qualified, false, 'the throwaway certificate does not claim to be qualified');
   eq(throwaway.forSignature, true, 'the throwaway certificate carries the non-repudiation bit');
@@ -702,9 +654,8 @@ const cms = (() => {
 
   // ---- the chain walk ----
   //
-  // A card carries its issuer's CA certificates alongside its own, so the chain
-  // the CMS embeds is built from the list already fetched rather than from a
-  // second round trip. What matters is that it climbs, stops, and never loops.
+  // Built from the certificates already listed. It must climb, stop, and never
+  // loop.
   const leaf = await chainFixtureCertificate('Leaf Signer', 'Fixture Issuing CA');
   const intermediate = await chainFixtureCertificate('Fixture Issuing CA', 'Fixture Root CA');
   const root = await chainFixtureCertificate('Fixture Root CA', 'Fixture Root CA');
@@ -730,8 +681,6 @@ const cms = (() => {
   eq(chain.length, 2, 'the walk climbs from the leaf to the root and stops there');
   eq(chain[0], intermediate, 'the issuing CA comes first — the chain is ordered leaf-outwards');
   eq(chain[1], root, 'and its own issuer follows');
-  // A self-issued certificate ends the walk. Without that, the root names
-  // itself as its issuer and the walk follows it to itself forever.
   eq(
     chain.some((der) => der === unrelated),
     false,
@@ -748,8 +697,7 @@ const cms = (() => {
     0,
     'an unknown certificate id yields nothing instead of guessing a chain'
   );
-  // The CMS ships [signerCert, ...chain] — repeating the leaf inside the chain
-  // would put it in the SignedData twice.
+  // The CMS ships [signerCert, ...chain], so a repeated leaf would appear twice.
   eq(
     (await full.certificateChain('leaf')).some((der) => der === leaf),
     false,
@@ -759,10 +707,8 @@ const cms = (() => {
 
 // ---- what a certificate says about itself ----
 //
-// The Sign Bridge helper reports raw DER and nothing derived from it, so every
-// descriptive field the picker shows — and the qualified claim it warns on —
-// is decided by ./certificateInfo.ts. That makes this the only place the
-// "is it a QES" question is answered, and the only place it can be checked.
+// The Sign Bridge host sends raw DER only, so every field the picker shows,
+// including the qualified claim, comes from certificateInfo.ts.
 {
   const { readCertificateInfo } = await import('../lib/export/pdf/sign/certificateInfo.ts');
 
@@ -770,17 +716,12 @@ const cms = (() => {
   eq(info.subjectCN, 'Throwaway Test Signer (NOT a qualified certificate)', 'the subject CN is read from the DER');
   eq(info.issuerCN, info.subjectCN, 'a self-signed certificate issues itself');
   ok(info.notBeforeMs > 0 && info.notAfterMs > info.notBeforeMs, 'validity comes out in the right order');
-  // ./throwaway.ts sets digitalSignature | nonRepudiation, which is the shape
-  // of a signing certificate.
+  // throwaway.ts sets digitalSignature | nonRepudiation.
   eq(info.forSignature, true, 'nonRepudiation is detected in the key usage');
-  // The load-bearing negative: a self-signed key made in a browser must never
-  // read as qualified, or the dialog stops warning about the one thing it
-  // exists to warn about.
+  // If this read as qualified, the dialog would stop warning.
   eq(info.qualified, false, 'and a throwaway certificate does not claim to be qualified');
 
-  // Never throws, whatever it is handed: a certificate this cannot read is
-  // still one the token might sign with, so the dialog shows blanks rather
-  // than losing the whole list.
+  // Never throws, so one unreadable certificate cannot hide the list.
   const garbage = readCertificateInfo(new Uint8Array([0x30, 0x03, 0x02, 0x01, 0x00]));
   eq(garbage.subjectCN, '', 'unparseable DER yields an empty CN rather than an exception');
   eq(garbage.qualified, false, 'and is not qualified');
@@ -789,11 +730,10 @@ const cms = (() => {
 
 // ---- the chain reaches the CMS ----
 //
-// A hardware bridge lists certificates without their issuing chains — fetching
-// one costs a round trip per certificate and only the chosen certificate needs
-// it — so signPdf() asks for it at signing time. That fallback exists solely
-// for the token path, which means nothing else would ever run it. Here a
-// stand-in bridge supplies a chain the same way FortifyBridge will.
+// A hardware bridge lists certificates without chains, and signPdf() asks for
+// the chosen one's chain at signing time. Only the hardware path does this, so
+// a stand-in bridge here supplies a chain through certificateChain() the way
+// ExtensionBridge does.
 {
   const sign = await import('../lib/export/pdf/sign/index.ts');
   const asn1js = await import('asn1js');
@@ -801,9 +741,8 @@ const cms = (() => {
 
   const inner = new sign.WebCryptoBridge({ ...SIGNER, keyPair: await loadFixtureKeyPair() });
   const [cert] = await inner.listCertificates();
-  // Any second certificate will do — what is being checked is that whatever
-  // certificateChain() returns ends up in the SignedData, not what it is. The
-  // signer's own certificate stands in for an issuer.
+  // The signer's own certificate stands in for an issuer: the check is only
+  // that whatever certificateChain() returns ends up in the SignedData.
   const issuerStandIn = cert.der;
 
   let asked = 0;
@@ -822,9 +761,7 @@ const cms = (() => {
     });
 
   const template = fixtureTemplate();
-  // Copied rather than passed straight through: `unsigned` is typed off a
-  // generic Uint8Array, and Blob's parameter insists on one backed by a plain
-  // ArrayBuffer.
+  // Copied because Blob's type wants a Uint8Array backed by a plain ArrayBuffer.
   const pdf = new Blob([new Uint8Array(unsigned)], { type: 'application/pdf' });
   const signedWithChain = await sign.signPdf(pdf, {
     widget: template.signatureWidget!,
@@ -835,15 +772,13 @@ const cms = (() => {
       locale: 'en',
     },
     bridge,
-    // Empty, exactly as a hardware bridge lists it.
+    // Empty, as a hardware bridge lists it.
     certificate: { ...cert, chain: [] },
     documentName: 'Timesheet 2026-08.pdf',
   });
 
   eq(asked, 1, 'the chain is fetched once, at signing time, not once per listed certificate');
-  // The name a hardware bridge shows in its confirmation window has to be the
-  // document's, not something the bridge made up — a window that cannot name
-  // what it is signing is not really asking anything.
+  // The hardware bridge's confirmation window shows this name.
   eq(
     signRequests.map((r) => r.documentName),
     ['Timesheet 2026-08.pdf'],
@@ -853,8 +788,7 @@ const cms = (() => {
   const text = Buffer.from(new Uint8Array(await signedWithChain.arrayBuffer())).toString('latin1');
   const range = /\/ByteRange\s*\[\s*\d+\s+(\d+)\s+(\d+)\s+\d+\s*\]/.exec(text);
   ok(range != null, 'the chained signature has a ByteRange');
-  // Between the two spans sits the hex string; the delimiters are the < and >
-  // just inside them.
+  // The hex string sits between the two spans, inside < and >.
   const [gapStart, gapEnd] = range!.slice(1).map(Number);
   const hex = text.slice(gapStart + 1, gapEnd - 1).replace(/0+$/, '');
   const der = Buffer.from(hex.length % 2 ? `${hex}0` : hex, 'hex');
@@ -881,8 +815,8 @@ const cms = (() => {
     console.log(
       'ℹ pyhanko not found — skipping the independent validation of ' +
         `${SIGNED_PDF.pathname}.\n` +
-        '  Install it with `pipx install pyhanko-cli` (the CLI ships separately from the\n' +
-        '  pyhanko library these days), or point PYHANKO at the binary.'
+        '  Install it with `pipx install pyhanko-cli` (the CLI is a separate package from\n' +
+        '  the pyhanko library), or point PYHANKO at the binary.'
     );
   } else {
     const run = spawnSync(

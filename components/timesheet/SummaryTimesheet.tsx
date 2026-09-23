@@ -8,15 +8,9 @@ import type { TimesheetViewProps } from './types';
 import CopyButton from './CopyButton';
 
 /**
- * Summary view: the week as a grid of days (columns) × rows. A row is normally a
- * (project, billing-tag) pair — a project is a group of billing tags, so the same
- * tag under two projects stays on two separate rows, each prefixed by its project
- * name. With a single project selected the prefix is suppressed. Each day's
- * entries for a row are combined into one cell — durations summed, descriptions
- * merged without repeats — and rounded to the configured unit so each day's cells
- * still add up to that day's rounded total (no accumulated drift).
- *
- * The grid is built by the shared `buildSummaryGrid` so exports match exactly.
+ * Summary view: the week as days (columns) × (project, billing code) rows, one
+ * merged and rounded cell per row and day. Built by buildSummaryGrid, which the
+ * exports also use.
  */
 export default function SummaryTimesheet({
   entries,
@@ -74,7 +68,7 @@ export default function SummaryTimesheet({
                 {grid.holidays.has(d) && (
                   <span
                     className="ts-holiday"
-                    title="Time off — no work expected; the weekly cap drops by a day's worth"
+                    title="Time off: no work expected. The weekly cap is one day lower."
                   >
                     holiday
                   </span>
@@ -92,23 +86,20 @@ export default function SummaryTimesheet({
                 : row === MULTIPLE
                 ? 'Multiple billing tags'
                 : null;
-            // A billable row trimmed to nothing for the whole week (e.g. an "(X)"
-            // buffer fully consumed by the overtime cap) is dropped, matching the
-            // export. Warning rows always stay so the problem keeps surfacing.
+            // Hide billable rows trimmed to zero for the week, as the export does.
+            // Warning rows always show.
             if (!warn && grid.rowTotals[ri] === 0) return null;
             const meta = grid.rowMeta.get(row);
             return (
               <tr key={row} className={warn ? 'ts-row-warn' : ''}>
                 <th className="ts-tag" scope="row">
                   {warn ? (
-                    <span className="tag-warn amber" title="Fix the billing tag in Toggl">
+                    <span className="tag-warn amber" title="Fix the billing tags on these entries">
                       ⚠ {warn}
                     </span>
                   ) : (
                     <>
-                      {/* The project prefix disambiguates a code shared by two
-                          projects; billing by project, the row IS the project,
-                          so prefixing it would just repeat the name. */}
+                      {/* No prefix when billing by project: the row is the project. */}
                       {multi && !billByProject && meta && (
                         <span className="ts-proj">{meta.projectName}: </span>
                       )}
@@ -158,7 +149,7 @@ export default function SummaryTimesheet({
           {grid.overtimeTotal > 0 && (
             <tr className="ts-row-overtime">
               <th className="ts-tag" scope="row">
-                <span className="ts-overtime" title="Tracked but not billed — over the weekly cap">
+                <span className="ts-overtime" title="Tracked but not billed: over the weekly cap">
                   Overtime (not billed)
                 </span>
               </th>

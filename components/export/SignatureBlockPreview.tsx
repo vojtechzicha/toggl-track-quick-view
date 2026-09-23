@@ -1,19 +1,12 @@
 'use client';
 
-// The export dialog's preview of the visible signature block.
+// The export dialog's preview of the visible signature block, drawn in HTML at
+// 1 pt = 1 px from the same appearance values and STAMP_STYLE measurements as
+// the pdfmake stamp (lib/export/pdf/sign/appearance.ts). Structural changes to
+// the stamp must be mirrored here.
 //
-// It draws the same block the signed PDF will carry, from the same appearance
-// values and the same measurements (STAMP_STYLE), at 1 pt = 1 px — so what is
-// on screen is the design at its printed size, not an impression of it.
-//
-// It is HTML rather than the stamp PDF in an iframe, which is what this started
-// as: at a couple of hundred points across, the browsers' built-in PDF
-// viewers ignore `#view=Fit` and
-// render the page at a zoom of their own, so the preview showed a corner of the
-// block blown up. The measurements are shared with the pdfmake definition, so
-// the two cannot drift on size or spacing — only a change to the pdfmake
-// *structure* needs mirroring here, and there is exactly one structure per
-// layout.
+// Not the stamp PDF in an iframe: at this size browsers' PDF viewers ignore
+// `#view=Fit` and zoom in on a corner.
 
 import {
   formatSignedAt,
@@ -86,15 +79,14 @@ export default function SignatureBlockPreview({ rect, appearance }: SignatureBlo
             height: innerHeight,
           }}
         >
-          {/* `contain` mirrors pdfmake's `fit`: scale down into the box, never up. */}
+          {/* `contain` mirrors pdfmake's `fit`: scale to the box, keeping the aspect ratio. */}
           <img
             alt=""
             src={appearance.image}
             style={{
               width: above ? innerWidth : innerWidth * imageColumnRatio,
-              // Same arithmetic as the exported stamp (see sign/appearance.ts):
-              // the detail lines take what they need and the image gets the
-              // rest, so the preview shows the proportions that will print.
+              // Same arithmetic as sign/appearance.ts: the detail lines take
+              // what they need and the image gets the rest.
               height: above
                 ? Math.max(
                     minImageHeight,

@@ -1,24 +1,20 @@
-// The PAdES CMS: a detached SignedData whose signed attributes are exactly the
-// three a baseline profile allows.
+// The PAdES CMS: a detached SignedData with exactly the signed attributes a
+// baseline profile allows.
 //
-// This is written by hand on PKI.js rather than taken from @signpdf/signer-p12,
-// which adds a signed signing-time attribute — ETSI EN 319 142-1 forbids that
-// in the baseline profiles, and a validator that enforces it reports the
-// signature as "not PAdES" rather than as invalid, which is the harder failure
-// to notice. The claimed time lives in the signature dictionary's /M entry
-// instead (see ./prepare.ts).
+// Built on PKI.js instead of @signpdf/signer-p12, which adds a signed
+// signing-time attribute. ETSI EN 319 142-1 forbids that in the baseline
+// profiles, and validators then report the signature as "not PAdES" rather
+// than invalid. The claimed time goes in the signature dictionary's /M
+// (./prepare.ts).
 //
-// The signed attributes, in the order RFC 5652 requires them to be DER-sorted:
+// Signed attributes:
 //
 //   content-type            id-data
 //   message-digest          SHA-256 over the PDF's signed byte range
 //   signing-certificate-v2  SHA-256 over the signer's certificate
 //
-// Nothing else. No signing-time, no content hints. The timestamp that makes a
-// B-T signature is here, but as an UNSIGNED attribute — which is the only place
-// it could go: it covers the signature value, so it cannot exist until after
-// the card has signed, and putting it among the signed attributes would mean
-// signing something that does not exist yet.
+// The B-T timestamp is an unsigned attribute: it covers the signature value, so
+// it can only be obtained after signing.
 
 import * as asn1js from 'asn1js';
 import * as pkijs from 'pkijs';
@@ -52,24 +48,19 @@ export interface BuildCmsInput {
   /** SHA-256 over the PDF's signed byte range. */
   messageDigest: Uint8Array;
   /**
-   * Produce an RSASSA-PKCS1-v1_5 signature over SHA-256 of the given bytes.
-   * The bytes are the DER SignedAttributes — this is where the token (or, in
-   * phase 2, WebCrypto) does its work; see ./bridge.ts.
+   * Produce an RSASSA-PKCS1-v1_5 signature over SHA-256 of the given bytes
+   * (the DER SignedAttributes). This is where the bridge signs; see
+   * ./tokenBridge.ts.
    */
   sign: (toBeSigned: Uint8Array) => Promise<Uint8Array>;
   /**
-   * Fetch an RFC 3161 token over the signature value, turning this into a
-   * PAdES-B-T signature. Omitted leaves it at B-B.
+   * Fetch an RFC 3161 token over the signature value, making the signature
+   * PAdES-B-T. Omitted leaves it at B-B.
    *
-   * Takes the signature rather than being handed a finished token, because the
-   * value to timestamp only exists in the middle of this function — after the
-   * card has signed and before the SignerInfo is assembled.
-   *
-   * Returning null yields a B-B signature. That is the contract rather than
-   * "throw on failure" for one reason: by the time this is called the card has
-   * already signed, and there is no way to un-spend that. Whether a missing
-   * timestamp is worth abandoning a real signature over is the caller's
-   * judgement, so the caller is the one that gets to decide — see ./signer.ts.
+   * A callback because the signature value only exists partway through this
+   * function. Returning null yields B-B: by the time this runs the card has
+   * signed, so the caller (./signer.ts) decides whether a missing timestamp is
+   * fatal.
    */
   timestamp?: (signature: Uint8Array) => Promise<Uint8Array | null>;
 }
@@ -86,10 +77,7 @@ const parseAsn1 = (der: Uint8Array): asn1js.AsnType => {
 /**
  * X.690 §11.6: the components of a SET OF are sorted in ascending order of
  * their encodings, an octet at a time, and a value that is a prefix of another
- * sorts first.
- *
- * Only strict validators check this, but the sort is cheap and the alternative
- * is a signature that verifies everywhere except the one place that matters.
+ * sorts first. Only strict validators check this.
  */
 function derSetOfOrder(a: Uint8Array, b: Uint8Array): number {
   const n = Math.min(a.length, b.length);
@@ -106,19 +94,16 @@ export async function sha256(data: Uint8Array): Promise<Uint8Array> {
 }
 
 /**
- * IssuerSerial that survives a real certificate serial number.
+ * IssuerSerial that encodes a real certificate serial number.
  *
  * @peculiar/asn1-ess declares `serialNumber` as a bare AsnPropTypes.Integer,
- * whose converter encodes through `+value`. Certificate serials arrive from
+ * whose converter encodes through `+value`. Serials arrive from
  * @peculiar/asn1-x509 as raw INTEGER content octets (up to 20 bytes, RFC 5280),
- * and `+arrayBuffer` is NaN — so the attribute would carry serial 0 and every
- * validator that checks signing-certificate-v2 against the signer's actual
- * certificate would reject the signature. pyHanko does; so does DSS.
+ * and `+arrayBuffer` is NaN, so the attribute would carry serial 0 and pyHanko
+ * and DSS reject the signature.
  *
- * Overriding toASN() is the library's own escape hatch: its serializer prefers
- * a value's toASN() over the declared schema, so the surrounding structure
- * still comes from the published ASN.1 module and only this one field is
- * encoded by hand.
+ * The library's serializer prefers a value's own toASN() over the declared
+ * schema, so only this field is encoded by hand.
  */
 class PadesIssuerSerial extends IssuerSerial {
   constructor(issuer: GeneralNames, serialNumber: ArrayBuffer) {
@@ -154,8 +139,8 @@ class PadesIssuerSerial extends IssuerSerial {
 async function signingCertificateV2(certificateDer: Uint8Array): Promise<Uint8Array> {
   const parsed = AsnConvert.parse(toArrayBuffer(certificateDer), AsnCertificate);
   const essCertId = new ESSCertIDv2({
-    // hashAlgorithm is left unset on purpose: it DEFAULTs to id-sha256, and DER
-    // requires a value equal to the default to be omitted.
+    // hashAlgorithm is left unset: it DEFAULTs to id-sha256, and DER requires a
+    // value equal to the default to be omitted.
     certHash: new OctetString(toArrayBuffer(await sha256(certificateDer))),
     issuerSerial: new PadesIssuerSerial(
       new GeneralNames([new GeneralName({ directoryName: parsed.tbsCertificate.issuer })]),
@@ -166,10 +151,8 @@ async function signingCertificateV2(certificateDer: Uint8Array): Promise<Uint8Ar
 }
 
 /**
- * Assemble the detached CMS SignedData for a prepared PDF.
- *
- * Returns the DER of the ContentInfo — exactly what goes into the signature
- * dictionary's /Contents.
+ * Assemble the detached CMS SignedData for a prepared PDF. Returns the DER of
+ * the ContentInfo, which goes into the signature dictionary's /Contents.
  */
 export async function buildCms(input: BuildCmsInput): Promise<Uint8Array> {
   const signerCert = new pkijs.Certificate({ schema: parseAsn1(input.certificate) });
@@ -196,8 +179,8 @@ export async function buildCms(input: BuildCmsInput): Promise<Uint8Array> {
     }),
   ];
 
-  // Sort once, and use the SAME order both for the bytes that get signed and
-  // for the attributes that ship — a verifier re-signs the order it receives.
+  // Use the same order for the signed bytes and the shipped attributes: a
+  // verifier re-encodes the attributes in the order it receives them.
   const sorted = attributes
     .map((attribute) => ({ attribute, der: new Uint8Array(attribute.toSchema().toBER(false)) }))
     .sort((a, b) => derSetOfOrder(a.der, b.der));
@@ -209,11 +192,9 @@ export async function buildCms(input: BuildCmsInput): Promise<Uint8Array> {
   );
   const signature = await input.sign(toBeSigned);
 
-  // The timestamp covers the signature VALUE — RFC 3161 via
-  // id-aa-signatureTimeStampToken, the definition of PAdES-B-T. Fetched here
-  // because this is the first moment the value exists, and stored unsigned
-  // because the card has already put its name to the bytes above and must not
-  // be asked again.
+  // PAdES-B-T: an RFC 3161 token over the signature value, stored as the
+  // unsigned attribute id-aa-signatureTimeStampToken so the signed bytes above
+  // are unchanged.
   const timestampToken = input.timestamp ? await input.timestamp(signature) : null;
 
   const signerInfo = new pkijs.SignerInfo({

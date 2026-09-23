@@ -1,5 +1,5 @@
-// Standalone store: stop the running entry (stop = now). 409 if the entry
-// isn't running. Returns the canonical stopped entry.
+// Standalone store: stop a running entry at now. 409 if it is not running.
+// Returns the stopped entry.
 
 import { NextRequest } from 'next/server';
 import { getStoreDb } from '@/lib/store/mongo';
@@ -27,8 +27,7 @@ export async function POST(
     if (doc.stop !== null) return jsonRes({ error: 'Entry is not running.' }, 409);
 
     const now = new Date();
-    // Never produce an empty span — a timer stopped within its first second
-    // still records one second.
+    // At least one second long.
     const stop = new Date(Math.max(now.getTime(), doc.start.getTime() + 1000));
     await entries.updateOne({ numericId: id }, { $set: { stop, updatedAt: now } });
     return Response.json(toTimeEntry({ ...doc, stop, updatedAt: now }));

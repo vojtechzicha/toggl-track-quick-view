@@ -1,8 +1,6 @@
 'use client';
 
-// Transient error toast for failed standalone-store mutations (entry edits on
-// the tracker, workspace CRUD in Settings on any page). Renders nothing while
-// there's no error; auto-dismisses after a few seconds, or on click.
+// Error toast for failed store mutations. Dismisses after 6s or on click.
 
 import { useEffect } from 'react';
 import type { UseTrackSource } from '@/lib/useTrackSource';

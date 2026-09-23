@@ -1,14 +1,11 @@
 'use client';
 
-// The tracker — standalone mode's replacement for the Toggl Track timer view.
+// Standalone mode's timer view: an add bar (timer or manual entry) above the
+// entry list, newest first, grouped by day within Saturday-start weeks.
 //
-// Add bar on top (timer or manual entry, billing-tag autocomplete), below it
-// the entry list newest-first, grouped by day inside Saturday-start weeks with
-// day/week totals. The current week comes live from the shared poll
-// (useTrackSource); older history is fetched on demand: the last ~14 days
-// (capped at 100 entries) load on open, scrolling extends the list in 14-day
-// chunks down to a 2-month horizon, and a "Load older" button moves the
-// horizon another 2 months at a time.
+// The poll window comes from useTrackSource. Older history loads on demand:
+// 14 days (max 100 entries) on open, then 14-day chunks on scroll down to a
+// 2-month horizon, which "Load older entries" moves back 2 months at a time.
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import Link from 'next/link';
@@ -24,8 +21,8 @@ import { fetchStoreEntries } from '@/lib/source/standalone';
 import { addDays, startOfDay, startOfWeek, fmtHM, type TimeEntry } from '@/lib/calc';
 
 const DAY_MS = 24 * 3600 * 1000;
-const CHUNK_MS = 14 * DAY_MS; // how much further back each scroll-load reaches
-const HORIZON_MS = 61 * DAY_MS; // ~2 months of auto-loading per "Load older"
+const CHUNK_MS = 14 * DAY_MS; // per scroll-load
+const HORIZON_MS = 61 * DAY_MS; // auto-load range per "Load older"
 const INITIAL_LIMIT = 100;
 const CHUNK_LIMIT = 500;
 
@@ -70,9 +67,9 @@ export default function TrackerPage() {
 
   // ---- Older history (before the shared poll's window) ----
   const [older, setOlder] = useState<TimeEntry[]>([]);
-  // Everything down to this ms is loaded; the next chunk continues from here.
+  // Loaded back to this ms; the next chunk continues from here.
   const [oldestLoaded, setOldestLoaded] = useState<number | null>(null);
-  // Auto-loading (scroll) stops at this horizon; the button pushes it back.
+  // Scroll auto-loading stops here; the button moves it back.
   const [autoLimit, setAutoLimit] = useState(0);
   const [loadingOlder, setLoadingOlder] = useState(false);
   const [olderError, setOlderError] = useState<string | null>(null);
@@ -84,14 +81,13 @@ export default function TrackerPage() {
     initializedRef.current = true;
     const now = Date.now();
     setAutoLimit(now - HORIZON_MS);
-    const end = pollWindow(new Date(now)).startMs; // the live poll covers from here on
+    const end = pollWindow(new Date(now)).startMs; // the poll covers the rest
     const from = Math.min(now - CHUNK_MS, end);
     setLoadingOlder(true);
     fetchStoreEntries(new Date(from).toISOString(), new Date(end).toISOString(), INITIAL_LIMIT)
       .then((res) => {
         setOlder(res);
-        // A full page means there may be more inside the window — continue from
-        // the oldest entry we actually got instead of skipping past it.
+        // A full page may be truncated: continue from its oldest entry.
         setOldestLoaded(
           res.length === INITIAL_LIMIT
             ? Math.min(...res.map((e) => Date.parse(e.start)))
@@ -129,8 +125,7 @@ export default function TrackerPage() {
     }
   }, [loadingOlder, oldestLoaded]);
 
-  // Auto-load older chunks while the bottom sentinel is visible, until the
-  // horizon; the "Load older" button then extends the horizon.
+  // Auto-load while the bottom sentinel is visible, down to the horizon.
   useEffect(() => {
     const el = sentinelRef.current;
     if (!el || oldestLoaded === null || oldestLoaded <= autoLimit) return;
@@ -145,7 +140,7 @@ export default function TrackerPage() {
   const merged = useMemo(() => {
     const byId = new Map<number, TimeEntry>();
     for (const e of older) byId.set(e.id, e);
-    for (const e of entries) byId.set(e.id, e); // the live poll wins on overlap
+    for (const e of entries) byId.set(e.id, e); // poll data wins
     return [...byId.values()];
   }, [older, entries]);
 
@@ -173,7 +168,7 @@ export default function TrackerPage() {
         ? 'Last week'
         : `${fmtDay(ws)} – ${fmtDay(addDays(ws, 6))}`;
 
-    // Newest first; the running entry pins to the top of its (today's) group.
+    // Newest first; the running entry on top.
     const sorted = [...merged].sort((a, b) => {
       const ra = isRunning(a) ? 1 : 0;
       const rb = isRunning(b) ? 1 : 0;
@@ -204,14 +199,14 @@ export default function TrackerPage() {
     return out;
   }, [merged, nowMs]);
 
-  // ---- Mutations: keep the page-owned older list reconciled ----
+  // ---- Mutations: keep the older list in step ----
   const pollStartMs = nowMs ? pollWindow(new Date(nowMs)).startMs : 0;
   const syncOlder = useCallback(
     (ce: TimeEntry | null) => {
       if (!ce) return;
       setOlder((prev) => {
         if (prev.some((e) => e.id === ce.id)) return prev.map((e) => (e.id === ce.id ? ce : e));
-        // A backdated creation that the hook's poll window won't cover.
+        // A backdated entry outside the poll window.
         if (Date.parse(ce.start) < pollStartMs) return [...prev, ce];
         return prev;
       });
@@ -227,12 +222,9 @@ export default function TrackerPage() {
 
   const handleContinue = (e: TimeEntry) => {
     const workspaceId = e.project_id ?? defaultWorkspaceId;
-    // Continuing copies the entry's tags — except into a workspace that bills
-    // by project, whose entries carry none. An older (or imported) entry can
-    // still hold a billing tag from before the switch, and the tracker shows no
-    // tag control there to notice or clear it, so a copy would quietly seed
-    // stale codes that only resurface if the workspace goes back to billing by
-    // code.
+    // Copy the tags, except in a workspace that bills by project. Its older
+    // entries may still carry billing tags, and the tracker shows no tag
+    // control there to clear them.
     return t.startTimer({
       description: e.description ?? '',
       tags: billsByProject(workspaces, workspaceId) ? [] : e.tags ?? [],
@@ -240,9 +232,7 @@ export default function TrackerPage() {
     });
   };
 
-  // First run: nothing to track against yet — open settings, where the
-  // Workspaces section creates the first workspace (same as the dashboard's
-  // pick-a-project prompt).
+  // No workspaces yet: open Settings to create one.
   useEffect(() => {
     if (ready && standalone && workspaces.length === 0) setShowSettings(true);
   }, [ready, standalone, workspaces.length, setShowSettings]);
@@ -255,10 +245,7 @@ export default function TrackerPage() {
   if (!standalone) {
     return (
       <div className="center-msg" style={{ flexDirection: 'column', gap: 12 }}>
-        <span>
-          The tracker is part of standalone mode — this deployment reads from Toggl Track, so
-          tracking happens in Toggl itself.
-        </span>
+        <span>This deployment reads from Toggl Track. Track your time in Toggl.</span>
         <Link className="navbtn" href="/">
           <span className="navbtn-icon">⌂</span>
           <span className="navbtn-text">Back to the dashboard</span>
@@ -277,7 +264,7 @@ export default function TrackerPage() {
             <h1>Tracker</h1>
             <p>
               {hasWorkspace
-                ? `${workspaces.length} workspace${workspaces.length > 1 ? 's' : ''} · entries sync every 30s`
+                ? `${workspaces.length} workspace${workspaces.length > 1 ? 's' : ''}`
                 : 'No workspaces yet'}
             </p>
           </div>
@@ -320,7 +307,7 @@ export default function TrackerPage() {
             <div className="tr-list">
               {weeks.length === 0 && !loadingOlder && (
                 <div className="center-msg" style={{ height: 'auto' }}>
-                  No entries yet — start the timer above.
+                  No entries yet. Start the timer above.
                 </div>
               )}
               {weeks.map((w) => (
@@ -376,7 +363,7 @@ export default function TrackerPage() {
                     Load older entries
                   </button>
                 ) : (
-                  // While above the horizon, this sentinel auto-loads on scroll.
+                  // Auto-loads on scroll until the horizon.
                   <div ref={sentinelRef} className="tr-sentinel" aria-hidden="true" />
                 )}
               </div>
@@ -388,7 +375,7 @@ export default function TrackerPage() {
           {fetchError ? (
             <span className="err">{fetchError}</span>
           ) : (
-            <span>Synced every 30s · instantly after every change</span>
+            <span>Refreshes every 30s and after each change</span>
           )}
           <LastUpdated lastUpdatedMs={lastUpdatedMs} nowMs={nowMs} refreshSec={effectiveRefreshSec} />
         </footer>

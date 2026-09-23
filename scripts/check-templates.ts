@@ -1,12 +1,7 @@
-// Registry invariants every PDF template must satisfy, its own or a pack's.
-// Run with:
-//   npm run check:templates
-//
-// The export dialog is driven entirely by what a template declares, and a
-// template that declares something impossible fails at the worst moment — the
-// user has picked a range, waited for the fetch and pressed Export. Everything
-// here is cheap and holds for any template, so it runs against whatever the
-// registry contains, pack included.
+// Invariants every registered PDF template must satisfy, the app's or a
+// pack's (`pnpm check:templates`). The export dialog is driven by template
+// declarations, and a bad one would otherwise surface only when someone
+// presses Export.
 
 import assert from 'node:assert/strict';
 import type { IndividualDoc, SummaryDoc } from '../lib/export/model.ts';
@@ -29,9 +24,7 @@ const KNOWN_FIELDS = ['role', 'company', 'client', 'approver', 'reference', 'eng
 ok(PDF_TEMPLATES.length >= 1, 'the registry is never empty');
 ok(APP_TEMPLATES.length >= 1, 'this repository ships at least one template of its own');
 
-// An id is what a device remembers as its last pick, so two templates sharing
-// one means the second is unreachable — silently, and only for the people whose
-// stored pick happens to be that id.
+// Ids are remembered as a device's pick; a duplicate makes the second unreachable.
 const ids = PDF_TEMPLATES.map((t) => t.id);
 ok(new Set(ids).size === ids.length, `template ids are unique (${ids.join(', ')})`);
 
@@ -55,8 +48,7 @@ for (const tpl of PDF_TEMPLATES) {
   );
 }
 
-// The default has to resolve, and an unknown id has to fall back rather than
-// throw — a device keeps its pick across a pack being added or removed.
+// The default resolves, and an unknown id (a pick from a removed pack) falls back.
 ok(
   PDF_TEMPLATES.some((t) => t.id === DEFAULT_TEMPLATE_ID),
   `the default template id "${DEFAULT_TEMPLATE_ID}" is in the registry`
@@ -65,9 +57,8 @@ ok(getTemplate('no-such-template').id === DEFAULT_TEMPLATE_ID, 'an unknown id fa
 
 // ---- every template builds every view ----
 //
-// The fixtures are fully typed on purpose: a template reads whatever the model
-// carries, so a field added to ExportDoc and not to these would leave the
-// registry checked against a document no template ever actually receives.
+// The fixtures are fully typed so that a field added to ExportDoc must be
+// added here too.
 
 const DAY = new Date(2026, 6, 6).getTime();
 
@@ -154,17 +145,14 @@ const summaryDoc: SummaryDoc = {
   grandTotal: 3 * 3600,
 };
 
-// A range with nothing in it is reachable from the dialog (a month before the
-// engagement started, a holiday week) and must still produce a document.
+// An empty range (e.g. a holiday week) must still build.
 const emptyDoc: IndividualDoc = { ...individualDoc, days: [], grandTotal: 0 };
 
-// And a time-only document: a template that prints fees must not assume a rate.
+// A time-only document: templates that print fees must not assume a rate.
 const noRateDoc: IndividualDoc = { ...individualDoc, rate: null, currency: '' };
 
-// A workspace that doesn't use billing codes bills by PROJECT: every row's code
-// is its project's name (billingCode === project), and `billByProject` says so
-// for a template that heads the column. A template may ignore the flag, but it
-// must still build — the codes it prints are simply project names.
+// Billing by project: each row's code is its project name
+// (billingCode === project). Templates may ignore the flag but must build.
 const byProjectDoc: SummaryDoc = {
   ...summaryDoc,
   billByProject: true,

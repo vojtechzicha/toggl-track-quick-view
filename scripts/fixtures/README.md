@@ -1,53 +1,45 @@
 # Signature fixtures
 
-Test material for `npm run check:signature` (see `../check-signature.ts`).
+Test material for `pnpm check:signature` (`../check-signature.ts`).
 
 | File | What it is |
 |---|---|
 | `throwaway-signer-key.pem` | An RSA-2048 private key. **Not a secret.** |
-| `throwaway-signer-cert.pem` | The self-signed certificate derived from it. |
-| `signed-report.pdf` | A timesheet report signed with that key, as the app signs it. |
+| `throwaway-signer-cert.pem` | The self-signed certificate for that key. |
+| `signed-report.pdf` | A timesheet report signed with that key, the way the app signs. |
 
-## The private key is committed on purpose
+## Why the private key is committed
 
-It exists to be published. It signs nothing but this fixture, it chains to
-nothing anyone trusts, and its certificate says so in its own common name —
-*Throwaway Test Signer (NOT a qualified certificate)*. Committing it is what
-makes the fixture reproducible and the check runnable anywhere, with no key
-management and nothing to leak.
+It signs only this fixture and chains to nothing trusted; its certificate's
+common name is *Throwaway Test Signer (NOT a qualified certificate)*. Committing
+it makes the fixture reproducible and the check runnable anywhere.
 
-The real signing key is the opposite in every respect: it lives on a certified
-hardware token, never leaves it, and is reached through a `TokenBridge`
-(`lib/export/pdf/sign/bridge.ts`). Nothing in this directory is ever a step
-towards that key.
+The real signing key stays on a hardware token and is reached through a
+`TokenBridge` (`lib/export/pdf/sign/bridge.ts`). Nothing here relates to it.
 
-The user's handwritten signature scan is **not** here and never will be — it is
-loaded at export time and is gitignored. The fixture draws its own synthetic
-scrawl instead, so the image path is still exercised.
+The user's handwritten signature scan is gitignored and never committed. The
+fixture draws a synthetic one so the image path is still tested.
 
 ## Regenerating
 
 ```sh
-npm run make:signature-fixture
+pnpm make:signature-fixture
 ```
 
-Rewrites the certificate and the signed PDF from the committed key. Everything
-that would otherwise vary — serial, validity, signing instant, document
-contents — is pinned in `../signatureFixture.ts`, so a diff in
-`signed-report.pdf` beyond its `/CreationDate` and trailer `/ID` means the
-way this app signs has actually changed. That is worth reading before
-committing.
+Rewrites the certificate and the signed PDF from the committed key. Serial,
+validity, signing time and content are pinned in `../signatureFixture.ts`, so
+any diff in `signed-report.pdf` beyond `/CreationDate` and the trailer `/ID`
+means the signing output has changed. Review it before committing.
 
 ## Validating by hand
 
 ```sh
-pipx install pyhanko-cli    # the CLI ships separately from the pyhanko library
+pipx install pyhanko-cli    # the CLI is packaged separately from the library
 pyhanko sign validate --pretty-print --trust throwaway-signer-cert.pem signed-report.pdf
 ```
 
-`check:signature` runs the same command when `pyhanko` is on `PATH` (or at
-`$PYHANKO`) and skips it, loudly, when it is not.
+`check:signature` runs the same command when `pyhanko` is on `PATH` (or set in
+`$PYHANKO`) and prints a notice when it skips it.
 
-pyHanko checks cryptography and trust; it explicitly does not check profile
-conformance. For that — "is this really PAdES-BASELINE-B?" — use the EU DSS
-demo validator, by hand at milestones. See `docs/pdf-signing-v2.md`.
+pyHanko checks cryptography and trust, not PAdES profile conformance. For that,
+use the EU DSS demo validator by hand. See `docs/pdf-signing-v2.md`.

@@ -20,9 +20,8 @@ import InstallAppBlock from '@/components/InstallAppBlock';
 export type TimesheetMode = 'summary' | 'individual';
 
 /**
- * A project the user has selected to track. Name and color are denormalised
- * (copied from the Toggl project list) so chips and timesheet prefixes render
- * before — or without — a fresh project fetch.
+ * A tracked project. Name and color are copied from the project list so chips
+ * and timesheet prefixes render without a fresh fetch.
  */
 export interface SelectedProject {
   id: number;
@@ -32,77 +31,54 @@ export interface SelectedProject {
 
 export interface SettingsValue {
   token: string;
-  // One or more projects that together count as "the project". A single
-  // selection behaves exactly as before; multiple are an advanced option.
+  // One or more projects that together count as "the project".
   selectedProjects: SelectedProject[];
-  // Optional label shown as the title when more than one project is selected
-  // (falls back to a generic title + initials chips when blank).
+  // Title when several projects are selected; blank shows initials chips.
   groupName: string;
   shortFriday: boolean;
-  // The master weekly target (hours). Scales the whole targets model; default 40.
+  // Weekly target in hours (default 40). Scales every other target.
   weeklyHours: number;
-  // Advanced overrides. null = follow the weekly value proportionally; a number =
-  // that absolute hours value, which stays put when weeklyHours later changes.
+  // null = scale with weeklyHours; a number = fixed hours.
   maxBillableHours: number | null;
   minWorkingDayHours: number | null;
-  // The prefix that marks a tag as a billing tag (default "D", e.g. "D123").
+  // Prefix that marks a tag as a billing tag (default "D", as in "D123").
   billingTagPrefix: string;
-  // When true, this workspace doesn't use billing codes at all: every entry
-  // bills to its PROJECT instead. The timesheet groups per project, nothing is
-  // ever flagged as untagged/multi-tagged, and all billing-code machinery —
-  // the tag prefix, support-ticket brackets, the "(X)"/"(!)" markers, the
-  // parentheses strip and linked billing codes — is ignored. Off by default.
+  // Bill every entry to its project and ignore the billing-code layer (prefix,
+  // ticket brackets, "(X)"/"(!)" markers, parentheses strip, linked codes).
   billByProject: boolean;
-  // When true, billing codes are used without their parenthetical groups — a
-  // tag like "D123 (Phase 2)" bills and displays as "D123". The overtime
-  // markers "(X)"/"(!)" are interpreted first, then the strip runs, then the
-  // code is used, so the markers keep working. Off by default.
+  // Drop parenthetical groups from codes ("D123 (Phase 2)" → "D123"). The
+  // "(X)"/"(!)" markers are read before the strip, so they keep working.
   stripCodeParens: boolean;
-  // The tag that marks an entry as time off (default ".Time Off"). Its day
-  // becomes a non-working day like a weekend — 0h target, the weekly goal and
-  // the no-overtime cap drop by a day's worth — and the entry itself is never
-  // billed, counted or exported. Other entries on that day still count in full.
+  // Tag that marks a day as time off (default ".Time Off"). The day counts
+  // like a weekend and the marker entry is never billed, counted or exported.
   timeOffTag: string;
-  // Granularity the timesheet rounds entries to, in hours. 0.25 (15 min) by
-  // default; some clients can't enter quarter-hours, so 0.2 (12 min) is offered,
-  // and coarser 0.5 (30 min) / 1 (whole hour) grids for clients that bill that way.
+  // Rounding unit in hours: 0.25 (default), 0.2, 0.5 or 1.
   roundingHours: number;
-  // Grid the Individual view anchors a line's start time to, in hours. null (the
-  // default) keeps it linked to roundingHours — 15-min rounding, times on
-  // :00/:15/:30/:45. A coarser window (e.g. 0.5 with 0.25 rounding) serves clients
-  // that take quarter-hour durations but only accept starts at :00 or :30.
+  // Grid the Individual view anchors start times to, in hours. null = same as
+  // roundingHours. A coarser window serves clients that take quarter-hour
+  // durations but only accept starts on :00/:30.
   startWindowHours: number | null;
-  // Optional cap (characters) on every merged timesheet description — some
-  // clients' systems reject longer entry messages. null = no limit. When set,
-  // combined descriptions keep whole parts that fit and drop the rest behind a
-  // "; …" marker (see lib/timesheet/desc).
+  // Character cap on merged descriptions; null = no limit (see
+  // lib/timesheet/desc).
   maxDescriptionLength: number | null;
-  // When true, the engagement disallows billing overtime: the timesheet caps each
-  // week's billable total at weeklyHours, trimming lines down (codes marked with a
-  // trailing "(X)" first) and showing the stripped time on an "Overtime" line.
+  // Cap each week's billed total at weeklyHours; the excess goes on an
+  // "Overtime" line. "(X)" codes are trimmed first.
   noOvertime: boolean;
-  // Linked billing codes: selected projects whose entries carry another client's
-  // billing tags (their own prefix and rounding grid) and bill on this timesheet
-  // as one fixed code per day (see lib/timesheet/mapping).
+  // Projects that carry another client's billing tags (own prefix and grid)
+  // and bill here as one fixed code per day (see lib/timesheet/mapping).
   codeMappings: CodeMapping[];
   refreshSec: number;
   timesheetMode: TimesheetMode;
-  // Name printed on exports (PDF header). Blank falls back to the Toggl account name.
+  // Name in the PDF header. Blank falls back to the Toggl account name.
   exportName: string;
-  // The export dialog's identity fields (company, client, rate, engagement note
-  // …). Edited in the dialog rather than in this panel, but part of the value —
-  // and therefore of every workspace snapshot — because they describe the
-  // engagement being billed, not the device (see lib/exportFields).
+  // The export dialog's identity fields (lib/exportFields). Edited in the
+  // dialog, but stored here so each workspace snapshot keeps its own.
   exportFields: ExportFieldValues;
 }
 
 /**
- * The settings a stored workspace captures: everything the user configures here
- * except the Toggl token (the account credential, shared across workspaces) and
- * the refresh interval (a device/network knob, not part of "a workspace"). A
- * workspace is a named snapshot you can recall from the panel's Workspaces list
- * to quick-switch between configurations (e.g. different clients with their own
- * targets/billing).
+ * What a stored workspace captures: all settings except the token (shared
+ * across workspaces) and the refresh interval (per device).
  */
 export type PresetValue = Omit<SettingsValue, 'token' | 'refreshSec'>;
 
@@ -110,12 +86,10 @@ export interface SettingsPreset {
   id: string;
   name: string;
   value: PresetValue;
-  // Standalone mode only: the stored workspace's chip color (server-assigned
-  // from a palette, editable here). Toggl-mode presets don't carry one.
+  // Standalone mode only: chip color, assigned by the server, editable here.
   color?: string;
 }
 
-/** Snapshot the preset-relevant fields out of a full settings value. */
 export function toPresetValue(s: SettingsValue): PresetValue {
   return {
     selectedProjects: s.selectedProjects,
@@ -140,13 +114,10 @@ export function toPresetValue(s: SettingsValue): PresetValue {
 }
 
 /**
- * Whether a settings value currently matches a stored workspace. Projects are
- * compared by id set only (names/colors are denormalised and can drift as Toggl
- * changes), so recalling a workspace keeps reading as "active" after a refresh.
- * The export identity fields are deliberately NOT compared: the export dialog
- * writes them straight back into the active workspace, so they can never be the
- * thing that makes a recalled workspace stop reading as active — and this
- * function is what identifies that workspace in the first place.
+ * Whether a settings value matches a stored workspace. Projects compare by id
+ * only, since names and colors can change in Toggl. Export fields are not
+ * compared: the export dialog writes them into the active workspace, so they
+ * must not make it stop reading as active.
  */
 export function presetMatches(value: PresetValue, s: SettingsValue): boolean {
   const ids = (ps: SelectedProject[]) =>
@@ -154,9 +125,8 @@ export function presetMatches(value: PresetValue, s: SettingsValue): boolean {
       .map((p) => p.id)
       .sort((a, b) => a - b)
       .join(',');
-  // Order-insensitive mapping comparison; `?? []` covers presets stored before
-  // linked codes existed, and the overtime fields normalise so presets stored
-  // before those existed still match their unchanged settings.
+  // Order-insensitive. The `??` fallbacks here and below cover presets stored
+  // before a field existed.
   const maps = (ms: CodeMapping[] | undefined) =>
     (ms ?? [])
       .map(
@@ -174,16 +144,11 @@ export function presetMatches(value: PresetValue, s: SettingsValue): boolean {
     value.maxBillableHours === s.maxBillableHours &&
     value.minWorkingDayHours === s.minWorkingDayHours &&
     value.billingTagPrefix === s.billingTagPrefix &&
-    // `?? false` covers presets stored before projects-only billing existed.
     (value.billByProject ?? false) === (s.billByProject ?? false) &&
-    // `?? false` covers presets stored before the parentheses strip existed.
     (value.stripCodeParens ?? false) === (s.stripCodeParens ?? false) &&
-    // `?? default` covers presets stored before the time-off tag existed.
     (value.timeOffTag ?? DEFAULT_TIME_OFF_TAG) === (s.timeOffTag ?? DEFAULT_TIME_OFF_TAG) &&
     value.roundingHours === s.roundingHours &&
-    // `?? null` covers presets stored before the start window existed.
     (value.startWindowHours ?? null) === (s.startWindowHours ?? null) &&
-    // `?? null` covers presets stored before the description limit existed.
     (value.maxDescriptionLength ?? null) === (s.maxDescriptionLength ?? null) &&
     value.noOvertime === s.noOvertime &&
     maps(value.codeMappings) === maps(s.codeMappings) &&
@@ -192,7 +157,6 @@ export function presetMatches(value: PresetValue, s: SettingsValue): boolean {
   );
 }
 
-/** A stable id for a new workspace (falls back when crypto.randomUUID is absent). */
 function genPresetId(): string {
   if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
     return crypto.randomUUID();
@@ -202,20 +166,18 @@ function genPresetId(): string {
 
 const WEEKLY_MIN = 1;
 const WEEKLY_MAX = 80;
-const STEP = 0.25; // 15-minute granularity for every hours field
+const STEP = 0.25; // hours fields use 15-minute steps
 
-/** Round to the nearest quarter-hour and keep it within [min, max]. */
 function clampQuarter(n: number, min: number, max: number): number {
   return Math.min(max, Math.max(min, Math.round(n / STEP) * STEP));
 }
 
-/** A compact numeric label without a trailing "h", e.g. 4 → "4", 2.5 → "2.5". */
+/** 4 → "4", 2.5 → "2.5" (no "h"). */
 function numLabel(n: number): string {
   return String(Number(n.toFixed(2)));
 }
 
-// The description-length field: empty (or unparseable) = no limit; otherwise a
-// whole character count of at least 5 (the fitted text needs room for "; …").
+// Empty or unparseable = no limit. Minimum 5 leaves room for the "; …" marker.
 const MAX_DESC_LEN_MIN = 5;
 function parseMaxDescLen(s: string): number | null {
   const n = parseInt(s, 10);
@@ -223,15 +185,13 @@ function parseMaxDescLen(s: string): number | null {
   return Math.max(MAX_DESC_LEN_MIN, n);
 }
 
-// Dropdown label for a rounding granularity in hours. Whole hours read naturally
-// ("1 hour"); sub-hour units show minutes with the hour value in parentheses.
+// "1 hour", or "15 minutes (0.25h)".
 function roundingLabel(hours: number): string {
   if (Number.isInteger(hours)) return `${hours} hour${hours === 1 ? '' : 's'}`;
   return `${Math.round(hours * 60)} minutes (${numLabel(hours)}h)`;
 }
 
-// The clock marks an hour's worth of a grid falls on (":00, :15, :30, :45"). Every
-// offered granularity divides an hour, so one hour spells the whole grid out.
+// ":00, :15, :30, :45". Every offered unit divides an hour evenly.
 function gridMarks(hours: number): string {
   const mins = Math.round(hours * 60);
   const marks: string[] = [];
@@ -239,21 +199,19 @@ function gridMarks(hours: number): string {
   return marks.join(', ');
 }
 
-// Dropdown label for a start-time window, spelled out as the clock marks a
-// timesheet line may begin on ("Every 30 minutes (:00, :30)").
+// "Every 30 minutes (:00, :30)".
 function startWindowLabel(hours: number): string {
   const mins = Math.round(hours * 60);
   return `${mins === 60 ? 'Every hour' : `Every ${mins} minutes`} (${gridMarks(hours)})`;
 }
 
-// Inline phrasing of a grid unit for prose ("1-hour", "60 min"), used in warnings.
+// "1-hour" or "15-min", for inline prose.
 function gridLabel(hours: number): string {
   if (Number.isInteger(hours)) return `${hours}-hour`;
   return `${Math.round(hours * 60)}-min`;
 }
 
-// Each option's implied requests/hour, so the user can see the budget impact
-// (Toggl Free allows 30/hour).
+// Labels show the requests/hour each costs (Toggl Free allows 30/hour).
 const REFRESH_OPTIONS = [
   { sec: 60, label: '1 min — ~60/hr (paid plans only)' },
   { sec: 120, label: '2 min — ~30/hr (at the Free limit)' },
@@ -301,59 +259,45 @@ export default function SettingsPanel({
 }: {
   initial: SettingsValue;
   projects: TrackProject[];
-  // Whether the project list has been successfully fetched. Distinguishes "still
-  // loading" from "loaded and genuinely empty" — an empty workspace is a real
-  // state (e.g. every project archived) that must still render archived rows.
+  // The project list has been fetched. Tells "loading" apart from "empty"
+  // (e.g. every project archived), which must still show archived rows.
   projectsLoaded: boolean;
   serverManaged: boolean;
-  // Which track source the deployment runs. In standalone mode the "projects"
-  // are stored workspaces, the token/refresh UI disappears, and the Workspaces
-  // section below manages server documents through the onWorkspace* callbacks
-  // instead of the localStorage preset list.
+  // In standalone mode the "projects" are stored workspaces, the token and
+  // refresh UI are hidden, and the Workspaces section uses onWorkspace*.
   mode?: SourceMode;
-  // When non-null, the shared server cache governs the refresh cadence (in
-  // seconds) and the per-device refresh picker is hidden.
+  // Server cache interval in seconds. When set, the refresh picker is hidden.
   cacheInterval: number | null;
   authError: string | null;
   connecting: boolean;
-  // Stored workspaces and a callback that persists the list. Workspace edits are
-  // committed immediately (independent of the Save button below) — they're meta,
-  // not part of the settings being edited. In standalone mode `presets` is the
-  // server workspace list mapped to this shape and onPresetsChange is unused.
+  // Stored workspaces. Edits persist at once, independent of Save. In
+  // standalone mode these are the server's workspaces and onPresetsChange is
+  // unused.
   presets: SettingsPreset[];
   onPresetsChange: (presets: SettingsPreset[]) => void;
-  // Recall a workspace live (persist its settings immediately), so clicking one
-  // in the list switches there at once.
+  // Switch to a workspace and persist it immediately.
   onApply: (preset: SettingsPreset) => void;
   onConnect: (token: string) => void;
   onSave: (value: SettingsValue) => void;
   onClose: () => void;
   canClose: boolean;
-  // Standalone mode: the workspace whose settings the form currently mirrors
-  // (the "active" row in the Workspaces list below). A workspace can't be
-  // linked onto its own timesheet, so it's excluded from the mapping picker.
+  // Standalone mode: the active workspace, excluded from the linked-codes
+  // picker (it can't link onto its own timesheet).
   activeWorkspaceId?: number | null;
-  // Which stored workspace the saved settings mirror, by id — the wiring
-  // resolves it from the one that was recalled, which content comparison alone
-  // cannot do when two workspaces differ only in their export details. Marks
-  // the row below; omitted (undefined) falls back to comparing content.
+  // The active workspace by id. Needed when two workspaces differ only in
+  // export details. Undefined falls back to presetMatches.
   activePresetId?: string | null;
-  // Opened from the topbar switcher's "Manage workspaces…" rather than the gear:
-  // the Workspaces section starts expanded and the panel scrolls to it, instead
-  // of landing at the top of the form with the section collapsed far below.
+  // Opened from the topbar's "Manage workspaces…": expand that section and
+  // scroll to it.
   openWorkspaces?: boolean;
-  // Standalone-mode workspace CRUD. Create resolves the stored workspace (as a
-  // preset) so the form can switch to it, or null when the call failed. Delete
-  // resolves whether the workspace was actually deleted (the wiring may cancel
-  // via a confirm dialog), so the form only drops its references when it was.
+  // Standalone-mode workspace CRUD. Create resolves the new workspace, or null
+  // on failure. Delete resolves false when the user cancelled a confirm.
   onWorkspaceCreate?: (name: string, settings: PresetValue) => Promise<SettingsPreset | null>;
   onWorkspaceRecapture?: (id: string, settings: PresetValue) => void;
   onWorkspaceRename?: (id: string, name: string) => void;
   onWorkspaceDelete?: (id: string) => Promise<boolean>;
   onWorkspaceColor?: (id: string, color: string) => void;
-  // ---- Cross-device settings sync (the "Sync & transfer" section) ----
-  // Read-only state mirrored from useTrackSource().sync; the callbacks below
-  // act on it. All optional so pages/tests without sync render unchanged.
+  // ---- "Sync & transfer" section, mirrored from useTrackSource().sync ----
   sync?: {
     enabled: boolean;
     misconfigured: string | null;
@@ -363,11 +307,10 @@ export default function SettingsPanel({
     lastSyncedAt: number | null;
     conflict: { rev: number; updatedAt: string; device: string } | null;
   } | null;
-  // One-shot message from the wiring (e.g. "settings file imported") shown in
-  // the section — survives the form remount that follows an import/resolve.
+  // Success message from the wiring; outlives the remount after an import.
   syncNotice?: string | null;
   onSyncResolve?: (choice: 'remote' | 'local') => void;
-  // The password mini-form (browser-token Toggl mode has no page-level gate).
+  // Password form (browser-token mode has no page-level gate).
   onSyncPassword?: (password: string) => void;
   syncPwBusy?: boolean;
   syncPwError?: string | null;
@@ -379,19 +322,14 @@ export default function SettingsPanel({
     initial.selectedProjects.map((p) => p.id)
   );
   const [groupName, setGroupName] = useState(initial.groupName);
-  // The multiselect is an advanced affordance: it shows once the user opts in
-  // via "more than one", or whenever more than one project is already selected.
-  // It auto-collapses back to the plain dropdown the moment the selection drops
-  // to a single project.
   const [multiExpanded, setMultiExpanded] = useState(initial.selectedProjects.length > 1);
   const [shortFriday, setShortFriday] = useState(initial.shortFriday);
   const [refreshSec, setRefreshSec] = useState(initial.refreshSec);
   const [timesheetMode, setTimesheetMode] = useState<TimesheetMode>(initial.timesheetMode);
   const [exportName, setExportName] = useState(initial.exportName);
 
-  // Hours fields are kept as raw strings so a half-typed value (e.g. "3.") never
-  // snaps mid-edit; they're parsed and clamped on save. An empty advanced field
-  // means "auto" (null) — it then follows the weekly value proportionally.
+  // Hours fields stay raw strings so a half-typed "3." doesn't snap; they are
+  // parsed and clamped on save. An empty override means null (auto).
   const [weeklyStr, setWeeklyStr] = useState(numLabel(initial.weeklyHours));
   const [maxBillStr, setMaxBillStr] = useState(
     initial.maxBillableHours === null ? '' : numLabel(initial.maxBillableHours)
@@ -400,18 +338,15 @@ export default function SettingsPanel({
     initial.minWorkingDayHours === null ? '' : numLabel(initial.minWorkingDayHours)
   );
   const [billingPrefix, setBillingPrefix] = useState(initial.billingTagPrefix);
-  // `!!` covers settings stored before projects-only billing existed.
+  // `!!`, `??` and `== null` below cover settings stored before a field existed.
   const [billByProject, setBillByProject] = useState(!!initial.billByProject);
-  // `!!` covers settings stored before the parentheses strip existed.
   const [stripCodeParens, setStripCodeParens] = useState(!!initial.stripCodeParens);
   const [timeOffTag, setTimeOffTag] = useState(initial.timeOffTag ?? DEFAULT_TIME_OFF_TAG);
   const [roundingHours, setRoundingHours] = useState(initial.roundingHours);
-  // `?? null` covers settings stored before the start window existed (null = the
-  // start times follow the rounding unit, as they always did).
   const [startWindowHours, setStartWindowHours] = useState<number | null>(
     initial.startWindowHours ?? null
   );
-  // Kept as a raw string like the hours fields; empty = no limit (null).
+  // Raw string like the hours fields; empty = no limit.
   const [maxDescLenStr, setMaxDescLenStr] = useState(
     initial.maxDescriptionLength == null ? '' : String(initial.maxDescriptionLength)
   );
@@ -435,30 +370,22 @@ export default function SettingsPanel({
   const standalone = mode === 'standalone';
   const tokenConnected = projects.length > 0;
 
-  // Previously selected projects that no longer appear in the fetched list —
-  // archived (or deleted) at the source. They keep a row in the checklist so the
-  // user can keep or drop them, but a drop is one-way: only the live list can
-  // (re)select a project, so an unchecked archived row is disabled rather than
-  // removed. Gated on a completed fetch (not list length: a successful fetch may
-  // genuinely return no active projects) so a still-loading list doesn't mark
-  // the whole selection archived.
+  // Selected projects missing from the fetched list (archived or deleted). They
+  // keep a checklist row so they can be dropped; once unchecked they can't be
+  // re-selected, so the row is disabled. Gated on projectsLoaded so a loading
+  // list doesn't mark everything archived.
   const archivedSelected = projectsLoaded
     ? initial.selectedProjects.filter((sp) => !projects.some((p) => p.id === sp.id))
     : [];
 
-  // Archived leftovers keep the picker visible even when the active list is
-  // empty (e.g. every selected project has since been archived) — otherwise
+  // Archived rows keep the picker visible even with an empty active list, or
   // they could never be unchecked.
   const showProjects = serverManaged || tokenConnected || archivedSelected.length > 0;
-  // What a selectable item is called in this mode. In standalone the app's own
-  // stored workspaces fill the "project" slot (same numeric-id contract).
+  // In standalone mode stored workspaces fill the "project" slot.
   const itemNoun = standalone ? 'workspace' : 'project';
 
-  // Show the multiselect once opted into, or whenever more than one is selected.
-  // Staying open while editing is deliberate: collapsing the instant the count
-  // hits one would make it impossible to pick a second project. It returns to the
-  // plain dropdown when Settings is reopened with a single project saved (see the
-  // multiExpanded initial value).
+  // Stays open while editing even at one selection, or a second could never be
+  // picked. Reopening Settings with one project saved shows the dropdown.
   const multiMode = multiExpanded || selectedIds.length > 1;
 
   const toggleProject = (id: number) => {
@@ -467,52 +394,40 @@ export default function SettingsPanel({
     );
   };
 
-  // The weekly value currently being edited (clamped), used to live-preview the
-  // proportional defaults shown as placeholders in the advanced fields.
+  // Clamped weekly value, used to preview the scaled defaults in placeholders.
   const parsedWeekly = parseFloat(weeklyStr);
   const previewWeekly = Number.isFinite(parsedWeekly)
     ? clampQuarter(parsedWeekly, WEEKLY_MIN, WEEKLY_MAX)
     : DEFAULT_WEEKLY_HOURS;
 
-  // Start-time windows worth offering: only grids coarser than the rounding unit
-  // currently picked (anything else is the linked default). A window that stops
-  // qualifying because the unit grew simply drops out of the list — and out of the
-  // saved value, which buildValue resolves the same way.
+  // Only windows coarser than the rounding unit. One that stops qualifying
+  // drops out of the list and, via buildValue, out of the saved value.
   const startWindowOptions = START_WINDOW_HOURS_OPTIONS.filter((h) => h > roundingHours);
   const selectedStartWindow =
     startWindowHours != null && startWindowHours > roundingHours ? startWindowHours : null;
 
-  // Build the settings value from the current form state (parsing/clamping the
-  // raw fields). Shared by Save and by "store as a workspace", so a workspace
-  // snapshots exactly what the form would save.
+  // Shared by Save and "store as a workspace", so both capture the same value.
   const buildValue = (): SettingsValue => {
-    // Resolve each selected id to its full {id, name, color} from the loaded list,
-    // falling back to whatever we already had stored (covers an archived project
-    // that no longer appears in the active list).
+    // Fall back to the stored entry for archived projects.
     const selectedProjects: SelectedProject[] = selectedIds.map((id) => {
       const proj = projects.find((p) => p.id === id);
       if (proj) return { id: proj.id, name: proj.name, color: proj.color };
       return initial.selectedProjects.find((p) => p.id === id) ?? { id, name: '' };
     });
     const weeklyHours = previewWeekly;
-    // An empty (or unparseable) advanced field is "auto" (null); otherwise clamp
-    // the override to a quarter-hour within [min, weeklyHours]. The Friday floor
-    // may be set to 0 ("no floor — show whatever's actually left, even nothing"),
-    // but the billable cap keeps a quarter-hour minimum (a 0h cap is meaningless).
+    // Empty or unparseable = null (auto); otherwise clamp to [min, weeklyHours].
+    // The Friday floor may be 0 (no floor); the billable cap can't.
     const parseOverride = (s: string, min: number): number | null => {
       const n = parseFloat(s);
       if (s.trim() === '' || !Number.isFinite(n)) return null;
       return clampQuarter(n, min, weeklyHours);
     };
-    // Guard against a stray value; only the offered granularities are valid.
     const finalRounding = ROUNDING_HOURS_OPTIONS.includes(
       roundingHours as (typeof ROUNDING_HOURS_OPTIONS)[number]
     )
       ? roundingHours
       : DEFAULT_ROUNDING_HOURS;
-    // Start times follow the rounding unit unless an offered, strictly coarser
-    // window was picked — anything else *is* the linked behaviour, so it's stored
-    // as null rather than as a window that happens to match the unit.
+    // Anything but an offered, strictly coarser window is stored as null.
     const finalStartWindow =
       startWindowHours != null &&
       START_WINDOW_HOURS_OPTIONS.includes(
@@ -521,11 +436,9 @@ export default function SettingsPanel({
       startWindowHours > finalRounding
         ? startWindowHours
         : null;
-    // Linked codes: keep only complete rows on selected projects (one per
-    // project). A grid that would take figures off this sheet's rounding unit is
-    // coerced to the sheet's own — the equality with the sub-client sheet only
-    // works when its rounded totals still land on this grid. The sub-client's
-    // weekly cap is clamped like the main weekly field.
+    // Keep complete rows on selected projects, one per project. An
+    // incompatible grid falls back to this sheet's unit: the linked totals must
+    // land on this sheet's grid to match the other sheet.
     const seenMapped = new Set<number>();
     const cleanedMappings: CodeMapping[] = [];
     for (const m of codeMappings) {
@@ -549,8 +462,7 @@ export default function SettingsPanel({
       });
     }
     return {
-      // In server-managed mode the token always stays empty so the proxy uses
-      // the server's TOGGL_API_TOKEN.
+      // Empty so the proxy uses the server's TOGGL_API_TOKEN.
       token: serverManaged ? '' : token,
       selectedProjects,
       groupName: selectedProjects.length > 1 ? groupName.trim() : '',
@@ -560,8 +472,8 @@ export default function SettingsPanel({
       minWorkingDayHours: parseOverride(minDayStr, 0),
       // An empty prefix would match every tag, so fall back to the default.
       billingTagPrefix: billingPrefix.trim() || DEFAULT_BILLING_TAG_PREFIX,
-      // The code-specific settings (prefix, strip, linked codes) keep their
-      // stored values while hidden by this — turning it back off restores them.
+      // Code settings keep their values while hidden, so turning this off
+      // restores them.
       billByProject,
       stripCodeParens,
       // An empty tag can't mark anything, so fall back to the default.
@@ -574,18 +486,15 @@ export default function SettingsPanel({
       refreshSec,
       timesheetMode,
       exportName: exportName.trim(),
-      // Not edited here — the export dialog owns these. Passed through from the
-      // live prop (not a mount-time snapshot) so saving, or storing a new
-      // workspace, carries whatever the dialog last wrote.
+      // Owned by the export dialog. Read from the live prop so Save carries
+      // whatever the dialog last wrote.
       exportFields: initial.exportFields ?? EMPTY_EXPORT_FIELDS,
     };
   };
 
   const handleSave = () => onSave(buildValue());
 
-  // Which export-dialog details currently carry a value. Shown (read-only) next
-  // to "Name on exports" so the panel says what the active workspace would
-  // print, without duplicating the dialog's inputs.
+  // Export-dialog fields that have a value, listed read-only in the panel.
   const setExportFieldLabels = (
     [
       ['company', 'company'],
@@ -602,13 +511,11 @@ export default function SettingsPanel({
     .map(([, label]) => label);
 
   // ---- Linked billing codes ----
-  // Rows are edited freely (a half-filled row is fine mid-edit); buildValue keeps
-  // only complete rows on selected projects when saving.
+  // Half-filled rows are fine while editing; buildValue drops them.
   //
-  // What a row may target: in Toggl mode the tracked projects (membership in the
-  // tracked set holds by construction); in standalone mode every OTHER workspace
-  // — a mapped workspace's entries must load with this sheet's, so picking one
-  // adds it to the tracked set (the standalone equivalent of the same rule).
+  // Toggl mode targets the tracked projects. Standalone mode targets any other
+  // workspace and adds it to the tracked set, since its entries must load with
+  // this sheet's.
   const mappingCandidateIds = standalone
     ? projects.map((p) => p.id).filter((id) => id !== activeWorkspaceId)
     : selectedIds;
@@ -628,7 +535,7 @@ export default function SettingsPanel({
     if (free) ensureSelected(free);
     setCodeMappings((ms) => [
       ...ms,
-      // New rows start on this sheet's own grid — always compatible.
+      // New rows start on this sheet's grid
       {
         projectId: free ?? 0,
         tagPrefix: '',
@@ -645,8 +552,7 @@ export default function SettingsPanel({
     `#${id}`;
 
   // ---- Sync & transfer ----
-  // Starts open when there's something that needs the user's eyes (a notice
-  // from an import/resolve, or a pending conflict keeps it forced open below).
+  // Starts open on a notice; a pending conflict forces it open below.
   const [syncOpen, setSyncOpen] = useState(!!syncNotice);
   const [syncPw, setSyncPw] = useState('');
   const [importMsg, setImportMsg] = useState<string | null>(null);
@@ -655,19 +561,15 @@ export default function SettingsPanel({
   const handleImportFile = async (file: File) => {
     if (!onImportFile) return;
     const err = await onImportFile(file);
-    // Success is reported via syncNotice (the form remounts); only errors
-    // survive locally.
+    // Success arrives as syncNotice after the remount; errors stay local.
     if (err) setImportMsg(err);
   };
 
   // ---- Workspaces (stored settings) ----
-  // Starts open on a fresh standalone install (creating the first workspace is
-  // the very first thing to do) and whenever the panel was opened *for* this
-  // section; user toggling owns it from then on.
+  // Starts open on a fresh standalone install (first task: create a workspace)
+  // or when opened for this section.
   const [wsOpen, setWsOpen] = useState(openWorkspaces || (standalone && presets.length === 0));
-  // The section sits near the bottom of a long form, so opening it isn't enough
-  // — scroll it into the panel's viewport too. Mount-time intent only (the prop
-  // is fixed for the panel's lifetime), which is why this runs once.
+  // The section is far down the form, so scroll to it too.
   const wsSectionRef = useRef<HTMLDetailsElement>(null);
   useEffect(() => {
     if (!openWorkspaces) return;
@@ -677,8 +579,7 @@ export default function SettingsPanel({
   const [renamingId, setRenamingId] = useState<string | null>(null);
   const [renameText, setRenameText] = useState('');
 
-  // Load a stored workspace back into the form. Doesn't save on its own — the
-  // list's recallPreset pairs it with onApply to also switch live at once.
+  // Load a workspace into the form without saving (recallPreset also saves).
   const applyPresetToForm = (v: PresetValue) => {
     setSelectedIds(v.selectedProjects.map((p) => p.id));
     setGroupName(v.groupName);
@@ -690,17 +591,15 @@ export default function SettingsPanel({
     setMaxBillStr(v.maxBillableHours === null ? '' : numLabel(v.maxBillableHours));
     setMinDayStr(v.minWorkingDayHours === null ? '' : numLabel(v.minWorkingDayHours));
     setBillingPrefix(v.billingTagPrefix);
-    setBillByProject(!!v.billByProject); // presets stored before projects-only billing existed
-    setStripCodeParens(!!v.stripCodeParens); // presets stored before the strip existed
-    // `??` covers presets stored before the time-off tag existed.
+    // Fallbacks cover presets stored before a field existed.
+    setBillByProject(!!v.billByProject);
+    setStripCodeParens(!!v.stripCodeParens);
     setTimeOffTag(v.timeOffTag ?? DEFAULT_TIME_OFF_TAG);
     setRoundingHours(v.roundingHours);
-    // `?? null` covers presets stored before the start window existed.
     setStartWindowHours(v.startWindowHours ?? null);
-    // `== null` covers presets stored before the description limit existed.
     setMaxDescLenStr(v.maxDescriptionLength == null ? '' : String(v.maxDescriptionLength));
     setNoOvertime(v.noOvertime);
-    setCodeMappings(v.codeMappings ?? []); // presets stored before linked codes existed
+    setCodeMappings(v.codeMappings ?? []);
     if (
       v.maxBillableHours !== null ||
       v.minWorkingDayHours !== null ||
@@ -719,14 +618,14 @@ export default function SettingsPanel({
     }
   };
 
-  // In standalone mode these operate on server workspace documents through the
-  // onWorkspace* callbacks; in Toggl mode they edit the localStorage preset list.
+  // Standalone mode: server workspaces via onWorkspace*. Toggl mode: the
+  // localStorage preset list.
   const addPreset = async () => {
     const name = newPresetName.trim();
     if (!name) return;
     if (standalone) {
-      // The server snapshots the current form's settings but points the new
-      // workspace's selection at ITSELF; on success the form switches to it.
+      // The server copies the form's settings but points the new workspace's
+      // selection at itself. The form then switches to it.
       const created = await onWorkspaceCreate?.(name, toPresetValue(buildValue()));
       if (!created) return;
       applyPresetToForm(created.value);
@@ -750,9 +649,7 @@ export default function SettingsPanel({
     if (standalone) {
       const deleted = (await onWorkspaceDelete?.(id)) ?? false;
       if (deleted) {
-        // Drop the form's own references to the deleted workspace (tracked
-        // selection, linked billing code) — mirroring the strip the server
-        // performed on the stored settings.
+        // Mirror the server: drop references to the deleted workspace.
         const numId = Number(id);
         setSelectedIds((prev) => prev.filter((x) => x !== numId));
         setCodeMappings((ms) => ms.filter((m) => m.projectId !== numId));
@@ -777,8 +674,7 @@ export default function SettingsPanel({
     }
     setRenamingId(null);
   };
-  // Clicking a workspace recalls it: switch live (persist) and mirror it into the
-  // form, so Save/Cancel stay consistent and the active marker updates at once.
+  // Persist and load into the form, so Save/Cancel and the active marker agree.
   const recallPreset = (p: SettingsPreset) => {
     applyPresetToForm(p.value);
     onApply(p);
@@ -791,15 +687,13 @@ export default function SettingsPanel({
 
         {standalone ? (
           <p className="hint">
-            This deployment keeps its own store of time entries — there is no Toggl account to
-            connect. Pick the workspace (or workspaces) to view below, and track time on the{' '}
-            <strong>Tracker</strong> page. Coming from Toggl? Bring your history over on the{' '}
-            <a href="/import">Import</a> page.
+            This deployment stores its own time entries, so there&apos;s no Toggl account to
+            connect. Pick workspaces below and track time on the <strong>Tracker</strong> page. To
+            bring over Toggl history, use <a href="/import">Import</a>.
           </p>
         ) : serverManaged ? (
           <p className="hint">
-            The Toggl API token is configured on the server, so there&apos;s nothing to enter
-            here. Just pick your project (or projects) below.
+            The Toggl API token is set on the server. Pick your project below.
           </p>
         ) : (
           <>
@@ -818,8 +712,8 @@ export default function SettingsPanel({
                 <a href="https://track.toggl.com/profile" target="_blank" rel="noreferrer">
                   track.toggl.com/profile
                 </a>{' '}
-                (bottom of the page). It is stored only in this browser and sent through this
-                app&apos;s own proxy.
+                (bottom of the page). It is stored only in this browser and sent only to this
+                app&apos;s proxy.
               </p>
             </div>
 
@@ -876,9 +770,8 @@ export default function SettingsPanel({
                   ))}
                 </div>
                 <p className="hint">
-                  Every selected {itemNoun} counts as one — all of them together are
-                  &ldquo;the project&rdquo; for your targets and ring. They stay
-                  separate only in the timesheet, prefixed by {itemNoun} name.
+                  Selected {itemNoun}s count together toward your targets. The timesheet keeps
+                  them apart, prefixed by {itemNoun} name.
                 </p>
                 <button
                   type="button"
@@ -916,12 +809,8 @@ export default function SettingsPanel({
                 </button>
               </>
             )}
-            {/* The Toggl project list is cached for 24h to conserve the request
-                budget, so a project created in Toggl after connecting won't show
-                until a forced refresh. In server-managed mode this link is the
-                ONLY such affordance (there's no Connect button to double as one).
-                Standalone workspaces are managed right below, so no refresh
-                affordance is needed there. */}
+            {/* The project list is cached for 24h. In server-managed mode this is
+                the only way to refresh it (there is no Connect button). */}
             {!standalone && (
               <>
                 <button
@@ -933,16 +822,14 @@ export default function SettingsPanel({
                   {connecting ? 'Refreshing…' : '↻ Refresh project list'}
                 </button>
                 <p className="hint">
-                  Just created a project in Toggl and it&apos;s not listed? The list is cached for
-                  a day — refresh it here (costs 2 API requests). Only projects from your default
-                  Toggl workspace are shown.
+                  Missing a new project? The list is cached for a day; refreshing costs 2 API
+                  requests. Only your default Toggl workspace is shown.
                 </p>
               </>
             )}
             {standalone && projects.length === 0 && (
               <p className="hint">
-                No workspaces yet — create your first one in the <strong>Workspaces</strong>{' '}
-                section below.
+                No workspaces yet. Create one under <strong>Workspaces</strong> below.
               </p>
             )}
           </div>
@@ -959,8 +846,7 @@ export default function SettingsPanel({
               onChange={(e) => setGroupName(e.target.value)}
             />
             <p className="hint">
-              Shown as the title when several projects are tracked together. Leave
-              blank to just show their initials.
+              Title for the combined {itemNoun}s. Leave blank to show their initials.
             </p>
           </div>
         )}
@@ -979,9 +865,7 @@ export default function SettingsPanel({
               <option value="individual">Individual — one row per entry</option>
             </select>
             <p className="hint">
-              Which view the Timesheet button opens. Summary groups each day&apos;s entries by{' '}
-              {billByProject ? itemNoun : 'billing tag'} and rounds to your chosen unit;
-              Individual lists entries one by one.
+              The view the Timesheet button opens.
             </p>
           </div>
         )}
@@ -1018,9 +902,8 @@ export default function SettingsPanel({
             onChange={(e) => setWeeklyStr(e.target.value)}
           />
           <p className="hint">
-            The whole week&apos;s target. Defaults to 40h; set it lower for a part-time project (or
-            higher) and every target, floor and cap rescales proportionally — e.g. a 20h week
-            becomes an even 4h/day. The break reminder is unaffected.
+            Default 40h. Every target, floor and cap scales with it, so a 20h week is 4h a day.
+            The break reminder doesn&apos;t change.
           </p>
         </div>
 
@@ -1028,7 +911,7 @@ export default function SettingsPanel({
           <summary>Advanced targets</summary>
 
           <div className="field">
-            <label htmlFor="max-billable">Maximal individually billed timesheet</label>
+            <label htmlFor="max-billable">Maximum individually billed timesheet</label>
             <input
               id="max-billable"
               type="number"
@@ -1041,15 +924,15 @@ export default function SettingsPanel({
               onChange={(e) => setMaxBillStr(e.target.value)}
             />
             <p className="hint">
-              A single entry longer than this can&apos;t be billed as one line — the timesheet flags
-              it to split {standalone ? 'in the tracker' : 'in Toggl'}. Leave blank to auto-scale
-              with the week (currently{' '}
+              Longer single entries are flagged to split{' '}
+              {standalone ? 'in the tracker' : 'in Toggl'}. Leave blank to scale with the week
+              (currently{' '}
               <strong>{fmtHoursLabel(defaultMaxBillableHours(previewWeekly))}</strong>).
             </p>
           </div>
 
           <div className="field">
-            <label htmlFor="min-working-day">Minimal target working day</label>
+            <label htmlFor="min-working-day">Minimum target working day</label>
             <input
               id="min-working-day"
               type="number"
@@ -1062,10 +945,9 @@ export default function SettingsPanel({
               onChange={(e) => setMinDayStr(e.target.value)}
             />
             <p className="hint">
-              The Friday floor: once the week is nearly done, the day&apos;s target never drops
-              below this (so a stray hour isn&apos;t worth a trip in). Set <strong>0</strong> for no
-              floor — Friday then shows exactly what&apos;s left, or nothing once you&apos;re over.
-              Leave blank to auto-scale with the week (currently{' '}
+              Near the end of the week, the day&apos;s target never drops below this. Set{' '}
+              <strong>0</strong> for no floor, so Friday shows only what&apos;s left. Leave blank to
+              scale with the week (currently{' '}
               <strong>{fmtHoursLabel(defaultMinWorkingDayHours(previewWeekly))}</strong>).
             </p>
           </div>
@@ -1074,13 +956,10 @@ export default function SettingsPanel({
             <div className="t-text">
               <strong>Bill by {itemNoun}</strong>
               <span>
-                This workspace doesn&apos;t use billing codes: every entry bills to its{' '}
-                {itemNoun} instead. The timesheet groups per {itemNoun}, nothing is ever flagged
-                as untagged, and exports show the {itemNoun} as the billing line. The tag prefix,
-                support-ticket brackets, the <strong>(X)</strong> / <strong>(!)</strong> overtime
-                markers, the parentheses strip and linked billing codes are all billing-code
-                machinery, so they don&apos;t apply. The time-off tag still works — it&apos;s a
-                plain tag, not a billing code.
+                Skip billing codes: each entry bills to its {itemNoun}, which becomes the line on
+                timesheets and exports, and nothing is flagged as untagged. Billing-code options
+                and the <strong>(X)</strong> / <strong>(!)</strong> markers don&apos;t apply. The
+                time-off tag still works.
               </span>
             </div>
             <label className="switch">
@@ -1104,12 +983,10 @@ export default function SettingsPanel({
               onChange={(e) => setBillingPrefix(e.target.value)}
             />
             <p className="hint">
-              {standalone ? 'Tags' : 'Toggl tags'} starting with this mark which line an entry
-              bills to (e.g.{' '}
-              <strong>{(billingPrefix.trim() || DEFAULT_BILLING_TAG_PREFIX)}123</strong>). Entries
-              without one are flagged so they can be fixed{' '}
-              {standalone ? 'in the tracker' : 'in Toggl'}. Defaults to{' '}
-              <strong>{DEFAULT_BILLING_TAG_PREFIX}</strong>.
+              {standalone ? 'Tags' : 'Toggl tags'} starting with this (e.g.{' '}
+              <strong>{(billingPrefix.trim() || DEFAULT_BILLING_TAG_PREFIX)}123</strong>) set the
+              line an entry bills to. Entries without one are flagged to fix{' '}
+              {standalone ? 'in the tracker' : 'in Toggl'}.
             </p>
           </div>
           )}
@@ -1119,13 +996,11 @@ export default function SettingsPanel({
             <div className="t-text">
               <strong>Strip parentheses from billing codes</strong>
               <span>
-                Use each billing code without its parenthetical name — a tag like{' '}
                 <strong>{(billingPrefix.trim() || DEFAULT_BILLING_TAG_PREFIX)}123 (Phase 2)</strong>{' '}
-                lands on the timesheet and exports as{' '}
-                <strong>{(billingPrefix.trim() || DEFAULT_BILLING_TAG_PREFIX)}123</strong>. The
-                overtime markers <strong>(X)</strong> / <strong>(!)</strong> are interpreted first
-                and keep working; codes that differ only in the parenthetical then merge into one
-                line.
+                bills as{' '}
+                <strong>{(billingPrefix.trim() || DEFAULT_BILLING_TAG_PREFIX)}123</strong>, so codes
+                that differ only in parentheses merge into one line. The <strong>(X)</strong> /{' '}
+                <strong>(!)</strong> markers still work.
               </span>
             </div>
             <label className="switch">
@@ -1149,14 +1024,12 @@ export default function SettingsPanel({
               onChange={(e) => setTimeOffTag(e.target.value)}
             />
             <p className="hint">
-              An entry carrying this tag (any length) marks its whole day as{' '}
-              <strong>time off</strong> — a state holiday or vacation day. The day then behaves
-              like a weekend: 0h expected, and the weekly goal and the &ldquo;Don&apos;t bill
-              overtime&rdquo; cap drop by a day&apos;s worth (currently{' '}
-              <strong>{fmtHoursLabel(previewWeekly / 5)}</strong> each). The marker entry itself is
-              never billed, counted or exported; any <em>other</em> work tracked that day still
-              counts in full, like weekend work. Only entries on the tracked{' '}
-              {itemNoun}s mark a day off. Defaults to <strong>{DEFAULT_TIME_OFF_TAG}</strong>.
+              An entry with this tag, on a tracked {itemNoun}, marks its day as{' '}
+              <strong>time off</strong> (a holiday or vacation). The day counts like a weekend: 0h
+              expected, and the weekly goal and the &ldquo;Don&apos;t bill overtime&rdquo; cap drop
+              by <strong>{fmtHoursLabel(previewWeekly / 5)}</strong>. The marker entry is never
+              billed or exported; other work that day counts in full. Default:{' '}
+              <strong>{DEFAULT_TIME_OFF_TAG}</strong>.
             </p>
           </div>
 
@@ -1174,11 +1047,9 @@ export default function SettingsPanel({
               ))}
             </select>
             <p className="hint">
-              The unit the timesheet rounds each entry to. Defaults to{' '}
-              <strong>15 minutes ({numLabel(DEFAULT_ROUNDING_HOURS)}h)</strong>; pick{' '}
-              <strong>12 minutes (0.2h)</strong> if your client can&apos;t bill quarter-hours, or{' '}
-              <strong>30 minutes (0.5h)</strong> / <strong>1 hour</strong> if they bill in coarser
-              blocks. The dashboard and targets are unaffected.
+              Default <strong>15 minutes ({numLabel(DEFAULT_ROUNDING_HOURS)}h)</strong>. Use 12
+              minutes if your client can&apos;t take quarter-hours. The dashboard and targets
+              aren&apos;t rounded.
             </p>
           </div>
 
@@ -1200,20 +1071,16 @@ export default function SettingsPanel({
                 ))}
               </select>
               <p className="hint">
-                Normally the clock times in the Individual view sit on the same grid as the
-                rounding — {gridLabel(roundingHours)} rounding, {gridLabel(roundingHours)} start
-                times. Some clients keep the two apart: they take{' '}
-                <strong>{gridLabel(roundingHours)}</strong> durations but only accept lines
-                starting on their own, coarser marks. Pick that window here and every line is
-                anchored to it — a line pushed past its mark by the one before it moves on to the{' '}
-                <em>next</em> mark, so times can leave a gap rather than drift off the window.
-                Durations, totals and the Summary view are untouched.
+                For clients that take <strong>{gridLabel(roundingHours)}</strong> durations but only
+                accept start times on coarser marks. Each line in the Individual view starts on a
+                mark; a line pushed past one moves to the <em>next</em>, leaving a gap. Durations,
+                totals and the Summary view don&apos;t change.
               </p>
             </div>
           )}
 
           <div className="field">
-            <label htmlFor="max-desc-len">Maximal description length</label>
+            <label htmlFor="max-desc-len">Maximum description length</label>
             <input
               id="max-desc-len"
               type="number"
@@ -1225,14 +1092,12 @@ export default function SettingsPanel({
               onChange={(e) => setMaxDescLenStr(e.target.value)}
             />
             <p className="hint">
-              Some clients&apos; systems reject timesheet messages over a character limit. Set it
-              here and every description this timesheet produces (on screen, copied, and in
-              CSV/XLSX exports — PDFs show the full text by default, with a per-export choice)
-              stays within it: combined descriptions keep the parts that fit and drop the rest
-              behind a <strong>&ldquo;; …&rdquo;</strong> marker (a linked code&apos;s per-code
-              breakdown always comes first, so it survives). A single entry whose own description
-              is already over the limit is cut and flagged with ✂ — shorten it{' '}
-              {standalone ? 'in the tracker' : 'in Toggl'}. Leave blank for no limit.
+              For clients whose systems reject long timesheet messages. Longer descriptions on
+              screen, copied and in CSV/XLSX keep the parts that fit, followed by{' '}
+              <strong>&ldquo;; …&rdquo;</strong>. A linked code&apos;s breakdown comes first, so
+              it stays. PDFs show the full text unless you choose otherwise when exporting. A
+              single description over the limit is cut and marked ✂; shorten it{' '}
+              {standalone ? 'in the tracker' : 'in Toggl'}.
             </p>
           </div>
 
@@ -1255,9 +1120,8 @@ export default function SettingsPanel({
                             }
                           >
                             <option value="">Pick a {itemNoun}…</option>
-                            {/* A stored mapping can reference an id the candidate
-                                list no longer offers (e.g. it became the active
-                                workspace) — keep it visible instead of blanking. */}
+                            {/* Keep a stored id the list no longer offers (e.g. it
+                                became the active workspace) instead of blanking. */}
                             {m.projectId > 0 && !mappingCandidateIds.includes(m.projectId) && (
                               <option value={m.projectId}>{projectNameOf(m.projectId)}</option>
                             )}
@@ -1340,8 +1204,8 @@ export default function SettingsPanel({
                       </label>
                       {!gridOk && (
                         <p className="map-warn">
-                          Off this sheet&apos;s {gridLabel(roundingHours)} grid — will be saved as{' '}
-                          {gridLabel(roundingHours)} so the figures stay tidy.
+                          Not on this sheet&apos;s {gridLabel(roundingHours)} grid; it will be saved
+                          as {gridLabel(roundingHours)}.
                         </p>
                       )}
                     </div>
@@ -1359,18 +1223,14 @@ export default function SettingsPanel({
             </button>
             <p className="hint">
               Bill {standalone ? 'another workspace' : 'a selected project'} as a{' '}
-              <strong>single code</strong> on this timesheet while it keeps its own billing tags.
-              {standalone &&
-                ' Linking a workspace also adds it to the tracked set above — its entries have to load with this sheet’s.'}{' '}
-              Its entries are grouped by their own tags (the prefix
-              above), rounded per day on its own grid, and each day&apos;s total lands on the one
-              code entered here — so this sheet&apos;s line always equals that {itemNoun}&apos;s own
-              timesheet, day for day (its per-code breakdown is kept in the cell description).
-              If the linked engagement itself doesn&apos;t bill overtime, tick its cap above: its
-              week is then trimmed by <em>its own</em> rules first and this sheet bills whatever
-              its timesheet shows. This sheet&apos;s own &ldquo;Don&apos;t bill overtime&rdquo;
-              never trims a linked line (it only counts toward the cap), and the linked rounding
-              must be this sheet&apos;s unit or a whole multiple of it.
+              <strong>single code</strong> here while it keeps its own billing tags.
+              {standalone && ' Linking also adds it to the tracked workspaces above.'}{' '}
+              Each day its entries are rounded on its own grid and the total goes on the code
+              entered here, so the line matches that {itemNoun}&apos;s own timesheet. The per-code
+              breakdown goes in the description. If it doesn&apos;t bill overtime, tick its cap:
+              it is trimmed by <em>its own</em> rules first. This sheet&apos;s &ldquo;Don&apos;t
+              bill overtime&rdquo; never trims a linked line, but counts it toward the cap. Its
+              rounding must be this sheet&apos;s unit or a whole multiple of it.
             </p>
           </div>
           )}
@@ -1379,21 +1239,17 @@ export default function SettingsPanel({
             <div className="t-text">
               <strong>Don&apos;t bill overtime</strong>
               <span>
-                Cap each week&apos;s billed total at your{' '}
-                {fmtHoursLabel(previewWeekly)} weekly hours. Anything over is trimmed off the
-                timesheet (rounding down) and shown as an &ldquo;Overtime&rdquo; line — still tracked,
-                just not billed.{' '}
+                Cap each week&apos;s billed total at {fmtHoursLabel(previewWeekly)}. The excess is
+                trimmed off the timesheet (rounding down) and shown on an &ldquo;Overtime&rdquo;
+                line: tracked, not billed.{' '}
                 {!billByProject && (
                   <>
                     Codes ending in <strong>(X)</strong> are trimmed first; codes ending in{' '}
-                    <strong>(!)</strong> are <em>never</em> trimmed (they bill whole and the cut
-                    falls on the rest). Neither marker is ever shown.{' '}
+                    <strong>(!)</strong> are never trimmed. The markers aren&apos;t shown.{' '}
                   </>
                 )}
-                In the{' '}
-                <strong>Summary</strong> view the weekdays are also evened out — the weekend and
-                any time-off days stay billed in full and the working days are levelled toward
-                (weekly hours − those days) ÷ their count.
+                In the <strong>Summary</strong> view the working days are also evened out; weekend
+                and time-off days stay billed in full.
               </span>
             </div>
             <label className="switch">
@@ -1416,29 +1272,25 @@ export default function SettingsPanel({
               onChange={(e) => setExportName(e.target.value)}
             />
             <p className="hint">
-              The default name printed in the header of PDF exports (you can still override it per
-              export).{standalone ? '' : ' Leave blank to use your Toggl account name.'}
+              Printed in the PDF header. You can change it per export.
+              {standalone ? '' : ' Blank uses your Toggl account name.'}
             </p>
           </div>
 
           <div className="field">
             <label>Export details</label>
             <p className="hint">
-              Company, client, approver, reference, hourly rate and the engagement note are filled
-              in the <strong>export dialog</strong> and remembered{' '}
+              Company, client, rate and the other details are set in the{' '}
+              <strong>export dialog</strong> and saved{' '}
               {presets.length > 0 ? (
                 <>
-                  <strong>per workspace</strong> — a workspace you store now starts from the values
-                  in use, and from its first change onwards each workspace keeps its own.
+                  <strong>per workspace</strong>. A new workspace starts with the current values.
                 </>
               ) : (
-                <>
-                  with these settings — store a workspace and each one keeps its own set from then
-                  on.
-                </>
+                <>with these settings. Stored workspaces each keep their own.</>
               )}{' '}
               {setExportFieldLabels.length > 0
-                ? `Set here: ${setExportFieldLabels.join(', ')}.`
+                ? `Currently set: ${setExportFieldLabels.join(', ')}.`
                 : 'None set yet.'}
             </p>
           </div>
@@ -1448,19 +1300,17 @@ export default function SettingsPanel({
           <div className="field">
             <label>Refresh interval</label>
             <p className="hint">
-              The app&apos;s own store has no rate limit, so every device refreshes every{' '}
-              <strong>30 seconds</strong> — and instantly after any change made in the tracker.
-              The on-screen counter still updates every second in between.
+              Every <strong>30 seconds</strong>, and right after any change in the tracker. The
+              timer still ticks every second.
             </p>
           </div>
         ) : cacheInterval !== null ? (
           <div className="field">
             <label>Refresh interval</label>
             <p className="hint">
-              Managed by the server: a shared cache refreshes from Toggl every{' '}
-              <strong>{fmtInterval(cacheInterval)}</strong> and serves every device from it, so
-              opening this on extra devices/tabs costs no additional API requests. The on-screen
-              counter still updates every second between refreshes.
+              Set by the server: a shared cache refreshes from Toggl every{' '}
+              <strong>{fmtInterval(cacheInterval)}</strong>, so extra devices and tabs cost no
+              extra API requests. The timer still ticks every second.
             </p>
           </div>
         ) : (
@@ -1478,8 +1328,8 @@ export default function SettingsPanel({
               ))}
             </select>
             <p className="hint">
-              How often to fetch from Toggl. The on-screen counter still updates every second
-              between refreshes. Toggl&apos;s Free plan allows 30 requests/hour.
+              The timer still ticks every second between fetches. Toggl&apos;s Free plan allows 30
+              requests an hour, shared by all your devices.
             </p>
           </div>
         )}
@@ -1494,17 +1344,15 @@ export default function SettingsPanel({
             <summary>Workspaces</summary>
             {standalone ? (
               <p className="hint">
-                Workspaces are stored on the server: each one owns its settings snapshot{' '}
-                <em>and</em> its tracked time entries, and syncs across your devices. Click one to
-                switch to it instantly; use ↻ to re-capture the settings shown above into it. A
-                new workspace copies the current settings but tracks itself.
+                Each workspace holds its own settings and time entries, stored on the server. Click
+                one to switch to it; ↻ saves the settings above into it. A new workspace copies the
+                current settings but tracks its own entries.
               </p>
             ) : (
               <p className="hint">
-                Store the settings shown above as a named workspace, then switch between saved
-                configurations — click a workspace below to recall it instantly. Editing settings
-                never changes a stored workspace; use ↻ to re-capture the current settings into
-                one.
+                Save the settings above under a name, then click it to switch back. Editing
+                settings doesn&apos;t change a stored workspace; ↻ overwrites it with the current
+                settings.
               </p>
             )}
 
@@ -1547,7 +1395,7 @@ export default function SettingsPanel({
                           <button
                             type="button"
                             className="ws-name"
-                            title="Recall this workspace (switch to it now)"
+                            title="Switch to this workspace"
                             onClick={() => recallPreset(p)}
                           >
                             {active && <span className="ws-dot" aria-label="current" />}
@@ -1562,8 +1410,8 @@ export default function SettingsPanel({
                               className="ws-color"
                               title="Chip color"
                               defaultValue={p.color ?? '#0b83d9'}
-                              // Commit when the picker closes — onChange would
-                              // fire a PATCH for every hue dragged through.
+                              // Commit on close; onChange would PATCH for every
+                              // hue dragged through.
                               onBlur={(e) => {
                                 if (e.target.value !== p.color) {
                                   onWorkspaceColor?.(p.id, e.target.value);
@@ -1616,8 +1464,8 @@ export default function SettingsPanel({
               <button
                 type="button"
                 className="btn"
-                // A first standalone workspace is created before anything can be
-                // selected — the server points it at itself.
+                // The first standalone workspace is created before anything is
+                // selectable; the server points it at itself.
                 disabled={!newPresetName.trim() || (!standalone && selectedIds.length === 0)}
                 onClick={addPreset}
               >
@@ -1642,8 +1490,7 @@ export default function SettingsPanel({
                 These settings were changed on another device (
                 {sync.conflict.device || 'unknown device'},{' '}
                 {new Date(sync.conflict.updatedAt).toLocaleString()}), and this device has
-                unsynced changes of its own. Pick the setup to keep — the other is overwritten
-                everywhere.
+                unsynced changes. Pick one to keep; the other is overwritten everywhere.
               </p>
               <div className="row" style={{ justifyContent: 'flex-start' }}>
                 <button type="button" className="btn" onClick={() => onSyncResolve?.('remote')}>
@@ -1683,16 +1530,14 @@ export default function SettingsPanel({
                   </button>
                 </div>
                 <p className="hint">
-                  Settings sync on this deployment sits behind its app password (APP_PASSWORD).
-                  Enter it once on this device and syncing starts.
+                  Sync needs this deployment&apos;s app password. Enter it once per device.
                 </p>
               </div>
             ) : (
               <p className="hint">
-                Your setup — {standalone ? '' : 'workspaces, '}targets, linked codes and export
-                details — syncs across your devices through this deployment&apos;s own store.
-                Changes upload a moment after you make them; other devices pick them up when
-                their page next gains focus. The{' '}
+                Your setup ({standalone ? '' : 'workspaces, '}targets, linked codes, export
+                details) syncs across your devices. Changes upload after a moment; other devices
+                pick them up when their page regains focus. The{' '}
                 {standalone ? 'refresh interval stays' : 'Toggl API token and the refresh interval stay'}{' '}
                 on each device.{' '}
                 {sync.status === 'syncing' ? (
@@ -1707,9 +1552,9 @@ export default function SettingsPanel({
           ) : (
             <p className="hint">
               {sync?.misconfigured ??
-                'Automatic sync is off — settings live only in this browser. Deploy with ' +
-                  'MONGODB_URI and APP_PASSWORD to sync across devices (add APP_MODE=toggl to ' +
-                  'keep the Toggl source), or move settings by file below.'}
+                'Sync is off; settings live only in this browser. Move them with a settings ' +
+                  'file below, or deploy with MONGODB_URI and APP_PASSWORD (plus ' +
+                  'APP_MODE=toggl to keep Toggl) to sync.'}
             </p>
           )}
 
@@ -1740,16 +1585,14 @@ export default function SettingsPanel({
             </div>
             {importMsg && <div className="err-msg">{importMsg}</div>}
             <p className="hint">
-              The file holds the same setup sync moves: {standalone ? '' : 'workspaces, '}targets
-              and export details. The {standalone ? 'app password' : 'Toggl API token'} is never
-              included. Download it here and import it on another device, or keep it as a backup.
+              Holds the same setup as sync ({standalone ? '' : 'workspaces, '}targets, export
+              details), never the {standalone ? 'app password' : 'Toggl API token'}. Import it on
+              another device or keep it as a backup.
             </p>
           </div>
         </details>
 
-        {/* Per-device, like the refresh interval: install the site as an app.
-            Renders only where the browser can install (or be walked through
-            it), never inside the installed app. */}
+        {/* Per device, like the refresh interval */}
         <InstallAppBlock />
 
         <div className="row">

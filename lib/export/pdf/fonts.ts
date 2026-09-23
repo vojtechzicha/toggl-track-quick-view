@@ -6,8 +6,8 @@ import type { FontDecl, PdfFontPack, Vfs } from './types';
 export type { FontDecl, Vfs } from './types';
 
 /**
- * pdfmake's bundled default. Declaring any custom font replaces the implicit
- * set, so Roboto has to be re-declared alongside a template's own cuts.
+ * pdfmake's bundled default. Declaring any font replaces the implicit set, so
+ * Roboto is re-declared alongside a template's own fonts.
  */
 const ROBOTO = {
   normal: 'Roboto-Regular.ttf',
@@ -16,7 +16,7 @@ const ROBOTO = {
   bolditalics: 'Roboto-MediumItalic.ttf',
 };
 
-/** pdfmake's vfs bundle has changed export shape between versions; cover the variants. */
+/** pdfmake's vfs bundle has changed its export shape between versions; accept each. */
 export function resolveBaseVfs(mod: unknown): Vfs {
   const f = mod as Record<string, unknown> & {
     pdfMake?: { vfs?: unknown };
@@ -27,12 +27,9 @@ export function resolveBaseVfs(mod: unknown): Vfs {
 }
 
 /**
- * Assemble the font declarations and the virtual file system for a render.
- *
- * Kept pure and exported so the pairing can be checked directly: every file a
- * declaration names must exist in the vfs. A mismatch fails at render time deep
- * inside pdfmake ("File 'X.ttf' not found in virtual file system"), so it is
- * worth asserting up front — see scripts/check-fonts.ts.
+ * Font declarations and virtual file system for a render. Pure so
+ * scripts/check-fonts.ts can assert every declared file exists in the vfs; a
+ * mismatch otherwise fails deep inside pdfmake at render time.
  */
 export function fontConfig(
   baseVfs: Vfs,

@@ -1,19 +1,14 @@
-// Server-side availability of settings sync.
-//
-// Sync rides on the same MongoDB the standalone store uses, but is mode-
-// independent: a Toggl-mode deployment turns it on by setting MONGODB_URI
-// together with APP_MODE=toggl (which keeps the Toggl source instead of
-// flipping the app to standalone — see lib/store/mongo.ts). Because /api/sync
-// accepts writes, APP_PASSWORD is required exactly like the store routes.
+// Whether settings sync is available. It uses the store's MongoDB in either
+// mode; a Toggl deployment enables it with MONGODB_URI plus APP_MODE=toggl
+// (lib/store/mongo.ts). /api/sync writes, so APP_PASSWORD is required.
 
 export function syncEnabled(): boolean {
   return !!process.env.MONGODB_URI && !!process.env.APP_PASSWORD;
 }
 
 /**
- * A sync-specific misconfiguration the operator must fix, or null. Only
- * reported when the standalone misconfiguration message doesn't already cover
- * it (standalone mode surfaces its own APP_PASSWORD complaint).
+ * A sync misconfiguration, or null. Toggl mode only: standalone mode reports
+ * its own missing APP_PASSWORD.
  */
 export function syncMisconfigured(): string | null {
   if (process.env.MONGODB_URI && !process.env.APP_PASSWORD && process.env.APP_MODE === 'toggl') {

@@ -1,25 +1,13 @@
-// Server-side proxy for an RFC 3161 timestamp authority.
+// Same-origin proxy for an RFC 3161 timestamp authority. Browsers cannot POST
+// to a TSA directly because public TSAs send no CORS headers.
 //
-// The browser cannot POST to a TSA directly: public timestamp authorities send
-// no CORS headers, so the request is blocked before it leaves. This route is
-// the same-origin side of it.
+//  - The destination comes from TSA_URL only. Taking a URL from the request
+//    would be an SSRF hole.
+//  - Gated like the Toggl proxy, because qualified timestamps cost money.
+//  - The body is capped, so the route cannot relay arbitrary POST bodies.
 //
-// Three things about its shape are deliberate.
-//
-//  - **The destination is configuration, never a parameter.** The client sends
-//    a TimeStampReq and nothing else; TSA_URL decides where it goes. A proxy
-//    that forwarded to a URL from the request body would be an SSRF hole with a
-//    timestamp-shaped excuse — anything on the deployment's network, reachable
-//    by anyone who can reach this route.
-//  - **It is gated like the Toggl proxy.** A qualified timestamp costs money
-//    per stamp. An ungated route spends someone else's budget.
-//  - **The body is capped.** A TimeStampReq is around a hundred bytes; nothing
-//    legitimate is large, so a cap costs nothing and stops this being a
-//    general-purpose relay for arbitrary POST bodies.
-//
-// Nothing about the document reaches the TSA. A TimeStampReq carries a hash of
-// the signature and nothing else — not the PDF, not the digest of the PDF, not
-// the certificate.
+// A TimeStampReq carries only a hash of the signature value, nothing about the
+// document.
 
 import { NextRequest } from 'next/server';
 import { gateEnabled, verifyToken } from '@/lib/serverAuth';
@@ -28,13 +16,12 @@ import { tsaCredentials, tsaUrl } from '@/lib/serverTimestamp';
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 
-/** A TimeStampReq is ~100 bytes. This is room for a policy OID and extensions. */
+/** A TimeStampReq is ~100 bytes; this leaves room for a policy OID and extensions. */
 const MAX_REQUEST_BYTES = 8 * 1024;
 
-/** A token is 1.5–6 KiB; a TSA sending far more is not sending a timestamp. */
+/** Tokens run 1.5–6 KiB. */
 const MAX_RESPONSE_BYTES = 64 * 1024;
 
-/** How long to wait before deciding the TSA is not going to answer. */
 const TIMEOUT_MS = 15_000;
 
 function text(body: string, status: number) {
@@ -63,8 +50,7 @@ export async function POST(req: NextRequest) {
   if (body.length > MAX_REQUEST_BYTES) {
     return text(`A timestamp request may not exceed ${MAX_REQUEST_BYTES} bytes.`, 413);
   }
-  // Cheapest possible sanity check that this is a TimeStampReq and not somebody
-  // using the route to post arbitrary bytes somewhere: DER SEQUENCE.
+  // Minimal check that the body looks like a TimeStampReq: a DER SEQUENCE.
   if (body[0] !== 0x30) return text('That is not a DER TimeStampReq.', 400);
 
   const credentials = tsaCredentials();
@@ -75,8 +61,7 @@ export async function POST(req: NextRequest) {
       method: 'POST',
       headers: {
         'content-type': 'application/timestamp-query',
-        // A commercial TSA usually authenticates with HTTP Basic. Kept server
-        // side, exactly like the Toggl token.
+        // Commercial TSAs usually use HTTP Basic. Credentials stay server-side.
         ...(credentials
           ? { authorization: `Basic ${Buffer.from(credentials).toString('base64')}` }
           : {}),
@@ -100,11 +85,9 @@ export async function POST(req: NextRequest) {
     return text('The timestamp authority sent an implausibly large reply.', 502);
   }
 
-  // Passed through unparsed. Everything about whether this token is the right
-  // answer — status, imprint, nonce — is checked in the browser, where the
-  // request was made and where the values to compare against are (see
-  // lib/export/pdf/sign/timestamp.ts). Checking here as well would be a second
-  // implementation that could disagree with the one that matters.
+  // Passed through unparsed. Status, imprint and nonce are checked in the
+  // browser, which holds the values to compare against
+  // (lib/export/pdf/sign/timestamp.ts).
   return new Response(answer, {
     status: 200,
     headers: { 'content-type': 'application/timestamp-reply', 'cache-control': 'no-store' },

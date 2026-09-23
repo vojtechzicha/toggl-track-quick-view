@@ -1,12 +1,9 @@
 // What a certificate says about itself, read from its DER.
 //
-// The Sign Bridge helper reports certificates as raw DER and nothing derived
-// from it — see ../../../../docs/sign-bridge-plan.md. Subject, issuer, validity
-// and, above all, whether the certificate claims to be a qualified one are all
-// decided here instead, for one reason: this repository already carries an
-// ASN.1 stack to build the CMS, and a second implementation in Swift could
-// disagree with this one. A disagreement about "is this a QES" that only shows
-// up in a validator is the exact failure the picker exists to prevent.
+// The Sign Bridge host reports certificates as raw DER only
+// (docs/sign-bridge-plan.md). Subject, issuer, validity and the qualified claim
+// are parsed here, with the ASN.1 stack the CMS already uses, so there is one
+// implementation of "is this a QES" and check:signature can pin it.
 
 import * as asn1js from 'asn1js';
 import { AsnConvert, AsnParser } from '@peculiar/asn1-schema';
@@ -23,35 +20,26 @@ export interface CertificateInfo {
   notBeforeMs: number;
   notAfterMs: number;
   /**
-   * The certificate claims to be a qualified certificate on a qualified device
-   * — i.e. a signature made with it is a QES.
-   *
-   * A claim, not a verdict: it is what the certificate says about itself, and
-   * only a validator checking the EU Trust List can say whether that is true.
-   * So false is reliable and true is an expectation, which is the right way
-   * round for warning someone before they sign.
+   * The certificate claims to be qualified and on a qualified device, so a
+   * signature made with it would be a QES. Only a validator checking the EU
+   * Trust List can confirm it: false is reliable, true is an expectation.
    */
   qualified: boolean;
   /**
-   * Key usage includes nonRepudiation (contentCommitment) — the bit separating
-   * a signing certificate from an authentication one. I.CA's TWINS product
-   * issues both to the same person on the same card.
+   * Key usage includes nonRepudiation (contentCommitment), which separates a
+   * signing certificate from an authentication one. I.CA's TWINS product puts
+   * both on the same card.
    */
   forSignature: boolean;
 }
 
 /**
- * A certificate's issuer and subject names, as the bytes X.509 compares them by.
+ * A certificate's issuer and subject names as hex of their DER, for chain
+ * building.
  *
- * Chain building matches one certificate's issuer against another's subject,
- * and the comparison has to be over the encoded names rather than over any
- * rendering of them: two RDNSequences that print identically can differ in
- * string type or in ordering, and two that print differently — a UTF8String
- * against a PrintableString of the same letters — are still not the same name.
- * Hex of the DER is simply a string the Map can key on.
- *
- * Null when the certificate will not parse, which is the same answer
- * `readCertificateInfo` gives and means the same thing: this one takes no part.
+ * Names are compared as encoded bytes rather than as printed strings, because
+ * two names that print the same can differ in string type or ordering. Null
+ * when the certificate does not parse.
  */
 export function readCertificateNames(der: Uint8Array): { subject: string; issuer: string } | null {
   try {
@@ -66,14 +54,12 @@ export function readCertificateNames(der: Uint8Array): { subject: string; issuer
 }
 
 /**
- * How many bytes an RSASSA-PKCS1-v1_5 signature made with this certificate's
- * key will occupy — which is the modulus length, exactly.
+ * Length in bytes of an RSASSA-PKCS1-v1_5 signature made with this
+ * certificate's key, i.e. the modulus length.
  *
- * Needed before the signature exists: the PDF has to reserve room for the CMS
- * before anything is signed (see ../prepare.ts), and the difference between a
- * 2048-bit and a 4096-bit signer is 256 bytes of it. Null when the key is not
- * RSA or will not parse, leaving the caller to fall back rather than reserve a
- * confidently wrong amount.
+ * Used to size the CMS placeholder before signing (reserveForCms in
+ * ./index.ts). Null when the key is not RSA or does not parse, so the caller
+ * can fall back.
  */
 export function rsaSignatureBytes(der: Uint8Array): number | null {
   try {
@@ -86,9 +72,8 @@ export function rsaSignatureBytes(der: Uint8Array): number | null {
       .valueBlock?.value?.[0];
     if (!(modulus instanceof asn1js.Integer)) return null;
     const bytes = new Uint8Array(modulus.valueBlock.valueHexView);
-    // DER pads a positive INTEGER whose top bit is set with a leading zero;
-    // that byte is notation, not key material, and counting it would reserve
-    // one byte more than every signature will ever use.
+    // DER prefixes a positive INTEGER whose top bit is set with a zero byte,
+    // which is not part of the modulus.
     return bytes[0] === 0x00 ? bytes.length - 1 : bytes.length;
   } catch {
     return null;
@@ -117,9 +102,8 @@ const OID = {
 } as const;
 
 const decodeCN = (name: unknown): string => {
-  // The RDNSequence is walked rather than stringified: a CN containing a comma
-  // is routine in Czech certificates ("CN=Zicha\, Vojtěch"), and every
-  // string-first approach has to un-escape what it just escaped.
+  // Walks the RDNSequence instead of parsing a DN string, because CNs with
+  // commas are common in Czech certificates ("CN=Zicha\, Vojtěch").
   const rdns = name as { map?: unknown[] } | undefined;
   const sequence = Array.isArray(rdns) ? rdns : (rdns?.map ?? []);
   for (const rdn of sequence as { type?: string; value?: unknown }[][]) {
@@ -138,9 +122,8 @@ const decodeCN = (name: unknown): string => {
 /**
  * Parse the fields the export dialog and the stamp need.
  *
- * Never throws: a certificate this cannot read is still one the token may be
- * able to sign with, and the honest answer is empty strings and `false` rather
- * than an error that hides the whole list.
+ * Never throws. An unreadable certificate yields empty strings and `false`, so
+ * one bad entry does not hide the rest of the list.
  */
 export function readCertificateInfo(der: Uint8Array): CertificateInfo {
   const empty: CertificateInfo = {
@@ -170,17 +153,14 @@ export function readCertificateInfo(der: Uint8Array): CertificateInfo {
     try {
       if (extension.extnID === id_ce_keyUsage) {
         const usage = AsnParser.parse(extension.extnValue.buffer as ArrayBuffer, KeyUsage);
-        // By name rather than by bit: the flag's numeric value is an
-        // implementation detail of the library, the name is what X.509 fixes.
+        // By name, not by the library's numeric flag value.
         forSignature = usage.toJSON().includes('nonRepudiation');
       } else if (extension.extnID === OID.qcStatements || extension.extnID === id_ce_certificatePolicies) {
-        // Both extensions are read for the same conclusion, so whichever
-        // arrives first can set it and the other can only confirm.
+        // Either extension is enough to set the claim.
         qualified = qualified || claimsQualified(extension.extnID, extension.extnValue.buffer as ArrayBuffer);
       }
     } catch {
-      // An extension that will not parse says nothing; it must not lose the
-      // ones that did.
+      // Skip an extension that does not parse; keep the others.
     }
   }
 
@@ -197,9 +177,8 @@ export function readCertificateInfo(der: Uint8Array): CertificateInfo {
 /**
  * Whether one extension asserts a qualified certificate on a qualified device.
  *
- * Both halves are required — "qualified certificate" alone is not a QES; the
- * key must also be on a QSCD, which is what separates a certificate on a card
- * from a soft one issued under the same policy.
+ * Both are required for a QES: a qualified certificate whose key is not on a
+ * QSCD does not count.
  */
 function claimsQualified(extnID: string, value: ArrayBuffer): boolean {
   const parsed = asn1js.fromBER(value);

@@ -2,13 +2,10 @@ import type { MetadataRoute } from 'next';
 import { appName } from '@/lib/pwa';
 
 export default function manifest(): MetadataRoute.Manifest {
-  // Preview deployments install as "Toggl Quick View (beta)" — they live on a
-  // stable host of their own (beta.track.zicha.dev), so a preview install can
-  // sit next to the production one on the same home screen. See lib/pwa.ts.
+  // Previews install as "Toggl Quick View (beta)"; see lib/pwa.ts.
   const { name, shortName } = appName(process.env.VERCEL_ENV);
   return {
-    // Fixed identity, so reinstalling after a deploy updates the existing app
-    // instead of adding a second one.
+    // Fixed id, so reinstalling after a deploy updates the existing app
     id: '/',
     name,
     short_name: shortName,

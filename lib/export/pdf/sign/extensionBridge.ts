@@ -1,14 +1,10 @@
-// TokenBridge over the Sign Bridge extension.
+// TokenBridge over the Sign Bridge extension: page → extension → native host →
+// PKCS#11 → card. The protocol is specified in the sibling repository's
+// protocol/protocol.md.
 //
-// The chain is page → extension → native host → PKCS#11 → card, specified in
-// the sibling repository's protocol/protocol.md. This end of it does very
-// little: shape a request, await a reply, and turn the reply's error code into
-// something the export dialog can act on.
-//
-// Everything that decides whether a signature happens — the origin the browser
-// vouches for, the pairing, the PIN, the confirmation window — happens on the
-// far side, where the person is. That is the point of the arrangement, and the
-// reason this file has no security logic in it to get wrong.
+// This side only sends requests and translates replies. The security checks
+// (origin, pairing, PIN, confirmation window) all happen in the extension and
+// the host.
 
 import { readCertificateInfo, readCertificateNames } from './certificateInfo';
 import {
@@ -20,15 +16,14 @@ import {
 } from './tokenBridge';
 
 /**
- * The extension's id, pinned by the `key` in its manifest so the unpacked
- * development build and any published build are the same extension. Changing
- * it here without changing it there is a silent failure — the page simply
- * decides nothing is installed — so the sibling repo's `check-manifest.mjs`
- * derives it from the key and asserts every copy.
+ * The extension's id, pinned by the `key` in its manifest so development and
+ * published builds share it. If this drifts from the manifest, the page
+ * reports the extension as missing. The sibling repo's `check-manifest.mjs`
+ * derives the id from the key and checks every copy.
  */
 export const SIGN_BRIDGE_EXTENSION_ID = 'jeiiaokfpmlldaebepnpppjjlhhangje';
 
-/** Where someone is sent who has neither half installed. */
+/** Install link for the extension and the native host. */
 const INSTALL_URL = 'https://github.com/vojtechzicha/zicha-sign-bridge/releases/latest';
 const EXTENSION_URL = INSTALL_URL;
 
@@ -51,7 +46,7 @@ const runtime = (): ChromeRuntime | null => {
 
 interface HostReply {
   ok: boolean;
-  /** Present on news, absent on the answer — see the sibling repo's protocol.md. */
+  /** Set on unsolicited event frames, absent on replies. */
   event?: string;
   code?: string;
   message?: string;
@@ -74,10 +69,9 @@ let nextId = 0;
 
 export interface ExtensionBridgeOptions {
   /**
-   * The pairing code the helper is showing, delivered while its window is
-   * still open so the two can be compared. That comparison is the only thing
-   * the code is for, so a bridge built without this handler is a bridge whose
-   * pairing prompt cannot be checked.
+   * Receives the pairing code the host is showing, while its window is open,
+   * so the page can display it for the user to compare. Without this handler
+   * the user has nothing to compare against.
    */
   onPairingCode?: (code: string) => void;
 }
@@ -85,7 +79,7 @@ export interface ExtensionBridgeOptions {
 export class ExtensionBridge implements TokenBridge {
   readonly id = 'sign-bridge';
   readonly label = 'Hardware token via Sign Bridge';
-  // Listing pairs and unlocks; both put a window in front of the user.
+  // Listing may pair and unlock, and both open a window.
   readonly interactive = true;
 
   private readonly options: ExtensionBridgeOptions;
@@ -99,12 +93,11 @@ export class ExtensionBridge implements TokenBridge {
   }
 
   /**
-   * The page's end of the relay, opened once and reused.
+   * The port to the extension, opened once and reused.
    *
-   * `chrome.runtime.connect` to an extension id that is not installed returns
-   * a port that disconnects immediately with `lastError` set. That is the ONLY
-   * way a page can tell the extension is missing, and it is the probe
-   * `readiness()` leans on.
+   * Connecting to an extension id that is not installed returns a port that
+   * disconnects immediately with `lastError` set. That is the only way a page
+   * can detect a missing extension, and `readiness()` relies on it.
    */
   private connect(): Port | null {
     if (this.port) return this.port;
@@ -114,7 +107,7 @@ export class ExtensionBridge implements TokenBridge {
     const port = chrome.connect(SIGN_BRIDGE_EXTENSION_ID);
     port.onMessage.addListener((raw) => {
       const frame = raw as HostReply & { id?: string; code?: string };
-      // News, not an answer: the request stays pending.
+      // An event, not a reply: the request stays pending.
       if (frame.event === 'pairing-code') {
         if (frame.code) this.options.onPairingCode?.(frame.code);
         return;
@@ -126,8 +119,8 @@ export class ExtensionBridge implements TokenBridge {
     });
     port.onDisconnect.addListener(() => {
       this.port = null;
-      // Everything still waiting will never be answered. Rejecting is what
-      // turns "the extension vanished" into a message rather than a hang.
+      // Nothing pending will be answered now; reject so callers get an error
+      // instead of hanging.
       for (const [, waiting] of this.pending) waiting.reject(new Error('no-extension'));
       this.pending.clear();
     });
@@ -153,11 +146,8 @@ export class ExtensionBridge implements TokenBridge {
   }
 
   /**
-   * What is missing, in the terms the dialog needs to say it.
-   *
-   * Runs unprompted whenever signing is switched on, so it must be silent: no
-   * pairing window, no PIN, no side effect. `hello` is specified to be exactly
-   * that.
+   * What is missing. Runs as soon as signing is switched on, so it only sends
+   * `hello`, which the protocol defines as free of windows and prompts.
    */
   async readiness(): Promise<BridgeReadiness> {
     if (typeof window === 'undefined') {
@@ -165,7 +155,7 @@ export class ExtensionBridge implements TokenBridge {
     }
     if (!runtime()) {
       // Safari and Firefox have no externally_connectable, and a phone has no
-      // card reader. Either way the answer is the same and it is not a fault.
+      // card reader.
       return {
         state: 'unsupported',
         reason: 'Signing needs Chrome, Edge or another Chromium browser on a computer.',
@@ -203,24 +193,23 @@ export class ExtensionBridge implements TokenBridge {
 
   async isAvailable(): Promise<boolean> {
     const readiness = await this.readiness();
-    // Offered as soon as both halves are installed and a card is in: the
-    // remaining steps — pairing, PIN — are things the user does next, not
-    // reasons to hide the option.
+    // Offered once both halves are installed and a card is in. Pairing is the
+    // user's next step, not a reason to hide the option.
     return (
       readiness.state === 'ready' ||
       readiness.state === 'not-paired'
     );
   }
 
-  /** Pair if needed, then list. Both may show a window; neither is silent. */
+  /** Pair if needed, then list. Both may open a window. */
   async listCertificates(): Promise<TokenCertificate[]> {
     const readiness = await this.readiness();
     if (readiness.state === 'not-paired') {
       const paired = await this.send({ type: 'pair' });
       if (!paired.ok || paired.paired === false) {
         throw new TokenBridgeUnavailableError(
-          'Sign Bridge was not approved for this site. Approve it in the window it puts up, ' +
-            'checking the code matches.'
+          'Sign Bridge was not approved for this site. Approve it in the Sign Bridge window ' +
+            'after checking that the code matches.'
         );
       }
     }
@@ -232,8 +221,7 @@ export class ExtensionBridge implements TokenBridge {
     return (reply.certificates ?? []).map((entry) => {
       const der = base64ToBytes(entry.der);
       this.certificates.set(entry.id, { der, tokenLabel: entry.tokenLabel });
-      // Everything descriptive comes from the DER — see ./certificateInfo.ts
-      // for why the helper deliberately reports none of it.
+      // The host sends only DER; ./certificateInfo.ts reads everything else.
       const info = readCertificateInfo(der);
       return {
         id: entry.id,
@@ -253,46 +241,33 @@ export class ExtensionBridge implements TokenBridge {
   }
 
   /**
-   * The issuing chain of one listed certificate, built out of the card itself.
+   * The issuing chain of one listed certificate, built from the other
+   * certificates on the card.
    *
-   * The card carries its issuer's CA certificates — that is what the other
-   * thirty on this token are, and why `listCertificates` reports them instead
-   * of hiding everything without a private key. So the chain costs no round
-   * trip and no new protocol message: it is a walk up the list already in
-   * hand, matching each certificate's issuer name against another's subject.
+   * The card carries its issuer's CA certificates, so the chain needs no extra
+   * request: walk up the listed certificates, matching each issuer name to
+   * another's subject. Embedding the chain lets a validator build the path
+   * without fetching the issuer over AIA, which offline validators will not do.
    *
-   * It matters because a CMS carrying the leaf alone leaves a validator to
-   * fetch the issuer over AIA — which needs the network, and fails quietly
-   * into "the chain could not be built" on a validator that will not go out to
-   * get it. Embedding what the card already knows makes the signature verify
-   * on its own bytes.
-   *
-   * Returns what it found, leaf EXCLUDED, and stops at whatever the card
-   * stops at: a chain reaching the root is better than one that does not, and
-   * a short chain is better than none. A self-issued certificate ends the walk
-   * — it is the root, and following it would be following it to itself.
+   * Returns the chain without the leaf, as far as the card's certificates
+   * reach. A self-issued certificate (the root) ends the walk.
    */
   async certificateChain(certificateId: string): Promise<Uint8Array[]> {
     const leaf = this.certificates.get(certificateId);
     if (!leaf) return [];
 
-    // Built per call rather than kept: the map is thirty entries, the walk
-    // happens once per signature, and a cache would only be one more thing
-    // that can be stale when the card is swapped.
+    // Rebuilt per call so a swapped card cannot leave a stale index.
     const bySubject = new Map<string, { der: Uint8Array; names: { subject: string; issuer: string } }>();
     for (const [id, entry] of this.certificates) {
       if (id === certificateId) continue;
       const names = readCertificateNames(entry.der);
-      // First one wins: a card holding two certificates for the same CA
-      // (a re-issue) offers a choice this cannot decide, and either builds a
-      // chain that verifies or is caught by the check that follows.
+      // First one wins when two certificates share a subject (a re-issued CA).
       if (names && !bySubject.has(names.subject)) bySubject.set(names.subject, { der: entry.der, names });
     }
 
     const chain: Uint8Array[] = [];
     let names = readCertificateNames(leaf.der);
-    // Bounded: a card with a certificate cycle on it would otherwise walk
-    // forever, and no real chain is anywhere near this long.
+    // Bounded in case the card holds a certificate cycle.
     while (names && chain.length < 8) {
       if (names.issuer === names.subject) break;
       const issuer = bySubject.get(names.issuer);
@@ -312,10 +287,9 @@ export class ExtensionBridge implements TokenBridge {
       );
     }
 
-    // The context is what the helper's confirmation window shows, and the
-    // protocol refuses a signature without one. The digest is over the bytes
-    // being signed, so the window is tied to this request and not to a
-    // description of it.
+    // The host's confirmation window shows `context`, and the protocol requires
+    // it. The digest is over the bytes being signed, which ties the window to
+    // this exact request.
     const digest = await sha256Hex(request.data);
     const reply = await this.send({
       type: 'sign',
@@ -334,34 +308,29 @@ export class ExtensionBridge implements TokenBridge {
 }
 
 /**
- * A failure from the helper, in a sentence rather than a CKR_ name.
- *
- * The distinction that earns its keep here is `pin_failed` against
- * `pin_locked`: a card allows a few wrong PINs and then blocks itself, needing
- * the PUK to recover. Someone told only "wrong PIN" will try until it does, so
- * the retry warning is part of the message rather than something to discover
- * afterwards.
+ * A host failure as a sentence. `pin_failed` warns about the retry limit
+ * because a card blocks itself after a few wrong PINs and then needs its PUK.
  */
 function explain(reply: HostReply): string {
   switch (reply.code) {
     case 'refused':
-      return 'The signature was cancelled — the PIN prompt was dismissed.';
+      return 'Signing was cancelled: the PIN prompt was closed.';
     case 'pin_failed':
       return (
-        'That PIN was not accepted. You can try again, but a card blocks itself after a ' +
+        'That PIN was not accepted. You can try again, but the card blocks itself after a ' +
         'few wrong attempts and then needs its PUK.'
       );
     case 'pin_locked':
       return (
-        'The card has blocked itself after too many wrong PINs. Unblocking it needs the ' +
-        'PUK from the envelope it came in — SecureStore can do that.'
+        'The card is blocked after too many wrong PINs. Unblock it in SecureStore with the ' +
+        'PUK from the card’s envelope.'
       );
     case 'no_private_key':
       return 'That certificate has no private key on the card, so it cannot sign.';
     case 'no_token':
       return 'The card is no longer in the reader.';
     case 'not_paired':
-      return 'This site is no longer approved for the token — connect again.';
+      return 'This site is no longer approved in Sign Bridge. Connect again.';
     default:
       return reply.message ?? 'The token did not sign.';
   }
@@ -383,8 +352,7 @@ function base64ToBytes(value: string): Uint8Array {
 
 function bytesToBase64(bytes: Uint8Array): string {
   let binary = '';
-  // Chunked: a spread of a large array overflows the argument list, and the
-  // SignedAttributes are small but the limit is not worth discovering later.
+  // Chunked because spreading a large array overflows the argument list.
   for (let i = 0; i < bytes.length; i += 0x8000) {
     binary += String.fromCharCode(...bytes.subarray(i, i + 0x8000));
   }

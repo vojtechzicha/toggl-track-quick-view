@@ -1,17 +1,11 @@
-// Content checks for the export identity fields (company / client / rate /
-// engagement note …) now that they are scoped to a workspace. Run with:
-//   npm run check:export
-//
-// The load-bearing claims are about storage, not layout:
-//  - a device that still has the old per-field localStorage keys migrates them
-//    into the settings once, and the keys are then gone;
-//  - the sync payload carries the fields inside `settings` AND mirrors them at
-//    the top level, so a client from before the scoping still reads them;
-//  - a payload written by such a client (top level only) is applied, not lost.
-//
-// Plus the two per-workspace details added later: the role's Czech counterpart
-// is a field of its own, and the workspace start date clips a preset range so a
-// mid-month engagement start never exports a full-month document.
+// Checks for the per-workspace export identity fields (`pnpm check:export`):
+//  - old per-field localStorage keys migrate into the settings once, then are
+//    removed;
+//  - the sync payload carries the fields inside `settings` and mirrors them at
+//    the top level for older clients;
+//  - a payload from an older client (top level only) is applied;
+//  - the Czech role is its own field;
+//  - the workspace start date clips preset ranges.
 
 import assert from 'node:assert/strict';
 import { registerHooks } from 'node:module';
@@ -34,7 +28,7 @@ registerHooks({
   },
 });
 
-// The modules under test only touch storage through `window.localStorage`.
+// The modules under test use storage only via `window.localStorage`.
 const store = new Map<string, string>();
 (globalThis as unknown as { window: unknown }).window = {
   localStorage: {
@@ -183,9 +177,8 @@ eq(
   'a pre-scoping payload is read from its top level'
 );
 
-// A pre-scoping client keeps pushing back the nested copy it once pulled from
-// us while editing only the top level, so a disagreement means the top level is
-// the copy that was actually written.
+// An older client sends back the nested copy it received unchanged and edits
+// only the top level, so when they disagree the top level wins.
 const oldClientEdit = {
   v: payload.v,
   settings: { ...payload.settings, exportFields: { ...EMPTY_EXPORT_FIELDS, company: 'Acme' } },

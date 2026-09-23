@@ -8,13 +8,9 @@ import type { TimesheetViewProps } from './types';
 import CopyButton from './CopyButton';
 
 /**
- * Individual view: the week as a list of days, each listing its selected-project
- * entries on their own rows with start–end time, rounded hours and description.
- * Consecutive same-code entries combine (within an hour, capped at the billable
- * limit); tag and length problems surface as amber warning rows, and raw-time
- * overlaps are flagged so they can be fixed in Toggl.
- *
- * The week is built by the shared `buildIndividualWeek` so exports match exactly.
+ * Individual view: per day, one row per billable line with start–end time,
+ * rounded hours and description, plus warning rows for tag, length and overlap
+ * problems. Built by buildIndividualWeek, which the exports also use.
  */
 export default function IndividualTimesheet({
   entries,
@@ -95,7 +91,7 @@ export default function IndividualTimesheet({
                 {day.holiday && (
                   <span
                     className="ts-holiday"
-                    title="Time off — no work expected; the weekly cap drops by a day's worth"
+                    title="Time off: no work expected. The weekly cap is one day lower."
                   >
                     holiday
                   </span>
@@ -122,7 +118,7 @@ export default function IndividualTimesheet({
                         <td className="ind-time ind-empty">—</td>
                         <td className="ind-hours">{fmtHours(row.rounded)}</td>
                         <td className="ind-code" colSpan={2}>
-                          <span className="tag-warn amber" title="Fix this entry in Toggl">
+                          <span className="tag-warn amber" title="Fix these entries">
                             ⚠ {warnLabel(row.warn as WarnKind, maxBillableHours)}
                           </span>
                           {desc && <div className="ind-desc">{desc}</div>}
@@ -138,8 +134,7 @@ export default function IndividualTimesheet({
                       </td>
                       <td className="ind-hours">{fmtHours(row.rounded)}</td>
                       <td className="ind-code">
-                        {/* Billing by project the code IS the project name, so
-                            the disambiguating prefix would just repeat it. */}
+                        {/* No prefix when billing by project: the code is the project. */}
                         {multi && !billByProject && row.projId != null && (
                           <span className="ts-proj">{nameById.get(row.projId) ?? ''}: </span>
                         )}
@@ -165,7 +160,7 @@ export default function IndividualTimesheet({
                     <td className="ind-time ind-empty">—</td>
                     <td className="ind-hours">—</td>
                     <td className="ind-code" colSpan={3}>
-                      <span className="tag-warn amber" title="Two entries overlap — fix one in Toggl">
+                      <span className="tag-warn amber" title="Two entries overlap. Fix one of them.">
                         ⚠ Overlapping entries
                       </span>
                       <div className="ind-desc">{o}</div>
@@ -177,7 +172,7 @@ export default function IndividualTimesheet({
                     <td className="ind-time ind-empty">—</td>
                     <td className="ind-hours">−{fmtHours(day.overtime)}</td>
                     <td className="ind-code" colSpan={3}>
-                      <span className="ts-overtime" title="Tracked but not billed — over the weekly cap">
+                      <span className="ts-overtime" title="Tracked but not billed: over the weekly cap">
                         Overtime (not billed)
                       </span>
                     </td>

@@ -1,12 +1,8 @@
-// A self-signed RSA key and certificate, generated in the browser (or in node,
+// A self-signed RSA key and certificate, generated in the browser (or in Node,
 // for the checks) and never persisted.
 //
-// This is the stand-in for the qualified certificate while the hardware token
-// is in the post: it makes the whole pipeline — placeholder, appearance, CMS,
-// embed — runnable and verifiable end to end today. A signature made with it is
-// cryptographically sound and completely untrusted, which is precisely what a
-// validator should say about it. The certificate is named accordingly so it can
-// never be mistaken for the real one in a viewer.
+// Lets the whole pipeline run without a hardware token. Its signatures verify
+// but are untrusted, and the certificate's CN says it is not qualified.
 
 import * as asn1js from 'asn1js';
 import * as pkijs from 'pkijs';
@@ -58,9 +54,7 @@ export function ensureCryptoEngine(): void {
 
 /**
  * RFC 5280 §4.1.2.2: a certificate serial number MUST be a positive integer.
- * Random bytes are negative half the time (two's complement), and a negative
- * serial is the kind of thing a strict validator rejects long after the code
- * that produced it has been forgotten.
+ * Random bytes read as two's complement are negative half the time.
  */
 function positiveSerial(bytes: Uint8Array): Uint8Array {
   const out = new Uint8Array(bytes);
@@ -73,20 +67,16 @@ const typeAndValue = (type: string, value: string) =>
   new pkijs.AttributeTypeAndValue({ type, value: new asn1js.Utf8String({ value }) });
 
 /**
- * An X.501 Name that encodes the way every real CA encodes one: an RDNSequence
- * of single-attribute RDNs.
+ * An X.501 Name encoded as real CAs encode one: an RDNSequence of
+ * single-attribute RDNs.
  *
- * PKI.js packs the whole of `typesAndValues` into ONE relative distinguished
- * name — a legal but unusual multi-valued RDN — and does not sort that SET into
- * DER order. Any validator that re-encodes the certificate before hashing it
- * (BouncyCastle does, so the EU DSS validator does) then computes a different
- * digest from ours, and the signing-certificate-v2 attribute stops matching the
- * certificate it names: DSS reports "the signing certificate digest value does
- * not match" and gives up on the signature. Hence the override.
+ * PKI.js packs all of `typesAndValues` into one multi-valued RDN and does not
+ * DER-sort that SET. A validator that re-encodes the certificate before hashing
+ * (DSS, via BouncyCastle) then gets a different digest, and DSS reports "the
+ * signing certificate digest value does not match".
  *
- * Only certificates BUILT here are affected. A certificate parsed from DER —
- * which is every certificate in the real flow, including the token's — keeps
- * its original encoding through PKI.js untouched.
+ * Only certificates built here are affected. Certificates parsed from DER,
+ * including the token's, keep their original encoding through PKI.js.
  */
 class DistinguishedName extends pkijs.RelativeDistinguishedNames {
   toSchema(): asn1js.Sequence {
@@ -146,8 +136,7 @@ export async function generateThrowawayKey(
       critical: true,
       extnValue: new pkijs.BasicConstraints({ cA: false }).toSchema().toBER(false),
     }),
-    // Key usage: digitalSignature | nonRepudiation — what a signing
-    // certificate carries, and what validators look for on a PAdES signer.
+    // Key usage: digitalSignature | nonRepudiation, as on a signing certificate.
     new pkijs.Extension({
       extnID: '2.5.29.15',
       critical: true,

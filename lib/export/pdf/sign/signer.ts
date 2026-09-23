@@ -1,14 +1,11 @@
 // The @signpdf Signer that produces our PAdES CMS.
 //
-// @signpdf owns the byte-level work — rewriting /ByteRange, cutting the
-// placeholder out, hexing the result back in — and hands a Signer the exact
-// bytes the signature covers. All this class does is hash them and call
-// ./cms.ts, which is why the whole PAdES-specific part of the pipeline is a
-// hundred lines rather than a fork of a library.
+// @signpdf does the byte-level work (filling /ByteRange, cutting out the
+// placeholder, writing the hex CMS back) and hands the Signer the bytes the
+// signature covers. This class hashes them and calls ./cms.ts.
 //
-// @signpdf/signer-p12 is NOT used on this path: it inserts a signed signing-
-// time attribute, which the PAdES baseline profiles forbid. It stays useful as
-// a cross-check when something looks wrong, and nowhere else.
+// @signpdf/signer-p12 is not used: it adds a signed signing-time attribute,
+// which PAdES baseline forbids.
 
 import { Signer } from '@signpdf/utils';
 import { buildCms, sha256 } from './cms';
@@ -27,20 +24,15 @@ export interface PadesSignerOptions {
    */
   timestamp?: (signature: Uint8Array) => Promise<Uint8Array>;
   /**
-   * Told what level came out, once it is known.
-   *
-   * `signPdf` cannot return it: the CMS is built inside a callback @signpdf
-   * owns, and by the time it returns a Blob the timestamp has either happened
-   * or been given up on. The caller needs to know which, because the whole
-   * difference between B-B and B-T is invisible in the file's name.
+   * Reports which level was produced. A callback because the CMS is built
+   * inside @signpdf's sign() call, so `signPdf` cannot return it.
    */
   onLevel?: (level: 'B-B' | 'B-T', timestampError: Error | null) => void;
 }
 
 export class PadesSigner extends Signer {
-  // Spelled out rather than declared as a constructor parameter property: the
-  // scripts/ checks run these modules straight through node's type stripping,
-  // which rejects that syntax.
+  // Not a constructor parameter property: Node's type stripping, which the
+  // scripts/ checks use, does not support that syntax.
   private readonly options: PadesSignerOptions;
 
   constructor(options: PadesSignerOptions) {
@@ -52,9 +44,8 @@ export class PadesSigner extends Signer {
    * @param pdfBuffer the concatenated bytes of the signature's ByteRange —
    *   everything except the /Contents placeholder.
    *
-   * The `signingTime` @signpdf offers is deliberately ignored: in PAdES the
-   * claimed time is the signature dictionary's /M entry, written when the
-   * placeholder was added (see ./prepare.ts), not a signed attribute.
+   * The `signingTime` @signpdf passes is ignored: in PAdES the claimed time is
+   * the signature dictionary's /M, written with the placeholder (./prepare.ts).
    */
   async sign(pdfBuffer: Buffer): Promise<Buffer> {
     const messageDigest = await sha256(new Uint8Array(pdfBuffer));
@@ -71,11 +62,9 @@ export class PadesSigner extends Signer {
           hash: 'SHA-256',
           documentName: this.options.documentName,
         }),
-      // A failed timestamp degrades to B-B instead of failing the export, and
-      // that is a deliberate choice about something already spent: by the time
-      // this runs the person has entered a PIN and the card has signed, and a
-      // TSA that is down must not cost them that. Nobody is told they have a
-      // timestamp they do not have — `onLevel` reports what actually happened.
+      // A failed timestamp degrades to B-B instead of failing the export: the
+      // PIN has been entered and the card has signed by now. `onLevel` reports
+      // the outcome so the user is told.
       timestamp: this.options.timestamp
         ? async (signature) => {
             try {

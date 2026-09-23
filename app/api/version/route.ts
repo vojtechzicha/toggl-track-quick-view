@@ -1,11 +1,9 @@
-// Reports the build id of the deployment currently serving requests. The id
-// is inlined at build time (see next.config.js), so whatever build produced
-// the running server code is the id this route returns. A browser tab whose
-// own inlined id differs was loaded from an older deploy — the UpdateHint
-// component polls this route and asks the user to refresh in that case.
+// Build id of the running deployment, inlined at build time (next.config.js).
+// UpdateHint compares it with the tab's own id and asks for a refresh when
+// they differ.
 //
-// Deliberately ungated: it exposes nothing but an opaque random id, and the
-// hint must work even on a tab still sitting at the password gate.
+// Not gated: it exposes only a commit hash prefix, and the hint must also work
+// on a tab at the password gate.
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -13,7 +11,7 @@ export const dynamic = 'force-dynamic';
 export async function GET() {
   return Response.json(
     { buildId: process.env.NEXT_PUBLIC_BUILD_ID ?? null },
-    // Explicit no-store so no CDN in front of the app ever pins a stale id.
+    // So no CDN caches a stale id.
     { headers: { 'cache-control': 'no-store' } },
   );
 }

@@ -1,12 +1,6 @@
-// The one piece of geometry the signing stage owns: turning a template's
-// declared signature rectangle into the rectangle a PDF widget annotation
-// wants.
-//
-// pdfmake measures from the page's TOP-left corner and downwards; PDF measures
-// from the BOTTOM-left corner and upwards. Everything else about the widget's
-// position is fixed by the template (see SignatureWidget in ../templates.ts),
-// so this conversion is the whole of the coordinate work — kept pure and
-// exported on its own so it can be asserted directly.
+// Converts a template's declared signature rectangle (SignatureWidget in
+// ../types.ts) into a PDF widget annotation rectangle. pdfmake measures down
+// from the page's top-left corner; PDF measures up from the bottom-left.
 
 import type { SignatureWidget } from '../types';
 
@@ -15,11 +9,9 @@ export type PdfRect = [number, number, number, number];
 
 /**
  * Convert a template's top-left rectangle to PDF coordinates on a page of the
- * given height.
- *
- * The page height is read from the PDF being signed rather than taken from the
- * template, so a template whose declared page size has drifted from what it
- * actually renders still places the widget over its own dashed box.
+ * given height. prepareSignature() passes the rendered page's height rather
+ * than the template's declared one, so the widget still lands on the box if
+ * the two drift apart.
  */
 export function widgetRectToPdf(
   rect: SignatureWidget['rect'],

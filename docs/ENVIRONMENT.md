@@ -1,151 +1,131 @@
 # Environment configuration
 
-`.env` is never committed and never copied between machines. What git carries
-is a template listing every variable the code reads, with a literal value
-wherever the value is not secret. You produce your own `.env` from it, either by
-hand or with 1Password.
-
-```
-.env.tpl       ──op inject──▶  .env       local development    (gitignored)
-.env.prod.tpl  ─────────────▶  .env.prod  production reference (gitignored)
-scripts/env-spec.mjs        ─▶  the list of variables that exist, and their rules
-```
+`.env` is never committed or copied between machines. Git carries templates
+that list every variable the code reads, with literal values for everything that
+is not secret. You generate `.env` from a template, by hand or with 1Password.
 
 | File | Committed | What it is |
 | --- | --- | --- |
-| `.env.tpl` | yes | Local dev config. Literals for everything non-secret, 1Password references for the rest. |
-| `.env.prod.tpl` | yes | The same variables with production values. A recoverable copy of what Vercel holds. |
-| `scripts/env-spec.mjs` | yes | Every variable the code reads, what it means, and which combinations are contradictory. |
-| `.env` | no | Yours. Loaded automatically by Next and by `pnpm env:check`. |
-| `.env.prod` | no | Generated on demand. Live production secrets. Read by nothing automatically. |
+| `.env.tpl` | yes | Local dev config. Literals, plus 1Password references for secrets. |
+| `.env.prod.tpl` | yes | Production values. A recoverable copy of what Vercel holds. |
+| `scripts/env-spec.mjs` | yes | Every variable, its format check, and the rules for combinations. |
+| `.env` | no | Generated from `.env.tpl`. Loaded by Next and by `pnpm env:check`. |
+| `.env.prod` | no | Generated on demand. Live production secrets; nothing loads it automatically. |
 
-`MONGODB_URI` in `.env.tpl` is a literal pointing at the local Docker database.
-That is deliberate: the default must not be able to reach production.
+## Environments
 
-### Three environments, two templates
+There are three environments and two templates. Vercel preview deployments have
+no template: Vercel injects their values, and the 1Password item
+`toggl-track-quick-view-preview` keeps a copy. `appliesTo` in the spec records
+which environments a variable belongs to.
 
-Local development and production each have a template. Vercel's preview
-deployments are the third environment and have none, because nobody generates a
-`.env` for them: Vercel injects the values at build time, and 1Password keeps a
-recoverable copy in the `toggl-track-quick-view-preview` item. Duplicating
-production secrets into a third committed template would mean maintaining the
-same secret in two places.
+Nothing is required by the application. With an empty environment the app runs
+as a bring-your-own-token dashboard: you paste a Toggl token into Settings and
+it stays in that browser's localStorage. `DEPLOYMENT_TOPOLOGY` in the spec
+records what track.zicha.dev and its previews must have, so that shape cannot
+change by accident. A fork with a different setup empties that object; the
+format checks and combination rules still apply, because they follow from the
+code.
 
-A variable can therefore belong to any of the three, which is what `appliesTo`
-in `scripts/env-spec.mjs` records.
+## What the variables decide
 
-Which variables are *required* is a separate question, and a different kind of
-statement. Nothing here is required by the application — every variable is
-optional to the code, and an empty environment is a supported mode. What
-`DEPLOYMENT_TOPOLOGY` records is the shape `track.zicha.dev` and its previews
-actually run, so that shape cannot change by accident: losing `APP_MODE` would
-turn the live dashboard into an empty standalone store and still deploy green.
-A fork with a different shape empties that object and every requirement relaxes,
-while the format checks and contradiction rules — which follow from the code
-rather than from anyone's topology — still apply.
+### Data source: `MONGODB_URI` and `APP_MODE`
 
-## What the variables actually decide
-
-This app has no variable it cannot start without. With a completely empty
-environment it runs as a bring-your-own-token dashboard: you paste a Toggl token
-into Settings and it lives in that browser's localStorage. Every variable below
-turns that into something else, and the interesting failures are combinations
-rather than individual values.
-
-**Which data the app serves** is decided by two variables together:
-
-| `MONGODB_URI` | `APP_MODE` | Resulting deployment |
+| `MONGODB_URI` | `APP_MODE` | Result |
 | --- | --- | --- |
-| unset | — | **Toggl mode.** Time entries come from Toggl. No settings sync. |
-| set | unset | **Standalone mode.** The app serves its own MongoDB store; Toggl is never contacted and `TOGGL_API_TOKEN` is ignored. |
-| set | `toggl` | **Toggl mode + settings sync.** Entries from Toggl, MongoDB holds only the synced setup. |
+| unset | (ignored) | **Toggl mode.** Entries come from Toggl. No settings sync. |
+| set | unset | **Standalone mode.** The app serves its own MongoDB store. Toggl is never contacted and `TOGGL_API_TOKEN` is ignored. |
+| set | `toggl` | **Toggl mode with settings sync.** Entries from Toggl; MongoDB holds only the synced settings. |
 
-That middle row is why `APP_MODE` is marked required in production. It is the
-only thing standing between the live dashboard and a silent switch to an empty
-standalone store, and the switch would look like a working deploy.
+`APP_MODE` is required in production because of the middle row: without it the
+live dashboard would switch to an empty standalone store and still deploy
+successfully.
 
-**Who can read it** is `APP_PASSWORD`, and it is only meaningful when there is
-something server-side to protect — `gateEnabled()` in `lib/serverAuth.ts` wants
-`APP_PASSWORD` *and* one of `TOGGL_API_TOKEN` or `MONGODB_URI`. So:
+`MONGODB_DB` names the database. The code default is `toggl-quick-view`
+(`lib/store/mongo.ts`). `client.db()` always gets an explicit name, so a
+database in the connection-string path is ignored.
 
-- `TOGGL_API_TOKEN` without `APP_PASSWORD` serves your real time entries to
-  anyone who learns the URL. `pnpm env:check` warns; it is not an error,
-  because a deliberately public dashboard is a legitimate thing to want.
-- `MONGODB_URI` without `APP_PASSWORD` is an **error**. Those routes write, and
-  they refuse to write unauthenticated, so the deployment boots and then reports
-  itself misconfigured to the browser. Better to fail the build.
-- `APP_PASSWORD` with neither is inert — each browser holds its own token and
-  there is nothing to gate.
+### Access: `APP_PASSWORD`
 
-Rotating `APP_PASSWORD` invalidates every session immediately: the HMAC signing
-key is derived from the password itself, so old 7-day tokens stop verifying the
-moment it changes.
+The gate is on only when `APP_PASSWORD` is set and there is something
+server-side to protect: `TOGGL_API_TOKEN` or `MONGODB_URI` (`gateEnabled()` in
+`lib/serverAuth.ts`).
 
-**How often Toggl is polled** is `TOGGL_CACHE_INTERVAL`, which only does
-anything alongside `TOGGL_API_TOKEN` in Toggl mode. While it is set, the shared
-server-side cache is on and the per-device "Refresh interval" picker disappears
-from Settings — with one server-held token every viewer is the same user looking
-at the same data, so one cadence serves them all. Toggl's Free plan allows **30
-requests/hour per account**, which is one per 120s; `env:check` warns below that.
+- `MONGODB_URI` without `APP_PASSWORD` is an **error**. The store and sync
+  routes write and refuse to do so unauthenticated, so the deployment would boot
+  and report itself misconfigured.
+- `TOGGL_API_TOKEN` without `APP_PASSWORD` is a warning in deployments: anyone
+  with the URL can read your time entries. A public dashboard is allowed.
+- `APP_PASSWORD` with neither has no effect.
 
-**Which PDF templates the export dialog offers** is
-`PDF_TEMPLATE_PACK_REPO`, and it is the one variable here that is read at BUILD
-time rather than at runtime. Before `next build` (and before `next dev`),
-`scripts/sync-pack.mjs` checks that repository out into `pdf-templates/`, and
-the app compiles its templates in alongside its own; see "Private template
-packs" in README.md for what a pack is. Unset, nothing is fetched and the app
-offers only the generic **Timesheet** template it ships — which is a supported
-deployment, and what a plain clone of this repository does.
+The session signing key is derived from the password, so changing
+`APP_PASSWORD` invalidates every 7-day session at once.
 
-- What is compiled in is decided by the **directory**, not by the variable: the
-  variable says what to fetch into `pdf-templates/`, and the alias resolves
-  against that directory existing. Clearing the variable on a machine that has
-  already synced therefore stops the updates but keeps the pack — the script
-  prints exactly that, and `rm -rf pdf-templates` is how you build without one.
-  It never deletes a checkout itself: it cannot tell one it made from one you
-  cloned by hand. A deployment starts from a fresh clone, so there the variable
-  is the whole story.
+### Toggl polling: `TOGGL_API_TOKEN` and `TOGGL_CACHE_INTERVAL`
 
-- The remote must be **https** in a deployment. There is no ssh key in a Vercel
-  build, so an ssh remote cannot be fetched there; `env:check` rejects it as an
-  error rather than letting the build discover it. Locally, ssh is the right
-  form — your own key already has access and no token is needed.
+With `TOGGL_API_TOKEN` set, the server holds the token and Settings hides the
+token field. `TOGGL_CACHE_INTERVAL` (seconds, or `1`/`true`/`on`/`yes` for the
+180 s default) turns on a shared server-side cache. It only applies with
+`TOGGL_API_TOKEN` in Toggl mode. While it is set, Settings hides the per-device
+"Refresh interval" picker, since every viewer sees the same data.
+
+Toggl's Free plan allows 30 requests per hour per account (one per 120 s).
+`env:check` warns below 120. The app clamps values under 30 s to 30 s.
+
+### PDF templates: `PDF_TEMPLATE_PACK_REPO`, `_REF`, `_TOKEN`
+
+These are read at build time. Before `next dev` and `next build`,
+`scripts/sync-pack.mjs` checks the repository out into `pdf-templates/` and the
+app compiles its templates in. See README → "Private template packs". Unset,
+nothing is fetched and the app offers only its generic Timesheet template.
+
+- What gets compiled in depends on whether `pdf-templates/` exists, not on the
+  variable. Clearing the variable stops updates but keeps an existing checkout;
+  `rm -rf pdf-templates` removes it. The script never deletes a checkout. A
+  deployment starts from a fresh clone, so there the variable decides.
+- Deployments must use the **https** remote: a Vercel build has no ssh key, and
+  `env:check` rejects an ssh remote outside dev. Locally, ssh works with your
+  own key and needs no token.
 - A private pack over https needs `PDF_TEMPLATE_PACK_TOKEN`: a GitHub
-  fine-grained PAT with **Contents: Read** on that one repository, marked
-  Sensitive in Vercel. It expires, and the first sign is a build failing at the
-  checkout.
-- `PDF_TEMPLATE_PACK_REF` pins a branch, tag or commit; blank means `main`. Pin
-  it to a commit when a change in the pack should not be able to alter the next
-  deployment of this app on its own.
-- A configured pack that cannot be fetched **fails the build**. Continuing would
-  produce a green deployment whose export dialog had quietly lost every layout
-  its documents are filed under — the same failure shape `APP_MODE` guards
-  against. Offline on a laptop is the one exception: a checkout already on disk
-  is kept and the dev server starts.
+  fine-grained PAT with **Contents: Read** on that repository, marked Sensitive
+  in Vercel. When it expires, builds fail at the checkout.
+- `PDF_TEMPLATE_PACK_REF` is a branch, tag or commit; blank means `main`. Pin a
+  commit if pack changes should not reach the next deployment on their own.
+- A configured pack that cannot be fetched **fails the build**, so a deployment
+  never ships without its templates. The exception is a network failure when a
+  checkout is already on disk: the script keeps it and carries on.
+
+### Timestamping: `TSA_URL` and `TSA_CREDENTIALS`
+
+`TSA_URL` is an RFC 3161 timestamp authority, proxied by `/api/timestamp`. With
+it set, signed PDF exports are PAdES-B-T instead of B-B, so signatures keep
+verifying after the signing certificate expires. Only a hash is sent. Blank
+turns timestamping off. Free authorities (DigiCert, freetsa.org) work in Adobe,
+but the EU DSS validator reports them as INDETERMINATE because they are not on
+the EU Trust List; a clean DSS report needs a qualified authority such as I.CA
+or PostSignum. `TSA_CREDENTIALS` is `user:password` for HTTP Basic, ignored
+without `TSA_URL`. Both are blank locally and in production. See
+`docs/pdf-signing-v2.md`.
 
 ## Getting a working .env
 
 ### By hand
 
-Nothing here depends on 1Password. Copy the template and fill it in:
-
 ```bash
 cp .env.tpl .env
-pnpm env:check     # says what is missing or contradictory
+pnpm env:check     # reports what is missing or contradictory
 pnpm dev
 ```
 
-One line reads `op://…` and is a placeholder for a value you supply:
-`TOGGL_API_TOKEN`, from the bottom of https://track.toggl.com/profile. Blank it
-instead and the app falls back to asking for a token in Settings, which is
-enough to see the dashboard. Nothing else in the file needs touching — the
-remaining live line is a literal, and the rest is a commented-out block you
-enable only to work on settings sync or standalone mode.
+Then edit `.env`:
+
+- `TOGGL_API_TOKEN` holds a 1Password reference. Replace it with your token
+  from the bottom of https://track.toggl.com/profile, or blank it and enter a
+  token in Settings instead.
+- `PDF_TEMPLATE_PACK_REPO` points at a private repository. Blank it unless you
+  have access, or the dev server fails at the pack checkout.
 
 ### With 1Password
-
-This project keeps the secrets in 1Password and generates `.env` from the
-template, so a new machine needs no hand-editing and no file transfer:
 
 ```bash
 git clone …
@@ -156,297 +136,223 @@ pnpm env:check
 pnpm dev
 ```
 
-`op inject` resolves every reference in the file and refuses to write anything
-if one of them fails, so a broken pull cannot leave a half-written `.env`
-behind.
+`op inject` writes nothing if any reference fails, so a failed pull never leaves
+a half-written `.env`.
 
 ## Running locally
 
 ```bash
 pnpm dev        # starts MongoDB, then next dev on :3000
-pnpm devsafe    # same, minus a stale .next
-pnpm db         # just the database, for a longer session
-pnpm db:stop    # and down again
+pnpm devsafe    # deletes .next, then next dev (does not start MongoDB)
+pnpm db         # only the database
+pnpm db:stop    # stop it
 ```
 
-`pnpm dev` brings `docker compose` up before Next and leaves the database as it
-found it: if the container was already running — because you ran `pnpm db` in
-another terminal — Ctrl-C leaves it running. If `pnpm dev` started it, Ctrl-C
-takes it down.
+If `pnpm dev` started the container, Ctrl+C stops it. If it was already running
+(from `pnpm db`), it is left running.
 
-The container is `mongo:8` on **port 27018**, not Mongo's default 27017, so a
-MongoDB you already run on this machine keeps working and nothing here can be
-mistaken for it. There is no authentication: it is bound to localhost and holds
-throwaway data, and the whole point of a local database is that it cannot be the
-production one. Data survives `pnpm db:stop` in the `mongodata` volume; to start
-genuinely empty, `docker compose down -v`.
+The container is `mongo:8` on port **27018**, so a MongoDB already on port
+27017 keeps working. It has no authentication: it binds to 127.0.0.1 only and
+holds throwaway data. Data survives `pnpm db:stop` in the `mongodata` volume;
+`docker compose down -v` deletes it.
 
-Two things about local dev worth knowing before they surprise you:
+Two things to know:
 
-- **You share production's Toggl rate limit.** The dev item holds the same
-  personal API token, and Toggl counts requests per account. `.env.tpl` sets
-  `TOGGL_CACHE_INTERVAL=600` — 6 requests/hour — for that reason, which also
-  means the local dashboard is deliberately stale. Lower it when you are working
-  on data rather than layout, and remember the two deployments add up. Blanking
-  it is not the cheap option: with no shared cache every browser refresh becomes
-  its own upstream request.
-- **There is no password locally, and no database.** `.env.tpl` ships
-  `APP_PASSWORD` blank and the whole MongoDB block commented out, so the default
-  `pnpm dev` is the plain Toggl dashboard: nothing to unlock, nothing to
-  connect. Production needs the gate because the server holds the Toggl token
-  and the URL is reachable; localhost is neither.
+- **You share production's Toggl rate limit.** Local dev uses the same
+  personal token, and Toggl counts per account. `.env.tpl` sets
+  `TOGGL_CACHE_INTERVAL=600` (6 requests/hour), so the local dashboard is
+  stale by design. Lower it when working on data, remembering the two budgets
+  add up. Blanking it costs more: without the shared cache every browser
+  refresh is an upstream request.
+- **There is no password or database by default.** `.env.tpl` leaves
+  `APP_PASSWORD` blank and the MongoDB block commented out. To work on settings
+  sync or standalone mode, uncomment that block (keep `APP_MODE=toggl` for sync,
+  drop it for standalone) and set `APP_PASSWORD` to anything, for example
+  `localdev`. Set both or neither: `env:check` fails on a database without a
+  password. When the gate is on, `env:check` prints a note saying so.
 
-  Turn it on when you work on **settings sync or standalone mode** — uncomment
-  the three-line block at the bottom of `.env.tpl` and set `APP_PASSWORD` to
-  anything (`localdev` is what these docs assume). Both halves together, never
-  one: those routes write, and `pnpm env:check` fails on a database without a
-  gate. `pnpm env:check` also notes when the gate is active, so a password
-  prompt is never a mystery.
+## Running op without a prompt per command
 
-## Authorizing op without a prompt per command
-
-With only the desktop app integration, every `op` invocation asks for biometrics
-or a PIN, which makes scripted use painful. A service account authenticates by
-token instead, and can be scoped to a single vault:
+With only the desktop app integration, every `op` call asks for biometrics or a
+PIN. A service account authenticates by token and can be limited to one vault:
 
 ```bash
 op service-account create dev-machine --vault "Development:read_items"
 ```
 
-Store the token it prints once, in `OP_SERVICE_ACCOUNT_TOKEN`. `pnpm env:pull`
-then runs without interaction.
+Put the token it prints in `OP_SERVICE_ACCOUNT_TOKEN` in your shell profile.
+`pnpm env:pull` then runs without interaction.
 
-While that variable is set, every `op` command uses the service account and sees
-only the vault it was granted. To act as yourself for one command, clear it for
-that invocation: `OP_SERVICE_ACCOUNT_TOKEN= op …`, or
-`env -u OP_SERVICE_ACCOUNT_TOKEN op …`. A service account cannot read Personal
-or Private vaults at all, which is the reason project config does not live in
-those.
+While that variable is set, every `op` command uses the service account and
+sees only its vault. To act as yourself for one command:
+`OP_SERVICE_ACCOUNT_TOKEN= op …`. Service accounts cannot read Personal or
+Private vaults, which is why project config is not kept there.
 
 ## The 1Password layout
 
-One vault, `Development`, holds the config for every project rather than one
-vault per repository. A vault is an access boundary, deciding who and what can
-read its contents, not a namespace. Splitting per repository multiplies the
-sharing decisions without separating anything, and a service account for CI
-would have to be granted each vault separately. Keeping app config out of
-`Personal` is the separation that pays off.
-
-The item carries the project and the environment, as `<repo>-dev`,
-`<repo>-preview` and `<repo>-prod`, all category Secure Note:
+The `Development` vault holds config for every project. A vault is an access
+boundary, not a namespace, so the item name carries the project and
+environment: `<repo>-dev`, `<repo>-preview`, `<repo>-prod`, all Secure Notes.
 
 ```
 Development
-├── toggl-track-quick-view-dev       1 field
-├── toggl-track-quick-view-preview   6 fields
-├── toggl-track-quick-view-prod      3 fields
-├── vercel-zicha-dev-ci              1 field   (team-wide, not per-project)
-└── …-dev / …-preview / …-prod for every other project
+├── toggl-track-quick-view-dev
+├── toggl-track-quick-view-preview
+├── toggl-track-quick-view-prod
+├── vercel-zicha-dev-ci          (shared across projects)
+└── …items for other projects
 ```
 
-Each item is a complete snapshot of one environment, so switching hosting or
-rotating a service means reading one item instead of hunting through a password
-manager.
+Each value is a custom field labelled with the exact variable name, so a
+reference like `Development/toggl-track-quick-view-prod/MONGODB_URI` resolves.
+Use the password field type for secrets and text for the rest.
 
-Add each value as a custom field whose label is exactly the variable name. That
-is what makes a reference like `Development/toggl-track-quick-view-prod/MONGODB_URI`
-resolve. Use the password field type for secrets, since it stays concealed in
-the UI, and text for the rest.
+The references are literals in the committed templates. Renaming the vault or
+an item breaks `pnpm env:pull` unless the templates change in the same commit.
 
-Renaming the vault or an item breaks `pnpm env:pull` for everyone: the
-references are literals in the committed templates. Change the templates in the
-same commit.
+### toggl-track-quick-view-dev
 
-### Item toggl-track-quick-view-dev
-
-| Field label | Where the value comes from |
+| Field | Source |
 | --- | --- |
-| `TOGGL_API_TOKEN` | The same personal token as production — bottom of https://track.toggl.com/profile. Toggl issues one per account, so there is no separate dev credential to have. |
+| `TOGGL_API_TOKEN` | Bottom of https://track.toggl.com/profile. The same token as production; Toggl issues one per account. |
 
-This is the only value local development takes from 1Password. Everything else
-it needs is a literal in `.env.tpl` — the cache interval, and the commented-out
-Docker connection string, database name and `APP_MODE` that turn on sync. None
-of them is a secret, and keeping them in git means a diff of that file shows a
-real configuration change. `APP_PASSWORD` is blank there, so there is no local
-password to look up.
+Everything else local dev needs is a literal in `.env.tpl`. There is no
+`APP_PASSWORD` field: local dev has no gate by default, and when you turn it on
+you choose the value.
 
-Note there is no `APP_PASSWORD` field in this item, and that is not an
-oversight: local development has no gate by default, and when you opt in the
-value is yours to invent.
+### toggl-track-quick-view-prod
 
-### Item toggl-track-quick-view-prod
-
-| Field label | Where the value comes from |
+| Field | Source |
 | --- | --- |
-| `TOGGL_API_TOKEN` | https://track.toggl.com/profile, bottom of the page. Regenerating it there invalidates the old one immediately. |
-| `MONGODB_URI` | MongoDB Atlas, the `timetrack-quick-view` cluster, Connect > Drivers. Atlas shows the password only when the user is created. |
-| `APP_PASSWORD` | Chosen, not issued. Recovered by hand — see below. |
-| `PDF_TEMPLATE_PACK_TOKEN` | GitHub → Settings → Developer settings → Personal access tokens → Fine-grained. Repository access limited to `toggl-track-quick-view-pdf-templates`, permission **Contents: Read**. Shown once at creation. |
+| `TOGGL_API_TOKEN` | Bottom of https://track.toggl.com/profile. Regenerating it there invalidates the old one immediately. |
+| `MONGODB_URI` | MongoDB Atlas, cluster `timetrack-quick-view`, Connect > Drivers. Atlas shows the password only when the user is created. |
+| `APP_PASSWORD` | Chosen by us. |
+| `PDF_TEMPLATE_PACK_TOKEN` | GitHub → Settings → Developer settings → Personal access tokens → Fine-grained. Repository access: `toggl-track-quick-view-pdf-templates` only, **Contents: Read**. Shown once. |
 
-`APP_PASSWORD` is marked Sensitive in Vercel, so neither the CLI nor the
-dashboard can ever read it back. When this item was created the live value
-existed nowhere else, and it was recovered by hand afterwards. That gap is the
-normal case for a Sensitive variable, not an accident — Vercel is where a secret
-RUNS, never where it is kept.
+Vercel never returns the value of a Sensitive variable, so 1Password is where
+secrets are kept and Vercel is only where they run. If a value has not been
+recovered yet, create the field with the literal `replaceMe`. A blank custom
+field is hidden in the 1Password UI, and `validateEnv` rejects `replaceMe`, so
+the gap stays visible.
 
-The convention for such a gap: create the field holding the literal
-`replaceMe`. A blank custom field does not show up in the 1Password UI at all,
-so it would be invisible rather than obviously unfinished, and `op inject`
-would fail outright. `validateEnv` rejects that exact string, so a
-`replaceMe` that nobody got round to replacing can never be mistaken for a real
-value — `pnpm env:pull:prod` produces a deliberately unusable `.env.prod` until
-someone pastes the real one in.
+`MONGODB_DB` is not set in production (neither here nor in Vercel), so
+production uses the `toggl-quick-view` default. The cluster and the database in
+the connection-string path are both called `timetrack-quick-view`, but the path
+is ignored: the live data is in `toggl-quick-view`.
 
-`MONGODB_DB` is **not** in this item, because it is not set in Vercel either.
-Production therefore uses the `toggl-quick-view` default from
-`lib/store/mongo.ts`. Worth knowing when you go looking for the data: the Atlas
-cluster and the database named in the connection string path are both
-`timetrack-quick-view`, but `client.db()` is always called with an explicit
-name, so the path is ignored and the live sync documents sit in
-`toggl-quick-view`.
+### toggl-track-quick-view-preview
 
-### Item toggl-track-quick-view-preview
+Preview has no committed template, so this item is its only full record,
+non-secret values included.
 
-Preview has no committed template, so this item is the whole record of it —
-non-secret rows included.
-
-| Field | Value | How preview differs from production |
+| Field | Value | Compared with production |
 | --- | --- | --- |
-| `APP_MODE` | `toggl` | Same row in Vercel, shared with production. |
-| `TOGGL_API_TOKEN` | — | Same row in Vercel, shared with production. |
-| `TOGGL_CACHE_INTERVAL` | `170` | Same row in Vercel, shared with production. |
-| `MONGODB_URI` | — | Same connection string as production, byte for byte: same Atlas cluster, same credentials. |
-| `MONGODB_DB` | `timetrack-quick-view` | **Preview-only, and load-bearing.** |
-| `APP_PASSWORD` | — | **Its own value**, so a leaked preview password cannot open production. |
-| `PDF_TEMPLATE_PACK_REPO` | — | Same row in Vercel, shared with production. |
-| `PDF_TEMPLATE_PACK_TOKEN` | — | Same row in Vercel, shared with production — one PAT reads the pack for both. |
+| `APP_MODE` | `toggl` | Same Vercel variable. |
+| `TOGGL_API_TOKEN` | secret | Same Vercel variable. |
+| `TOGGL_CACHE_INTERVAL` | `170` | Same Vercel variable. |
+| `MONGODB_URI` | secret | Identical connection string: same cluster, same credentials. |
+| `MONGODB_DB` | `timetrack-quick-view` | **Preview only. Keeps preview out of production data.** |
+| `APP_PASSWORD` | secret | Its own value, so a leaked preview password does not open production. |
+| `PDF_TEMPLATE_PACK_REPO` | https remote | Same Vercel variable. |
+| `PDF_TEMPLATE_PACK_TOKEN` | secret | Same Vercel variable; one PAT serves both. |
 
-Preview and production share one Atlas cluster and one database user. What keeps
-a branch deployment out of the live synced setup is `MONGODB_DB` alone:
-production leaves it unset and lands in the `toggl-quick-view` default, preview
-sets it to `timetrack-quick-view`. Two names in two places, and the separation
-is that difference.
+Preview and production share one Atlas cluster and one database user. Only
+`MONGODB_DB` keeps a branch deployment from writing to the live settings, so the
+spec marks it required in preview: delete it in Vercel and the next preview
+build fails. For real isolation, give preview its own database user scoped to
+`timetrack-quick-view`, or its own cluster, and put that connection string in
+this item.
 
-That is thin enough to be worth a guard, so `scripts/env-spec.mjs` marks
-`MONGODB_DB` **required in preview**. Delete that row in Vercel and the next
-preview build fails instead of quietly writing a branch's settings over the real
-ones. Nothing enforces the production side, because production's value is the
-code default — there is no row to delete.
+### vercel-zicha-dev-ci
 
-If you would rather have real isolation than a guarded convention, give preview
-its own database user scoped to `timetrack-quick-view`, or its own cluster, and
-put that connection string in this item instead. Nothing else has to change.
+This item configures the `zicha-dev` Vercel team, not an app environment.
+GitHub Actions use its `VERCEL_TOKEN` to re-alias preview domains, for this
+project's `beta.track.zicha.dev` and zicha-travel's `preview.zicha.travel`.
 
-### Item vercel-zicha-dev-ci
-
-The odd one out: it carries no application configuration, and it is **not
-scoped to this repository**. `VERCEL_TOKEN` is a Vercel access token for the
-`zicha-dev` team, used by GitHub Actions to re-alias preview domains — this
-project's `beta.track.zicha.dev` and zicha-travel's `preview.zicha.travel`,
-from the one item.
-
-Hence the name. The `<repo>-<env>` convention says the item names what it
-configures, and this configures a team, not an app environment. One shared
-token also means one thing to rotate.
-
-| Field | Where the value comes from |
+| Field | Source |
 | --- | --- |
-| `VERCEL_TOKEN` | vercel.com → Account Settings → Tokens, scoped to the `zicha-dev` team, no expiration. Shown once at creation. |
+| `VERCEL_TOKEN` | vercel.com → Account Settings → Tokens, scoped to the `zicha-dev` team, no expiration. Shown once. |
 
-It lives in 1Password rather than only in GitHub for the usual reason: GitHub
-Actions secrets are write-only, so a token that exists only there cannot be
-copied to a second repository, audited, or recovered. Push it to a repo with:
+GitHub Actions secrets cannot be read back, so the token is kept in 1Password.
+To set it on a repository, read it into a variable and check it is non-empty
+before calling `gh`:
 
 ```bash
-op read "op://Development/vercel-zicha-dev-ci/VERCEL_TOKEN" \
-  | gh secret set VERCEL_TOKEN -R vojtechzicha/<repo>
+token=$(op read "op://Development/vercel-zicha-dev-ci/VERCEL_TOKEN") \
+  && [ -n "$token" ] \
+  && printf %s "$token" | gh secret set VERCEL_TOKEN -R vojtechzicha/<repo>
 ```
 
-Two traps, both of which have already bitten:
+Two ways this goes wrong, both silent in GitHub:
 
-- `op read` can fail (an unanswered biometric prompt times out), and a naive
-  pipe then feeds `gh` an EMPTY value, overwriting a working secret with
-  nothing. Read into a variable and check its length before setting.
-- `gh secret set` with no value argument reads **stdin**. With no terminal
-  attached — inside an editor's shell, a script, an agent — there is no prompt
-  and no error: it silently stores an empty string. The workflow's own
-  `VERCEL_TOKEN` guard is what surfaces that.
+- If `op read` fails (for example, a biometric prompt times out), a plain pipe
+  into `gh` stores an empty secret over the working one.
+- `gh secret set` with neither `--body` nor a pipe reads stdin. With no
+  terminal attached (an editor shell, a script, an agent) it stores an empty
+  string without error.
 
-Neither failure is visible from GitHub, because secrets cannot be read back.
-The only real confirmation is a workflow run that succeeds.
+The workflow fails on an empty `VERCEL_TOKEN`, and a successful run is the only
+confirmation that the secret works.
 
 ## Adding a variable
 
-The schema travels through git. Only the value is manual.
+1. Add it to `scripts/env-spec.mjs`: name, scope, description, format check,
+   and a `DEPLOYMENT_TOPOLOGY` entry if our deployments need it.
+2. Add it to `.env.tpl` and `.env.prod.tpl`. A preview-only variable skips this:
+   mark it `appliesTo: ['preview']`.
+3. If it is a secret, add the field to the 1Password item(s).
+4. Set it in Vercel under Settings → Environment Variables.
 
-1. In code: add it to `scripts/env-spec.mjs` with its name, scope, description,
-   where it is required, and any format check.
-2. In both templates: `.env.tpl` and `.env.prod.tpl`. A variable that only
-   applies to preview deployments skips this step: mark it
-   `appliesTo: ['preview']` and leave the templates alone.
-3. In 1Password, if it is a secret: add the field to the `-dev`, `-preview` or
-   `-prod` item.
-4. In Vercel: Settings, Environment Variables.
+Steps 1 and 2 go in the pull request. Steps 3 and 4 need someone with the
+credentials, so list them in the PR description. Other machines pick up the
+change with `git pull && pnpm env:pull`.
 
-Steps 1 and 2 are the pull request. Steps 3 and 4 are paste operations only a
-human with the credentials can do, so note them in the PR body. Other machines
-pick the change up with `git pull && pnpm env:pull`.
-
-`pnpm env:check` runs at the start of `vercel-build`, before `next build`. A
-variable declared in code but missing in Vercel fails the build, and it fails
-the pull request's own preview deployment first, so the gap surfaces at review
-time rather than in production.
+`pnpm env:check` runs at the start of `vercel-build`. A required variable that
+is missing in Vercel fails the pull request's own preview build.
 
 ## Production
 
-Vercel stays the source of truth for what the deployment runs. 1Password holds
-the recoverable copy and `.env.prod.tpl` documents the shape. Nothing pushes
-automatically from 1Password into Vercel, because an accidental sync in the
-wrong direction is far worse than a rare manual paste.
+Vercel is the source of truth for what production runs. 1Password holds the
+recoverable copy and `.env.prod.tpl` documents the shape. Nothing syncs
+1Password into Vercel automatically; values are pasted by hand.
 
-The other direction is useful when you need to reproduce a production problem
-locally:
+To reproduce a production problem locally:
 
 ```bash
 vercel env pull .env.prod --environment production
 ```
 
-Remember that sensitive variables come back as the literal `[SENSITIVE]` —
-which is every secret this project has. `validateEnv` rejects that string
-precisely because a file full of it looks fully configured and fails at the
-service instead.
+Sensitive variables (every secret here) come back as the literal `[SENSITIVE]`.
+`validateEnv` rejects that value, since a file full of it looks configured but
+fails at the service.
 
-## Variables that are not in the templates
+## Variables not in the templates
 
-Deliberately absent:
-
-- Platform-provided: `NODE_ENV`, `PORT`, `CI`, `VERCEL`, `VERCEL_ENV`,
+- Set by the platform: `NODE_ENV`, `PORT`, `CI`, `VERCEL`, `VERCEL_ENV`,
   `VERCEL_GIT_COMMIT_SHA`.
-- Build-derived: `NEXT_PUBLIC_BUILD_ID` — computed by `next.config.js` from the
-  git commit and baked into the bundle for the post-deploy refresh hint. Nobody
-  sets it.
-- One-off script flags: `TZ`, which `scripts/check-windows.ts` reassigns per
-  case to exercise DST boundaries.
-- Machine-level tooling: `OP_SERVICE_ACCOUNT_TOKEN` belongs in your shell
-  profile, not in a generated `.env` on every dev machine.
-  `VERCEL_OIDC_TOKEN` is written into `.env.local` by the Vercel CLI and nothing
-  in this app reads it.
+- Computed by `next.config.js` at build time: `NEXT_PUBLIC_BUILD_ID` (from the
+  git commit, for the post-deploy refresh hint) and `NEXT_PUBLIC_VERCEL_ENV`
+  (from `VERCEL_ENV`, for the preview app name in `lib/pwa.ts`).
+- Script flags: `TZ`, which `scripts/check-windows.ts` changes per case to test
+  DST boundaries.
+- Machine tooling: `OP_SERVICE_ACCOUNT_TOKEN` belongs in your shell profile.
+  `VERCEL_OIDC_TOKEN` is written to `.env.local` by the Vercel CLI and unused.
 
 ## Troubleshooting
 
 | Symptom | Cause |
 | --- | --- |
-| `op inject` errors on a reference | The field does not exist in that item, or its label does not match the variable name exactly. |
+| `op inject` errors on a reference | The field is missing from that item, or its label does not match the variable name exactly. |
 | `pnpm env:pull` writes nothing | Not signed in. Run `op signin`. |
-| `op: command not found` | The install directory is not on `PATH`. Add it and restart the terminal. |
-| A template change never takes effect | A leftover `.env.local` overrides the generated `.env`. `pnpm env:check` prints a note when one exists — delete it. The Vercel CLI recreates it on `vercel link` and `vercel env pull`. |
-| A variable is set but the service rejects it | Its value may be the literal `[SENSITIVE]` copied out of `vercel env pull`, or an unreplaced `replaceMe`. `pnpm env:check` catches both. |
-| The app says it is misconfigured | `MONGODB_URI` without `APP_PASSWORD`. Set one, or unset the other. |
-| Settings sync is missing from the UI | Sync needs both `MONGODB_URI` and `APP_PASSWORD`. In Toggl mode it also needs `APP_MODE=toggl`, or the app switches to standalone instead of syncing. |
-| The dashboard shows an empty store instead of Toggl data | `APP_MODE=toggl` is missing while `MONGODB_URI` is set — standalone mode. |
-| Toggl starts answering 429 | The hourly budget is per account and local dev shares it with production. Raise `TOGGL_CACHE_INTERVAL` in `.env`. |
-| The "Refresh interval" picker vanished from Settings | Expected whenever `TOGGL_CACHE_INTERVAL` is set: the shared server cache drives the cadence for everyone. |
-| The build fails at `pdf-pack ERROR` | The configured template pack could not be checked out. Usually an expired `PDF_TEMPLATE_PACK_TOKEN`, or an ssh remote in a deployment. |
-| The export dialog lost its PDF template picker | Only one template is registered, so there is nothing to pick — i.e. no pack is checked out. `pnpm pack:sync` locally; check `PDF_TEMPLATE_PACK_REPO` in a deployment. |
-| `pnpm dev` fails to start the database | `docker compose` is not available, or port 27018 is taken. `docker compose ps` and `pnpm db` on their own show the real error. |
-| The preview domain stops following deployments | The `VERCEL_TOKEN` repo secret is missing, empty or revoked. Check the newest `Alias preview domain` run; re-push it from `vercel-zicha-dev-ci` as above. |
+| `op: command not found` | The install directory is not on `PATH`. |
+| A template change never takes effect | A `.env.local` overrides `.env`. `pnpm env:check` notes when one exists; delete it. `vercel link` and `vercel env pull` recreate it. |
+| A variable is set but the service rejects it | The value is `[SENSITIVE]` from `vercel env pull` or an unreplaced `replaceMe`. `pnpm env:check` catches both. |
+| The app says it is misconfigured | `MONGODB_URI` is set without `APP_PASSWORD`. |
+| Settings sync is missing from the UI | Sync needs `MONGODB_URI` and `APP_PASSWORD`, plus `APP_MODE=toggl` to keep Toggl as the source. |
+| The dashboard shows an empty store instead of Toggl data | `MONGODB_URI` is set without `APP_MODE=toggl`: standalone mode. |
+| Toggl returns 429 | The hourly budget is per account and local dev shares it with production. Raise `TOGGL_CACHE_INTERVAL` in `.env`. |
+| The "Refresh interval" picker is gone from Settings | Expected while `TOGGL_CACHE_INTERVAL` is set. |
+| The build fails with `pdf-pack  ERROR` | The template pack could not be checked out. Usually an expired `PDF_TEMPLATE_PACK_TOKEN`, an ssh remote in a deployment, or a local ssh remote you have no access to. |
+| The export dialog has no PDF template picker | Only one template is registered, so no pack is checked out. Run `pnpm pack:sync` locally; check `PDF_TEMPLATE_PACK_REPO` in a deployment. |
+| `pnpm dev` fails to start the database | Docker Compose is unavailable or port 27018 is taken. `pnpm db` on its own shows the error. |
+| `beta.track.zicha.dev` stops following deployments | The `VERCEL_TOKEN` repo secret is missing, empty or revoked. Check the latest "Alias preview domain" run and re-set the secret from `vercel-zicha-dev-ci`. |

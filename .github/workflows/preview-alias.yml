@@ -1,21 +1,10 @@
-# Points beta.track.zicha.dev at the newest successful PREVIEW deployment,
-# whatever branch it came from ("last preview wins"). Vercel's GitHub
-# integration emits a deployment_status event for every deployment; this reacts
-# to the successful Preview ones and re-aliases the domain.
+# Points beta.track.zicha.dev at the newest successful Preview deployment from
+# any branch. Production deployments are ignored.
 #
-# The fixed host is not just convenience. Two things this app keeps are
-# per-ORIGIN, so a fresh *-<hash>.vercel.app URL per deployment loses them both:
+# A stable origin keeps the password-gate session (localStorage, per origin)
+# and an installed preview PWA working across deployments.
 #
-#   - the password-gate session (localStorage `tqv.auth.v1`, lib/source/auth.ts).
-#     Preview is gated, so without a stable origin you re-enter the preview
-#     password on every single deployment instead of once a week.
-#   - the PWA. app/manifest.ts declares a standalone app with start_url '/';
-#     an installed preview only stays installed while the origin holds still.
-#
-# Production deployments are ignored — this never touches track.zicha.dev.
-#
-# Requires the VERCEL_TOKEN repo secret (a Vercel access token with access to
-# the zicha-dev team). Without it the step fails; nothing else is affected.
+# Needs the VERCEL_TOKEN repo secret: a Vercel token for the zicha-dev team.
 name: Alias preview domain
 
 on:
@@ -23,8 +12,7 @@ on:
 
 permissions: {}
 
-# Two deployments finishing close together would otherwise race, and the loser
-# could alias the domain last. Newest run wins; the older one is cancelled.
+# Two deployments finishing together would race; the newest run wins.
 concurrency:
   group: preview-alias
   cancel-in-progress: true
@@ -42,7 +30,7 @@ jobs:
           URL: ${{ github.event.deployment_status.environment_url || github.event.deployment_status.target_url }}
         run: |
           if [ -z "$VERCEL_TOKEN" ]; then
-            echo "::error::VERCEL_TOKEN secret is not set — cannot alias the preview domain."
+            echo "::error::VERCEL_TOKEN secret is not set, so the preview domain cannot be aliased."
             exit 1
           fi
           echo "Aliasing $URL → beta.track.zicha.dev"

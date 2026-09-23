@@ -1,16 +1,12 @@
-// The Timesheet template — the app's own PDF layout, and the one every clone
-// of this repository gets.
+// The Timesheet template: the app's own PDF layout, available in every clone.
+// Also the worked example README.md points to for writing a template.
 //
-// It prints what the screen shows: the per-week grid in Summary view, the
-// per-day list in Individual view, under a plain masthead carrying the title,
-// the person and the period. Deliberately neutral: no logo, no accent colour,
-// no embedded typeface. It renders in pdfmake's bundled Roboto, so it adds
-// nothing to the export bundle and needs no font plumbing — the price is
-// Roboto's character map (Latin and Latin Extended, so Czech diacritics are
-// fine; Cyrillic and Greek are not). A template that has to set text in
-// another script embeds its own cuts through `loadFonts` (see ./types).
-//
-// This file is also the worked example the README points at for writing one.
+// Prints what the screen shows (the per-week grid in Summary view, the per-day
+// list in Individual view) under a plain masthead with title, person and
+// period. No logo, accent colour or embedded font. It uses pdfmake's bundled
+// Roboto, which covers Latin and Latin Extended (Czech is fine) but not
+// Cyrillic or Greek; a template that needs other scripts embeds fonts via
+// `loadFonts` (see ./types).
 
 import type { TDocumentDefinitions, Content, TableCell } from 'pdfmake/interfaces';
 import {
@@ -27,18 +23,16 @@ const INK = '#1F2328';
 const MUTED = '#6B7280';
 const RULE = '#D6D9DE';
 const SURFACE = '#F3F4F6';
-/** Rows the on-screen view flags (untagged / multi-tagged entries). */
+/** Warning rows (untagged / multi-tagged). The model currently exports none. */
 const WARN = '#B45309';
 
-/** A4 margins, in points: ~17 mm sides, 20 mm top, 18 mm bottom (footer room). */
+/** A4 margins in points [left, top, right, bottom]: ~17 mm sides, ~20 mm top and bottom. */
 const MARGINS: [number, number, number, number] = [48, 56, 48, 56];
 const CW_PORTRAIT = 595.28 - 2 * 48;
 const CW_LANDSCAPE = 841.89 - 2 * 48;
 
-// Fixed en-GB date conventions. The model's own labels follow the DEVICE
-// locale, which must not leak into a document that will be filed by someone
-// else — two exports of the same month should not read differently because
-// they were made on differently configured laptops.
+// Fixed en-GB dates. The model's labels follow the device locale, and two
+// exports of the same month should read the same whichever machine made them.
 const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 const DAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 
@@ -49,13 +43,13 @@ const fmtDay = (ms: number): string => {
   return `${d.getDate()} ${MONTHS[d.getMonth()]}`;
 };
 
-/** "1 Jul – 31 Jul 2026". `toMs` is exclusive, so the last day is the tick before. */
+/** "1 Jul – 31 Jul 2026". `toMs` is exclusive. */
 function fmtRange(fromMs: number, toMs: number): string {
   const last = toMs - 1;
   return `${fmtDay(fromMs)} – ${fmtDay(last)} ${new Date(last).getFullYear()}`;
 }
 
-/** "Tue 07 Jul" — the day-header form, without the year. */
+/** "Tue 07 Jul", for day headers. */
 function fmtDayHead(ms: number): string {
   const d = new Date(ms);
   return `${DAYS[d.getDay()]} ${String(d.getDate()).padStart(2, '0')} ${MONTHS[d.getMonth()]}`;
@@ -74,9 +68,8 @@ function rule(width: number, weight: number, color: string, margin: [number, num
 }
 
 /**
- * The table look, shared by both views: a rule above and below the head, a
- * hairline between rows, a closing rule, no vertical lines and no zebra —
- * figures read better against white than against alternating bands.
+ * Shared table style: rules above and below the header, hairlines between
+ * rows, a closing rule, no vertical lines, no zebra striping.
  */
 function tableLayout(opts: { totalRow?: boolean } = {}) {
   return {
@@ -99,7 +92,7 @@ function tableLayout(opts: { totalRow?: boolean } = {}) {
   };
 }
 
-/** Title, person and period — page 1 only; page 2 onward gets the running head. */
+/** Title, person and period on page 1; later pages get the running head. */
 function masthead(doc: ExportDoc, width: number): Content[] {
   return [
     {
@@ -208,8 +201,8 @@ function individualContent(doc: IndividualDoc): Content[] {
       ]);
     }
     content.push({
-      // A fixed Time column: an 'auto' column may be squeezed by a long
-      // description and wrap a clock time mid-figure.
+      // Fixed Time width: an 'auto' column can be squeezed by a long
+      // description and wrap the time range.
       table: { headerRows: 1, widths: [64, 'auto', 'auto', '*'], body },
       layout: tableLayout(),
     });
@@ -246,8 +239,7 @@ function buildTimesheet(doc: ExportDoc): TDocumentDefinitions {
       author: doc.personName || undefined,
       subject: 'Timesheet',
     },
-    // Continuation pages repeat the document context and authorship — a page 2
-    // separated from page 1 should still say whose sheet it is, and for what.
+    // Later pages repeat title, period and person so a loose page is identifiable.
     header: (currentPage: number): Content =>
       currentPage === 1
         ? { text: '' }
@@ -294,6 +286,6 @@ export const timesheetTemplate: PdfTemplate = {
   name: 'Timesheet',
   description:
     'Your name, the period, and the per-week (Summary) or per-day (Individual) tables ' +
-    'exactly as shown on screen.',
+    'as shown on screen.',
   build: buildTimesheet,
 };

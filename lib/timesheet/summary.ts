@@ -1,6 +1,5 @@
-// Pure builder for the Summary timesheet view. Both the on-screen SummaryTimesheet
-// component and the exporters call this, so a CSV/XLSX/PDF export shows byte-identical
-// figures to what's on screen (same per-day quarter-hour rounding, same grouping).
+// Builder for the Summary timesheet. The on-screen view and the exporters both
+// call it, so exports show the same figures as the screen.
 
 import {
   addDays,
@@ -27,23 +26,23 @@ import { fitDescs } from './desc';
 import { UNTAGGED, MULTIPLE, projectBillingCode } from './constants';
 
 export interface Cell {
-  descs: string[]; // de-duplicated, original-cased, in first-seen order
-  // The cell's display/copy text: `descs` joined with "; " and — on billable
-  // cells — fitted within the optional length limit (see lib/timesheet/desc).
-  // Warning cells are never limited: their text points at the entries to fix.
+  descs: string[]; // distinct (case-insensitive), in first-seen order
+  // Display and copy text: `descs` joined with "; ". Billable cells are fitted to
+  // the length limit (lib/timesheet/desc); warning cells are not, because their
+  // text identifies the entries to fix.
   desc: string;
-  // True when the limit dropped/cut something; `descs` still holds the full parts.
+  // True when the limit dropped or cut something. `descs` keeps every part.
   descTruncated: boolean;
   seconds: number;
-  trimmableSeconds: number; // of `seconds`, how much came from "(X)"-marked entries
-  noTrimSeconds: number; // of `seconds`, how much came from "(!)"-marked entries (never trimmed)
+  trimmableSeconds: number; // "(X)" share of `seconds`
+  noTrimSeconds: number; // "(!)" share of `seconds`, never trimmed
 }
 
-// A normal row is one (project, billing-tag) pair; warning rows are the sentinels.
+// Metadata for a normal (project, billing code) row.
 export interface RowMeta {
   projectId: number;
   projectName: string;
-  tag: string; // displayed billing code (internal "(X)" marker stripped)
+  tag: string; // displayed billing code, markers stripped
 }
 
 export interface SummaryGrid {
@@ -61,13 +60,13 @@ export interface SummaryGrid {
   dayTotals: number[];
   /** Rounded total per row, aligned with `rows`. */
   rowTotals: number[];
-  /** Rounded grand total for the week (billed — i.e. after any overtime trim). */
+  /** Rounded billed total for the week, after any overtime trim. */
   grandTotal: number;
-  /** Billable seconds stripped per day index (0=Sat … 6=Fri) by the overtime cap. */
+  /** Seconds trimmed by the overtime cap per day index (0=Sat … 6=Fri). */
   overtimeByDay: number[];
-  /** Total billable seconds stripped this week by the overtime cap. */
+  /** Seconds trimmed by the overtime cap this week. */
   overtimeTotal: number;
-  /** Day indices (0=Sat … 6=Fri) marked as time off (holiday) this week. */
+  /** Holiday day indices (0=Sat … 6=Fri) this week. */
   holidays: Set<number>;
 }
 
@@ -77,42 +76,36 @@ export interface SummaryInput {
   nowMs: number;
   projects: SelectedProject[];
   billingTagPrefix: string;
-  // The rounding granularity in seconds (e.g. 900 = 15 min, 720 = 12 min).
+  // Rounding unit in seconds (e.g. 900 = 15 min, 720 = 12 min).
   roundingSeconds: number;
-  // Optional cap (characters) on each billable cell's merged description; the
-  // client's system rejects longer messages. null/absent = no limit.
+  // Character limit for each billable cell's description. null or absent means
+  // no limit.
   maxDescriptionLength?: number | null;
-  // When true, the week's billable total is trimmed down to `weeklyHours` (the
-  // contract disallows billing overtime); the trimmed time is reported separately.
-  // When false, neither input has any effect.
+  // When true, the billed total is trimmed to `weeklyHours` and the trimmed
+  // time is reported separately. When false, `weeklyHours` is unused.
   noOvertime: boolean;
   weeklyHours: number;
-  // The tag marking a time-off entry (state holiday etc.). Such an entry turns
-  // its day into a non-working day (like a weekend: no cap budget, no target)
-  // and is itself never billed or shown. Empty/absent falls back to the default.
+  // Tag marking a time-off entry (see isTimeOffEntry). Empty or absent means
+  // the default.
   timeOffTag?: string;
-  // Linked billing codes: projects whose entries carry another client's tags and
-  // bill here as one fixed row per day (see lib/timesheet/mapping).
+  // Projects that bill as one fixed row per day (see lib/timesheet/mapping).
   codeMappings?: CodeMapping[];
-  // When true, billing codes drop their parenthetical groups ("D123 (Phase 2)"
-  // rows as "D123") — after the "(X)"/"(!)" markers are interpreted, so those
-  // keep working. Codes differing only in the parenthetical share one row.
+  // Drop parenthetical groups from codes ("D123 (Phase 2)" → "D123"), after the
+  // markers are read. Codes that differ only there share a row.
   stripCodeParens?: boolean;
-  // When true, this workspace doesn't use billing codes: every entry bills to
-  // its PROJECT, whose name is the row. Nothing can be untagged or
-  // multi-tagged, and none of the billing-code machinery applies — no support
-  // tickets, no "(X)"/"(!)" markers, no parentheses strip, no linked codes.
+  // Bill every entry to its project, named by the row. Billing codes, support
+  // tickets, markers, the parentheses strip and linked codes do not apply.
   billByProject?: boolean;
 }
 
 /**
- * Build the Summary grid for one week: a grid of days (columns) × rows. A row is
- * normally a (project, billing-tag) pair — the same tag under two projects stays on
- * two separate rows. Each day's entries for a row are combined into one cell —
- * durations summed, descriptions merged without repeats — and rounded to the
- * configured unit so each day's cells still add up to that day's rounded total (no drift).
+ * Build the Summary grid for one week: days (columns) × rows. A row is a
+ * (project, billing code) pair, so the same code under two projects gives two
+ * rows. A cell sums one row's entries for one day and merges their
+ * descriptions. Each day's cells are rounded so they add up to the day's
+ * rounded total.
  *
- * Returns null when there's no week to build (weekStart falsy).
+ * Returns null when weekStart is falsy.
  */
 export function buildSummaryGrid({
   entries,
@@ -134,9 +127,6 @@ export function buildSummaryGrid({
   const nameById = new Map(projects.map((p) => [p.id, p.name]));
   const weekEnd = addDays(weekStart, 7);
 
-  // Days marked as time off by a selected project's entry: non-working days for
-  // the overtime cap below. The marker entries themselves never bill (skipped in
-  // the loop); other entries on such a day still bill — in full, like weekend work.
   const holidays = holidayDaysOfWeek(entries, ids, weekStart, timeOffTag);
 
   const cells = new Map<string, Cell>(); // key: `${dayIdx}|${rowKey}`
@@ -145,11 +135,8 @@ export function buildSummaryGrid({
   let untaggedPresent = false;
   let multiplePresent = false;
 
-  // Linked-code accumulators: per mapped row, one aggregate per day. Mapped rows
-  // carry a fixed pre-rounded value (rounded — and, when the mapping declares the
-  // sub-client's own no-overtime contract, trimmed — on the mapping's own grid,
-  // see lib/timesheet/mapping), so they're excluded from this sheet's rounding
-  // pass and from overtime trimming below.
+  // Mapped rows get a fixed value from finalizeMappedWeek and are excluded from
+  // this sheet's rounding and trimming (see lib/timesheet/mapping).
   const mappedAggs = new Map<string, Map<number, MappedAgg>>(); // rowKey -> day -> agg
   const mappingByRow = new Map<string, CodeMapping>(); // rowKey -> its mapping
   const mappedRows = new Set<string>();
@@ -166,27 +153,16 @@ export function buildSummaryGrid({
     const startMs = new Date(e.start).getTime();
     if (!Number.isFinite(startMs) || startMs < weekStart || startMs >= weekEnd) continue;
     const dayIdx = weekDayIndex(new Date(startMs));
-    // The time-off marker only classifies its day (see `holidays` above) — the
-    // entry itself is never billed, warned about, or shown.
+    // Time-off markers only mark the day; they are never billed or shown.
     if (isTimeOffEntry(e.tags, timeOffTag)) continue;
 
     const running = e.duration < 0 || !e.stop;
     const stopMs = running ? nowMs : new Date(e.stop as string).getTime();
     const seconds = Math.max(0, (stopMs - startMs) / 1000);
 
-    // Which row this entry lands in: its (project, single billing tag), or a
-    // warning row when it has none / more than one (both need fixing in Toggl).
-    // A mapped project's entries are validated against the *mapping's* prefix, so
-    // its untagged/multi-tagged entries surface in the same warning rows. An
-    // untagged entry whose description opens with "[ticket]" bills to that
-    // ticket instead of warning (support tickets — see entryBilling), with the
-    // bracket dropped from the billed description.
-    //
-    // With projects-only billing the entry's PROJECT is its billing line: the
-    // project name stands in as the single "tag" (so nothing can be untagged or
-    // multi-tagged), the description passes through verbatim (no ticket
-    // bracket), and mappings are ignored — a linked code is billing-code
-    // machinery this workspace doesn't use.
+    // Row: (project, billing code), or a warning row for none or several codes.
+    // A mapped project's tags use the mapping's prefix. With billByProject the
+    // project name is the only "tag" and the description is used as is.
     const mapping = billByProject ? undefined : mappingFor(codeMappings, e.project_id);
     const { tags, description } = billByProject
       ? {
@@ -202,9 +178,7 @@ export function buildSummaryGrid({
       rowKey = MULTIPLE;
       multiplePresent = true;
     } else if (mapping) {
-      // Linked code: the whole project collapses to one row billed as the target
-      // code; the per-code time is aggregated here and rounded per day on the
-      // mapping's grid once the loop is done.
+      // Linked code: one row for the project, rounded after the loop.
       rowKey = mappedRowKey(e.project_id);
       mappedRows.add(rowKey);
       mappingByRow.set(rowKey, mapping);
@@ -229,14 +203,8 @@ export function buildSummaryGrid({
       addToMappedAgg(agg, tags[0], seconds, description, startMs);
       continue;
     } else {
-      // The "(X)" / "(!)" markers are just trim variants of the same billing code,
-      // so they share one row with their plain twin (keyed by the stripped base);
-      // the "(X)" seconds are tracked per cell as the trim budget and the "(!)"
-      // seconds as the untouchable floor. The markers are internal, so only the
-      // base is displayed — with its parentheticals also dropped when the
-      // workspace opts in (markers first, then the strip). A projects-only row
-      // is the project name verbatim — a name that happens to end in "(X)" is
-      // just a name, never a marker.
+      // Marked codes share a row with their plain base. A project name is never
+      // parsed, so a name ending in "(X)" is not a marker.
       const base = billByProject ? tags[0] : parseBillingCode(tags[0], stripCodeParens).base;
       rowKey = `p${e.project_id}|${base}`;
       if (!rowMeta.has(rowKey)) {
@@ -264,18 +232,14 @@ export function buildSummaryGrid({
     addDesc(cell, description);
   }
 
-  // Columns: Mon–Fri always; the leading Sat/Sun only when they have entries.
-  // With a Saturday-start week those are indices 0–1, so weekdays are 2–6.
+  // Columns: Mon–Fri (2–6) always; Sat/Sun (0–1) only when they have entries.
   const dayCols: number[] = [];
   for (let i = 0; i < 7; i++) {
     if (i >= 2 || dayHasEntries[i]) dayCols.push(i);
   }
 
-  // Close the linked-code aggregates: each mapped (project, day) becomes a fixed
-  // cell — rounded (and, per the mapping's own no-overtime contract, trimmed) on
-  // the mapping's own grid so it equals the sub-client sheet's billed day total
-  // (the invariant), with that sheet's per-code breakdown leading the cell's
-  // descriptions for traceability.
+  // Each mapped (project, day) becomes a fixed cell equal to the sub-client
+  // sheet's billed day total.
   const mappedFixed = new Map<string, number>(); // key: `${dayIdx}|${rowKey}`
   for (const [rowKey, byDay] of mappedAggs) {
     const values = finalizeMappedWeek(byDay, mappingByRow.get(rowKey)!, weekStart, holidays);
@@ -292,8 +256,7 @@ export function buildSummaryGrid({
     }
   }
 
-  // Rows: normal rows grouped by project, then tag (both alphabetical), then the
-  // warning rows (multiple, untagged) last.
+  // Rows: by project name, then code, then the warning rows.
   const tagRows = [...rowMeta.keys()].sort((a, b) => {
     const ma = rowMeta.get(a)!;
     const mb = rowMeta.get(b)!;
@@ -303,13 +266,9 @@ export function buildSummaryGrid({
   if (multiplePresent) rows.push(MULTIPLE);
   if (untaggedPresent) rows.push(UNTAGGED);
 
-  // Round to the configured units per day: each cell is rounded so the cells still
-  // add up to the day's rounded total (no accumulated drift), with the rounding
-  // error spread evenly across the rows. Totals are then summed from these rounded
-  // cells, so every figure shown is a clean multiple of the rounding unit. Mapped
-  // rows are already rounded (on their own grid) and must not be re-rounded — that
-  // would break the equality with the sub-client's sheet — so they take their fixed
-  // value and only the native rows go through this sheet's rounding.
+  // Round each day's cells so they add up to the day's rounded total; totals are
+  // summed from rounded cells. Mapped rows keep their fixed value: re-rounding
+  // would break equality with the sub-client's sheet.
   const roundableRows = rows.filter((r) => !mappedRows.has(r));
   const rounded = new Map<string, number>(); // key: `${dayIdx}|${rowKey}`
   for (const d of dayCols) {
@@ -319,20 +278,8 @@ export function buildSummaryGrid({
     for (const r of mappedRows) rounded.set(`${d}|${r}`, mappedFixed.get(`${d}|${r}`) ?? 0);
   }
 
-  // Overtime pass: when the contract disallows billing overtime and a segment's
-  // billable cells exceed its cap, shave whole rounding units off them. Unlike the
-  // Individual view's proportional cut, the Summary evens out the days — the
-  // non-working days (weekend + holidays) are billed in full and the working
-  // weekdays are water-filled toward a common (cap − non-working)/workdays ceiling
-  // — while the segment still drops to its cap. A holiday also shrinks the cap
-  // itself by a day's worth (weeklyHours / 5, see weekSegments). Within a day the
-  // cut still takes trimmable "(X)" portions first. A month boundary mid-week
-  // splits the week into two independently-capped segments; otherwise it's one
-  // full-week segment. Warning rows are never billed, so they're excluded from
-  // both the cap measurement and the trimming. Mapped rows are protected — they must
-  // keep equalling the sub-client sheet's day totals — so they still consume the cap
-  // (their units are subtracted from the segment's budget) but the cut itself lands
-  // only on native rows.
+  // Overtime cap, per segment (see lib/timesheet/overtime). Warning rows are not
+  // billed and are ignored. Mapped rows count toward the cap but are never cut.
   const overtimeByDay = new Array<number>(7).fill(0);
   if (noOvertime && weeklyHours > 0) {
     for (const seg of weekSegments(weekStart, weeklyHours, roundingSeconds, holidays)) {
@@ -354,9 +301,7 @@ export function buildSummaryGrid({
             continue;
           }
           const cell = cells.get(`${d}|${r}`);
-          // The trimmable budget is the "(X)" share of this cell's rounded units;
-          // the protected floor is its "(!)" share (never cut, capped so the two
-          // shares can't overlap).
+          // "(X)" and "(!)" shares of the rounded units, kept disjoint.
           const frac = cell && cell.seconds > 0 ? cell.trimmableSeconds / cell.seconds : 0;
           const trimmableUnits = Math.min(units, Math.round(units * frac));
           const fracKeep = cell && cell.seconds > 0 ? cell.noTrimSeconds / cell.seconds : 0;
@@ -384,10 +329,8 @@ export function buildSummaryGrid({
     }
   }
 
-  // Totals are billable-only: warning rows ride along as view hints but don't count
-  // toward what's billed, so the view total matches the export (which omits them).
-  // Per-row totals are still computed for every row so the view can show a warning
-  // row's hours; the day/grand totals sum the billable (tag) rows alone.
+  // Day and grand totals exclude warning rows, matching the export, which omits
+  // them. Row totals include every row so the view can show warning hours.
   const dayTotals = dayCols.map((d) =>
     tagRows.reduce((s, r) => s + (rounded.get(`${d}|${r}`) ?? 0), 0)
   );
@@ -397,10 +340,8 @@ export function buildSummaryGrid({
   const grandTotal = dayTotals.reduce((s, v) => s + v, 0);
   const overtimeTotal = overtimeByDay.reduce((s, v) => s + v, 0);
 
-  // Close each cell's display description: billable cells are fitted within the
-  // optional length limit (this is the text copied into the client's system —
-  // for a mapped cell the per-code breakdown is the first part, so it survives);
-  // warning cells keep the full join — it's the pointer to the entries to fix.
+  // Fit billable descriptions to the length limit. Warning cells keep the full
+  // text.
   for (const [key, cell] of cells) {
     const rowKey = key.slice(key.indexOf('|') + 1);
     const warn = rowKey === UNTAGGED || rowKey === MULTIPLE;

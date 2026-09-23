@@ -1,21 +1,16 @@
-// The export dialog's identity fields (role / company / client / approver /
-// rate / currency / reference / engagement notes). Their values are
-// user-entered — the app itself ships no company names or rates.
+// The export dialog's user-entered identity fields (role, company, client,
+// approver, rate, currency, reference, engagement notes, start date, signature).
 //
-// These belong to a WORKSPACE, not to the device: they name the engagement the
-// timesheet is billed under, and a setup that tracks two clients must not
-// print one client's company (or rate) on the other's PDF. So they travel
-// inside PresetValue (components/SettingsPanel): every stored workspace
-// captures them, recalling a workspace recalls them, and the export dialog
-// writes back to whichever workspace is active. A workspace that has never
-// been given its own set inherits the values in use when it was created (or
-// when it is first recalled).
+// They belong to a workspace, not the device, so one client's company or rate
+// never prints on another's PDF. They live in PresetValue
+// (components/SettingsPanel): recalling a workspace recalls them, and the
+// dialog writes back to the active workspace. A workspace without its own set
+// inherits the values in use when it was created or first recalled.
 //
-// What is left in this module is the value shape itself plus the reader for
-// the pre-workspace layout — one localStorage key per field, device-wide —
-// which loadSettings (lib/useTrackSource) migrates from once and then clears.
+// This module also reads the old device-wide layout (one localStorage key per
+// field), which loadSettings (lib/useTrackSource) migrates once and clears.
 
-/** The pre-workspace, device-wide keys. Read once at migration, then removed. */
+/** The old device-wide keys. Read once at migration, then removed. */
 const LEGACY_KEYS = {
   role: 'tqv.export.role.v1',
   company: 'tqv.export.company.v1',
@@ -29,23 +24,17 @@ const LEGACY_KEYS = {
 } as const;
 
 /**
- * The whole set, as a workspace snapshot (and the sync payload) carries it.
- * All plain strings; empty = unset.
+ * The full set as a workspace snapshot and the sync payload carry it. All
+ * strings; empty = unset.
  *
- * Only a hand-typed `reference` is remembered. A derived one (TS-2026-07) is a
- * property of the exported month, not of the engagement, so persisting it would
- * carry July's reference into August.
+ * Only a hand-typed `reference` is stored. A derived one (TS-2026-07) belongs
+ * to the exported month and would otherwise carry into the next.
  *
- * The engagement note has to be grammatical in the language it prints in, so
- * each template language keeps its own text rather than one being reused. The
- * role is translated the same way ("Integration architect" / "Integrační
- * architekt"): `role` doubles as the English text and the pre-split stored
- * value, `roleCs` is the Czech one, and the export dialog falls back to the
- * other language when the printing template's own is empty — so a role that
- * reads the same in both never has to be typed twice.
+ * The engagement note and role are kept per template language. The dialog
+ * prints the other language's role when the template's own is empty.
  */
 export interface ExportFieldValues {
-  /** Role as English templates print it — and the value stored before roleCs existed. */
+  /** Role for English templates (also holds values stored before roleCs existed). */
   role: string;
   /** Role as Czech templates print it; empty = fall back to `role`. */
   roleCs: string;
@@ -53,41 +42,27 @@ export interface ExportFieldValues {
   client: string;
   approver: string;
   rate: string;
-  /**
-   * What `rate` is quoted per: 'md' for a man-day rate, anything else (the
-   * pre-basis stored value included) reads as hourly.
-   */
+  /** Unit `rate` is quoted per: 'md' for man-day; anything else is hourly. */
   rateBasis: string;
   currency: string;
   reference: string;
   engagementEn: string;
   engagementCs: string;
   /**
-   * First billable day of the engagement, as the date input's `yyyy-mm-dd`
-   * (empty = the engagement is older than any range that will be exported).
-   * The export dialog clips its week/month presets to it, so a workspace that
-   * started Aug 16 exports Aug 16–31 as its first month — not a document
-   * claiming the whole of August.
+   * First billable day of the engagement, `yyyy-mm-dd`; empty = none. The
+   * dialog clips its week and month presets to it (see clipRangeToStart).
    */
   startDate: string;
   /**
-   * The handwritten signature scan, as a `data:image/png;base64,…` URL, for the
-   * visible block of a signed PDF (see lib/export/pdf/sign). Empty = none, and
-   * the export dialog's file picker can always supply one for a single export
-   * without storing it.
+   * Handwritten signature scan as a PNG or JPEG `data:` URL, for the visible
+   * block of a signed PDF (lib/export/pdf/sign). Empty = none.
    *
-   * This is user data of the same kind as the rest of this file — nothing here
-   * ships with the app, and the image is never committed to the repo. It is
-   * remembered per workspace like every other field, which also means it
-   * travels through settings sync: a scan is a few tens of kilobytes as
-   * base64, so the dialog caps what it will store rather than letting a
-   * multi-megabyte photo into a document that syncs on every settings change.
+   * It travels through settings sync like the other fields, so the dialog
+   * stores it only up to MAX_SIGNATURE_IMAGE_CHARS; a larger scan is used for
+   * one export and not remembered.
    */
   signatureImage: string;
-  /**
-   * How the signature block arranges the image and the certificate details:
-   * 'image-above' (the default) or 'image-left'. Empty = the default.
-   */
+  /** Signature block layout: 'image-above' (default, also for empty) or 'image-left'. */
   signatureLayout: string;
 }
 
@@ -116,9 +91,8 @@ export const engagementKey = (locale: 'en' | 'cs'): 'engagementEn' | 'engagement
   locale === 'cs' ? 'engagementCs' : 'engagementEn';
 
 /**
- * A complete value from a partial (or missing) one — covers workspaces stored
- * before export fields were part of a snapshot, and payloads from an older
- * app version.
+ * A complete value from a partial or missing one, e.g. an older workspace
+ * snapshot or sync payload. Non-string values become empty.
  */
 export function normalizeExportFields(
   v: Partial<ExportFieldValues> | null | undefined
@@ -143,7 +117,7 @@ export function normalizeExportFields(
   };
 }
 
-/** True when both sets carry the same values (so a no-op write stays a no-op). */
+/** True when both sets hold the same values, so a no-op write can be skipped. */
 export function exportFieldsEqual(
   a: Partial<ExportFieldValues> | null | undefined,
   b: Partial<ExportFieldValues> | null | undefined
@@ -156,9 +130,8 @@ export function exportFieldsEqual(
 }
 
 /**
- * The device-wide fields written by versions before workspace scoping, or null
- * when this device never had any. Reading is one-way: the caller folds them
- * into the settings and calls clearLegacyExportFields().
+ * The old device-wide fields, or null when this device has none. The caller
+ * folds them into the settings and then calls clearLegacyExportFields().
  */
 export function readLegacyExportFields(): ExportFieldValues | null {
   let found = false;
@@ -173,13 +146,12 @@ export function readLegacyExportFields(): ExportFieldValues | null {
   };
   const values: ExportFieldValues = {
     role: read(LEGACY_KEYS.role),
-    // Fields younger than the workspace scoping never had a device-wide key.
+    // Fields added after workspace scoping have no device-wide key.
     roleCs: '',
     company: read(LEGACY_KEYS.company),
     client: read(LEGACY_KEYS.client),
     approver: read(LEGACY_KEYS.approver),
     rate: read(LEGACY_KEYS.rate),
-    // Younger than the workspace scoping — never had a device-wide key.
     rateBasis: '',
     currency: read(LEGACY_KEYS.currency),
     reference: read(LEGACY_KEYS.reference),
@@ -192,11 +164,11 @@ export function readLegacyExportFields(): ExportFieldValues | null {
   return found ? values : null;
 }
 
-/** Drop the pre-workspace keys once their values live in the settings. */
+/** Remove the old keys once their values are in the settings. */
 export function clearLegacyExportFields(): void {
   try {
     for (const key of Object.values(LEGACY_KEYS)) window.localStorage.removeItem(key);
   } catch {
-    /* private mode — the migrated copy in the settings is what counts */
+    /* storage unavailable; the migrated copy in the settings is what matters */
   }
 }

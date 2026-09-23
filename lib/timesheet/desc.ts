@@ -1,16 +1,14 @@
-// The description-length rule: some clients' timesheet systems reject entry
-// messages over N characters, so an optional per-workspace limit caps every
-// merged description the timesheet produces. Enforced here, in one place, so the
-// on-screen views, the copy buttons and every export emit the identical fitted
-// text — what you copy is guaranteed to paste.
+// Some clients' timesheet systems reject descriptions over N characters, so an
+// optional per-workspace limit applies to every merged description. The views,
+// copy buttons and exports all use fitDescs, so they emit the same text.
 
 /** A merged description after the optional length limit has been applied. */
 export interface FittedDesc {
-  /** The text to display / copy / export. Never longer than the limit. */
+  /** The text to display, copy and export. Never longer than the limit. */
   text: string;
-  /** True when anything had to be dropped or cut to fit. */
+  /** True when anything was dropped or cut. */
   truncated: boolean;
-  /** The unlimited join, for the on-screen "what was dropped" tooltip. */
+  /** The untruncated join, for the tooltip showing what was dropped. */
   full: string;
 }
 
@@ -18,18 +16,13 @@ export interface FittedDesc {
 const DROPPED = '; …';
 
 /**
- * Join merged description parts ("; "-separated, as everywhere in the app) and
- * fit the result within `maxLen` characters (null/0 = no limit — today's
- * behavior, byte-for-byte).
+ * Join description parts with "; " and fit the result within `maxLen`
+ * characters (null or 0 means no limit).
  *
- * When over the limit, whole parts are kept in first-seen order while they fit
- * and the rest is dropped behind a trailing "; …" — descriptions stay readable
- * sentences rather than mid-word cuts, and the earliest (most load-bearing)
- * parts win: a linked-code cell's per-code breakdown is its first part, so it
- * survives while the merged entry chatter goes. Only when even the FIRST part
- * alone exceeds the limit — a single oversized entry description, nothing left
- * to drop — is it hard-cut at the limit with a bare "…"; the truncated flag
- * lets the views mark it so it can be shortened at the source.
+ * Over the limit, whole parts are kept in order while they fit and the rest is
+ * replaced by "; …". Earlier parts win, so a linked-code cell keeps its
+ * per-code breakdown (its first part). If the first part alone is too long, it
+ * is cut at the limit and ends in "…".
  */
 export function fitDescs(descs: string[], maxLen: number | null | undefined): FittedDesc {
   const full = descs.join('; ');
@@ -40,13 +33,13 @@ export function fitDescs(descs: string[], maxLen: number | null | undefined): Fi
   let kept = '';
   for (const part of descs) {
     const candidate = kept ? `${kept}; ${part}` : part;
-    // Reserve room for the dropped-marker: we already know the full join
-    // doesn't fit, so at least one later part is going to be dropped.
+    // Leave room for the marker: the full join does not fit, so something
+    // will be dropped.
     if (candidate.length + DROPPED.length > maxLen) break;
     kept = candidate;
   }
 
   if (kept) return { text: kept + DROPPED, truncated: true, full };
-  // Even the first part alone is over the limit — cut it mid-text.
+  // The first part alone is too long: cut it.
   return { text: descs[0].slice(0, Math.max(0, maxLen - 1)).trimEnd() + '…', truncated: true, full };
 }

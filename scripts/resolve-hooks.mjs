@@ -1,13 +1,8 @@
-// Module resolution for the scripts/ checks.
-//
-// They run straight through Node's TypeScript support, against source written
-// for a bundler: `@/…` aliases, extensionless relative imports, and the
-// `@pdf-template-pack` alias with its fallback list (see lib/export/pdf/pack.ts).
-// Node resolves none of those on its own, so they are patched in here — once,
-// and identically for the app's checks and for a template pack's own.
-//
-// pdf-lib is pinned here too, and that one is load-bearing rather than
-// cosmetic: see PDF_LIB below.
+// Module resolution for the scripts/ checks, which run the app's source
+// directly under Node's TypeScript support. Adds what the bundler provides:
+// `@/…` aliases, extensionless relative imports, and the `@pdf-template-pack`
+// alias (see lib/export/pdf/pack.ts). Used by the app's checks and a template
+// pack's own. Also pins pdf-lib; see PDF_LIB.
 
 import { registerHooks } from 'node:module';
 import fs from 'node:fs';
@@ -17,21 +12,21 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 const root = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
 const ROOT_URL = pathToFileURL(root + path.sep);
 
-/** Same pair, in the same order, as tsconfig.json and next.config.js. */
+/** Must match tsconfig.json `paths` and next.config.js, in the same order. */
 const PACK_CANDIDATES = ['pdf-templates/index.ts', 'lib/export/pdf/emptyPack.ts'];
 
 /**
- * ONE copy of pdf-lib, for the signing checks.
+ * A single copy of pdf-lib for the signing checks.
  *
- * `pdf-lib` is an ALIAS for @cantoo/pdf-lib (package.json), and its exports map
- * answers `require` with cjs/ and `import` with es/. @signpdf/placeholder-pdf-lib
- * requires it while lib/export/pdf/sign imports it, so the two halves would get
- * two module instances — two PDFName pools, two PDFDict classes — and pdf-lib
- * keys dictionaries by PDFName IDENTITY, so the placeholder's /AcroForm would be
- * invisible to the code that has to find it. It fails silently, at the point
- * where the appearance is attached. next.config.js pins the bundle the same way.
+ * `pdf-lib` is an alias for @cantoo/pdf-lib (package.json), whose exports map
+ * serves cjs/ to `require` and es/ to `import`. @signpdf/placeholder-pdf-lib
+ * requires it and lib/export/pdf/sign imports it, which would load two
+ * instances. pdf-lib keys dictionaries by PDFName identity, so the
+ * placeholder's /AcroForm would then be invisible to the signing code, failing
+ * silently when the appearance is attached. next.config.js pins the bundle the
+ * same way.
  *
- * The pin only holds while no `load` hook is registered — see installResolveHooks.
+ * The pin holds only while no `load` hook is registered (see installResolveHooks).
  */
 const PDF_LIB = pathToFileURL(
   path.join(root, 'node_modules/@cantoo/pdf-lib/es/index.js')
@@ -48,16 +43,13 @@ export function packEntry() {
 
 /**
  * @param {{stubs?: Record<string, string>}} [opts] In-memory module sources to
- *   serve instead of resolving a specifier — check-fonts.ts stubs pdfmake with
- *   one that records what it was called with.
+ *   serve for specific specifiers (check-fonts.ts stubs pdfmake).
  *
- * The `load` hook is registered ONLY when there are stubs to serve. On Node 22,
- * any registered load hook makes the ESM loader evaluate an imported CommonJS
- * module itself, and the `require()` calls inside it then bypass the resolve
- * hook altogether. @signpdf/placeholder-pdf-lib is such a module, so its
- * `require('pdf-lib')` would escape the PDF_LIB pin, get cjs/, and bring back
- * the two-copies failure — an unconditional no-op load hook is what broke
- * check:signature once. A check that stubs something must not also sign.
+ * The `load` hook is registered only when there are stubs. On Node 22 any load
+ * hook makes the ESM loader evaluate imported CommonJS modules itself, and
+ * their `require()` calls then skip the resolve hook. The placeholder's
+ * `require('pdf-lib')` would get cjs/ and bring back the two-copies failure,
+ * so a check that stubs something must not also sign.
  */
 export function installResolveHooks({ stubs = {} } = {}) {
   const hasStubs = Object.keys(stubs).length > 0;

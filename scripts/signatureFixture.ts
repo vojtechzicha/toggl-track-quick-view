@@ -1,24 +1,19 @@
-// Shared machinery for the signature fixture: the module resolution the lib/
-// modules need under plain node, the fixed throwaway signer, and the one
-// document that both scripts/make-signature-fixture.ts and
-// scripts/check-signature.ts build.
+// Shared by scripts/make-signature-fixture.ts and scripts/check-signature.ts:
+// module resolution for lib/ under plain Node, the fixed throwaway signer, and
+// the fixture document.
 //
-// Importing this module registers the loader hooks, so it has to be imported
-// BEFORE anything under lib/ — see the two scripts.
+// Importing this module installs the resolve hooks (./resolve-hooks.mjs: `@/`
+// aliases, extensionless imports, the template-pack alias, the single copy of
+// pdf-lib), so import it before anything under lib/.
 
 import fs from 'node:fs';
 import zlib from 'node:zlib';
 import { createPublicKey } from 'node:crypto';
-// Type only — the loader hooks installed below are what make the runtime
-// imports work, so nothing under lib/ may be imported for its VALUE up here.
+// Type only: runtime imports from lib/ must wait until the hooks are installed.
 import type { PdfTemplate } from '../lib/export/pdf/types.ts';
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const { installResolveHooks } = (await import('./resolve-hooks.mjs')) as any;
 
-// The module resolution every check in this repository shares: `@/` aliases,
-// extensionless relative imports, the template-pack alias, and the single copy
-// of pdf-lib the signing stage depends on. Installed by importing this module,
-// which is why it has to be imported BEFORE anything under lib/.
 installResolveHooks();
 
 export const FIXTURES = new URL('fixtures/', import.meta.url);
@@ -27,9 +22,8 @@ export const CERT_PEM = new URL('throwaway-signer-cert.pem', FIXTURES);
 export const SIGNED_PDF = new URL('signed-report.pdf', FIXTURES);
 
 /**
- * The throwaway signer, pinned in every respect that would otherwise vary, so
- * the certificate comes out byte-identical every time it is derived from the
- * committed key.
+ * The throwaway signer, fully pinned so the certificate derived from the
+ * committed key is byte-identical every time.
  */
 export const SIGNER = {
   commonName: 'Throwaway Test Signer (NOT a qualified certificate)',
@@ -46,19 +40,13 @@ export const SIGNED_AT_MS = Date.UTC(2026, 7, 19, 10, 30);
 /**
  * The template the fixture signs.
  *
- * Defined here rather than taken from the registry, and that is the point: the
- * app ships the signing machinery but no signable layout of its own — a
- * signature widget is a GUARANTEE about where a block lands, and only a
- * template that reserves the room can make it (see lib/export/pdf/types.ts).
- * The layouts that do are in a private pack, which a clone of this repository
- * does not have. A check that reached for one would test nothing at all on a
- * plain clone, and would be testing someone's private design when it did.
+ * Defined here because the app ships no signable template: the signable
+ * layouts are in the private template pack, which a plain clone lacks.
  *
- * So the fixture brings its own: the smallest document that honours the
- * contract — a page of flowed content, an invisible reserve node sized to the
- * signature row, a `pageBreakBefore` rule keyed on it, and the box itself drawn
- * at a fixed absolutePosition on what is therefore always the last page. Both
- * halves of the guarantee, in miniature.
+ * It is the smallest document that honours the widget contract
+ * (SignatureWidget in lib/export/pdf/types.ts): flowed content, an invisible
+ * reserve node sized to the signature row, a `pageBreakBefore` rule keyed on
+ * it, and the box drawn at a fixed absolutePosition on the last page.
  */
 const FIXTURE_PAGE = { width: 595.28, height: 841.89 };
 const FIXTURE_MARGIN = 48;
@@ -97,9 +85,8 @@ export async function loadFixtureKeyPair(): Promise<CryptoKeyPair> {
     true,
     ['sign']
   );
-  // The public half is derived rather than read back from the certificate: the
-  // certificate is generated FROM this pair, so it does not exist yet the first
-  // time the fixture is made.
+  // Derived from the private key, not read from the certificate: the
+  // certificate is generated from this pair and may not exist yet.
   const spki = createPublicKey(pem).export({ type: 'spki', format: 'der' });
   const publicKey = await crypto.subtle.importKey(
     'spki',
@@ -112,10 +99,8 @@ export async function loadFixtureKeyPair(): Promise<CryptoKeyPair> {
 }
 
 /**
- * A fixed report document: 22 worked days across July 2026, with an hourly rate
- * so the sign-off page carries its investment box (the widest thing above the
- * signature row, and so the case worth fixing in place). Nothing here comes
- * from a clock or a random source.
+ * A fixed report document: 22 worked days in July 2026, with an hourly rate.
+ * Nothing here comes from a clock or a random source.
  */
 export function fixtureDoc(): unknown {
   const fromMs = Date.UTC(2026, 6, 1);
@@ -161,14 +146,9 @@ export function fixtureDoc(): unknown {
 }
 
 /**
- * A signature scan stand-in, generated rather than committed.
- *
- * The real image is the user's own and never enters the repository (see
- * .gitignore), but the fixture still has to exercise the image path — an
- * appearance stream with an embedded image is where an XObject or resource
- * mistake would show up. So the check draws its own: a 240x60 8-bit greyscale
- * PNG with a few strokes, built here with a minimal encoder so no image library
- * is needed.
+ * A generated stand-in for a signature scan, so the fixture exercises the image
+ * path in the appearance stream. A 240x60 8-bit greyscale PNG with a few
+ * strokes, written with a minimal encoder so no image library is needed.
  */
 export function syntheticSignaturePng(): string {
   const w = 240;
@@ -239,10 +219,7 @@ export interface BuiltFixture {
   rect: [number, number, number, number];
 }
 
-/**
- * The fixture template itself. See FIXTURE_SIGNATURE_WIDGET for why it is here
- * and not in the registry.
- */
+/** The fixture template. See the comment above FIXTURE_PAGE for why it lives here. */
 export function fixtureTemplate(): PdfTemplate {
   return {
     id: TEMPLATE_ID,
@@ -255,9 +232,8 @@ export function fixtureTemplate(): PdfTemplate {
       content: [
         { text: doc.title || 'Fixture timesheet', fontSize: 16, margin: [0, 0, 0, 12] },
         { text: doc.personName || '—', fontSize: 10, margin: [0, 0, 0, 24] },
-        // Enough flow to be a real document rather than an empty page — and,
-        // on a long enough range, enough to reach the reserved band and prove
-        // the page break rule fires.
+        // Flowed content; a long enough range reaches the reserved band and
+        // triggers the page break rule.
         {
           table: {
             widths: ['*', 60],
@@ -271,12 +247,10 @@ export function fixtureTemplate(): PdfTemplate {
           layout: 'lightHorizontalLines',
           fontSize: 8,
         },
-        // First half of the guarantee: an invisible node exactly as tall as the
-        // signature row, so pdfmake's own fits-on-this-page arithmetic pushes
-        // it — and the row with it — onto a fresh page rather than letting the
-        // flow run into the reserved band. A real op with real extents, because
-        // pdfmake drops zero-extent nodes from the list its page-break rule
-        // walks, and a dropped anchor is a silent no-guarantee.
+        // An invisible node as tall as the signature row, so pdfmake's fit
+        // check moves it to a fresh page instead of letting the flow run into
+        // the reserved band. It needs real extents: pdfmake drops zero-extent
+        // nodes from the list pageBreakBefore sees.
         {
           id: FIXTURE_ANCHOR,
           canvas: [
@@ -308,7 +282,7 @@ export function fixtureTemplate(): PdfTemplate {
           ],
         },
       ],
-      // Second half: never let the flow reach into the band the box occupies.
+      // Break before the reserve node if it would start inside the box's band.
       pageBreakBefore: (node: { id?: string; startPosition: { top: number } }) =>
         node.id === FIXTURE_ANCHOR && node.startPosition.top > FIXTURE_BOX_TOP,
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -358,15 +332,10 @@ export async function buildFixture(): Promise<BuiltFixture> {
 }
 
 /**
- * A DER certificate with any issuer and subject you like, signed by a key that
- * has nothing to do with either.
- *
- * Chain building matches names and never verifies a signature (see
- * `ExtensionBridge.certificateChain`), so a chain fixture only has to get the
- * NAMES right — and a self-signed generator cannot produce a certificate whose
- * issuer differs from its subject, which is the only interesting case. This
- * builds one directly. It is a fixture and nothing else: the signature on it is
- * meaningless by construction, so it must never leave the checks.
+ * A DER certificate with the given subject and issuer, signed by an unrelated
+ * key. Chain building (`ExtensionBridge.certificateChain`) matches names only,
+ * so the names are all a chain fixture needs. The signature on it is
+ * meaningless; use it only in checks.
  */
 export async function chainFixtureCertificate(subjectCN: string, issuerCN: string): Promise<Uint8Array> {
   const asn1js = await import('asn1js');
@@ -413,13 +382,11 @@ export interface FakeTimestampOptions {
 }
 
 /**
- * A TimeStampResp built here, so the timestamp checks need no TSA.
+ * A locally built TimeStampResp, so the timestamp checks need no TSA.
  *
- * Every rejection the client is supposed to make needs a response that is
- * well-formed apart from the one thing being tested — a malformed blob would
- * be caught by the parser and prove nothing about the checks that matter.
- * So this builds a real, signed RFC 3161 token and lets each field be spoiled
- * individually.
+ * Builds a real, signed RFC 3161 token and lets each field be spoiled
+ * individually, so each rejection case is well-formed apart from the one thing
+ * under test.
  */
 export async function fakeTimestampResponse(
   signature: Uint8Array,

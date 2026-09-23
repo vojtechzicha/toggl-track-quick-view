@@ -2,31 +2,21 @@
 // Checks out the optional PDF template pack into pdf-templates/.
 //
 // Runs before `next dev` and `next build` (see package.json). With no pack
-// configured it prints one line and exits 0 — that is the supported default,
-// and what a plain clone of this repository does: the app then offers its own
-// Timesheet template alone (lib/export/pdf/emptyPack.ts).
+// configured it prints one line and exits 0; the app then offers only its own
+// Timesheet template (lib/export/pdf/emptyPack.ts).
 //
-// What gets COMPILED IN is decided by the directory, not by the variable: the
-// `@pdf-template-pack` alias resolves against pdf-templates/ existing. The
-// variable decides only what is FETCHED into it. So clearing the variable stops
-// the updates but keeps whatever is on disk — this script never deletes a
-// checkout, because it cannot tell one it made from one cloned by hand, and
-// silently discarding someone's working tree is not a thing a prebuild step
-// should do. Removing a pack is `rm -rf pdf-templates`, and the line printed
-// below says so.
+// The directory, not the variable, decides what is compiled in: the
+// `@pdf-template-pack` alias resolves to pdf-templates/index.ts if it exists.
+// PDF_TEMPLATE_PACK_REPO only controls what is fetched. Unsetting it stops
+// updates but keeps the checkout; this script never deletes one, since it
+// can't tell its own checkout from a hand-made one. Remove a pack with
+// `rm -rf pdf-templates`.
 //
-// Why a checkout rather than a git submodule: a submodule puts the pack's URL
-// in .gitmodules, and every clone — every FORK — then tries to fetch it. A
-// private pack would fail that fetch and take the fork's build down with it,
-// for a repository that has no business knowing the pack exists. Naming the
-// pack in the ENVIRONMENT keeps it a property of the deployment, which is what
-// it is.
+// Not a git submodule: .gitmodules would make every clone and fork try to
+// fetch the private pack and fail.
 //
-// It is deliberately loud in one direction only: a pack that is configured but
-// cannot be fetched FAILS the build. Continuing would produce a green
-// deployment whose export dialog had quietly lost every template the documents
-// are actually filed under — the same failure shape APP_MODE guards against
-// (see scripts/env-spec.mjs).
+// A configured pack that cannot be fetched fails the build. Otherwise the
+// deploy would succeed without the templates the deployment relies on.
 
 import { existsSync, mkdirSync, readFileSync, rmSync } from 'node:fs';
 import path from 'node:path';
@@ -52,9 +42,8 @@ const die = (msg) => {
 };
 
 /**
- * The URL git is actually given. A token turns an https remote into an
- * authenticated one; ssh remotes carry their own credentials and are left
- * alone. Never logged — `redact()` is what goes on screen.
+ * The URL passed to git. A token is added to https remotes; ssh remotes are
+ * left alone. Never log it; log `redact(url)`.
  */
 function authUrl(url) {
   if (!token || !url.startsWith('https://')) return url;
@@ -68,8 +57,7 @@ function git(args, opts = {}) {
     cwd: opts.cwd ?? root,
     stdio: ['ignore', 'pipe', 'pipe'],
     encoding: 'utf8',
-    // A prompt would hang a CI build forever waiting for a password nobody
-    // will type.
+    // Never prompt for credentials; a prompt would hang a CI build.
     env: { ...process.env, GIT_TERMINAL_PROMPT: '0', GIT_ASKPASS: 'echo' },
   });
 }
@@ -90,10 +78,9 @@ function headSha(dir) {
 }
 
 /**
- * Whether a failed fetch is the machine's fault rather than the configuration's.
- * A laptop on a train should still start its dev server against the checkout it
- * already has; a ref that does not exist, or a token that is not allowed to
- * read the repository, will not fix itself and must not be papered over.
+ * Whether a failed fetch looks like a network problem. Offline, an existing
+ * checkout is still used; a bad ref or token is a configuration error and
+ * fails.
  */
 const isNetworkError = (detail) =>
   /could not resolve host|couldn't resolve host|connection (refused|reset|closed|timed out)|operation timed out|network is unreachable|no route to host|failed to connect|temporary failure in name resolution|kex_exchange|timed out/i.test(
@@ -104,10 +91,10 @@ const isNetworkError = (detail) =>
 
 if (!repo) {
   if (existsSync(ENTRY)) {
-    say('PDF_TEMPLATE_PACK_REPO is not set, so nothing was fetched — but pdf-templates/');
-    say(`is on disk (${headSha(DIR)}) and IS compiled in. Delete it to build without a pack.`);
+    say(`PDF_TEMPLATE_PACK_REPO is not set, but pdf-templates/ (${headSha(DIR)}) exists and`);
+    say('will be compiled in. Delete it to build without a pack.');
   } else {
-    say('no template pack configured — exports offer this app\'s own Timesheet template.');
+    say('no template pack configured; using the built-in Timesheet template.');
   }
   process.exit(0);
 }
@@ -117,11 +104,11 @@ if (!repo) {
 if (existsSync(DIR) && !existsSync(path.join(DIR, '.git'))) {
   if (!existsSync(ENTRY)) {
     die(
-      `pdf-templates/ exists but is neither a git checkout nor a template pack (no index.ts). ` +
-        'Remove it, or point PDF_TEMPLATE_PACK_REPO at nothing and manage it by hand.'
+      `pdf-templates/ exists but is not a git checkout and has no index.ts. ` +
+        'Remove it, or unset PDF_TEMPLATE_PACK_REPO and manage it by hand.'
     );
   }
-  say('pdf-templates/ is a hand-managed checkout (no .git) — left untouched.');
+  say('pdf-templates/ has no .git; treating it as hand-managed and leaving it alone.');
   process.exit(0);
 }
 
@@ -130,8 +117,8 @@ if (existsSync(DIR) && !existsSync(path.join(DIR, '.git'))) {
 const existing = existsSync(path.join(DIR, '.git'));
 
 try {
-  // `init` + `fetch <ref>` rather than `clone --branch`: one network round
-  // trip, and `ref` may equally be a branch, a tag or a pinned commit.
+  // `init` + `fetch <ref>` rather than `clone --branch`, so `ref` can be a
+  // branch, a tag or a commit.
   if (!existing) {
     mkdirSync(DIR, { recursive: true });
     git(['init', '--quiet', DIR]);
@@ -140,33 +127,29 @@ try {
 } catch (err) {
   const detail = String(err.stderr || err.message || err).trim().split('\n').slice(-3).join(' ');
   if (existing && existsSync(ENTRY) && isNetworkError(detail)) {
-    // Offline on a laptop is not a reason to refuse to start; the checkout on
-    // disk is still a pack. Anything else — a ref that does not exist, a token
-    // that cannot read the repository — falls through to die(), because it is
-    // configuration and will still be wrong on the next build.
+    // Offline: keep the existing checkout. Other failures are configuration
+    // errors and fall through to die().
     say(`could not reach ${redact(repo)} (${detail})`);
-    say(`keeping the checkout already on disk (${headSha(DIR)}) — it may not be ${ref}.`);
+    say(`using the existing checkout (${headSha(DIR)}), which may not match ${ref}.`);
     process.exit(0);
   }
   if (!existing) rmSync(DIR, { recursive: true, force: true });
   die(
     `could not check out ${redact(repo)} at ${ref}: ${detail}\n` +
-      '          PDF_TEMPLATE_PACK_REPO is set, so the templates it carries are part of this\n' +
-      '          deployment; building without them would ship an export dialog that has\n' +
-      '          silently lost them. Fix the URL, the ref or PDF_TEMPLATE_PACK_TOKEN, or\n' +
-      '          unset PDF_TEMPLATE_PACK_REPO to build with this app\'s own templates.'
+      '          PDF_TEMPLATE_PACK_REPO is set, so the build needs the pack. Fix the URL,\n' +
+      '          PDF_TEMPLATE_PACK_REF or PDF_TEMPLATE_PACK_TOKEN, or unset\n' +
+      '          PDF_TEMPLATE_PACK_REPO to build with the built-in template only.'
   );
 }
 
 if (!existsSync(ENTRY)) {
-  die(`${redact(repo)} at ${ref} has no index.ts — a template pack's entry point (see README.md).`);
+  die(`${redact(repo)} at ${ref} has no index.ts, the pack's entry point (see README.md).`);
 }
 
-// A pack is source that gets compiled into the app; a broken one should say so
-// here rather than 200 lines into a webpack error.
+// Catch an obviously broken entry here rather than in a webpack error.
 const entry = readFileSync(ENTRY, 'utf8');
 if (!/export\s+default\b/.test(entry)) {
-  die('pdf-templates/index.ts has no default export — a pack\'s entry point exports a TemplatePack.');
+  die('pdf-templates/index.ts has no default export; it must export a TemplatePack.');
 }
 
 say(`checked out ${redact(repo)} at ${ref} (${headSha(DIR)})`);

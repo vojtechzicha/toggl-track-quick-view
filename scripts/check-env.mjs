@@ -1,14 +1,7 @@
 #!/usr/bin/env node
-// Validates the deployment configuration against scripts/env-spec.mjs.
-//
-// Runs in the Vercel build (see the "vercel-build" script) so a variable that
-// was added in code but never set in the Vercel project fails the build — and
-// fails the pull request's own preview deployment first, which is where you
-// want to find out. Locally: `pnpm env:check`.
-//
-// Reads the environment the way Next does for this project's files — see
-// scripts/load-env.mjs. Paths resolve against the repo root, not the CWD, so
-// the check works from anywhere.
+// Validates the environment against scripts/env-spec.mjs. Runs first in
+// `vercel-build`, so a variable missing in Vercel fails the PR's preview
+// build. Locally: `pnpm env:check`. Paths resolve from the repo root.
 
 import { existsSync } from 'node:fs';
 import path from 'node:path';
@@ -21,27 +14,21 @@ const root = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
 
 loadDotEnv(root);
 
-// `vercel link` and `vercel env pull` write a .env.local holding a VERCEL_OIDC_
-// TOKEN. Nothing in this app reads it, but Next loads .env.local ahead of .env,
-// so anything else that ends up in that file silently outranks every
-// `pnpm env:pull` from then on.
+// The Vercel CLI (`vercel link`, `vercel env pull`) creates .env.local, and
+// Next loads it ahead of .env.
 if (existsSync(path.join(root, '.env.local'))) {
   console.warn(
-    '  note     .env.local exists and overrides the generated .env — values there survive every `pnpm env:pull`. Vercel CLI creates it; delete it unless you put something there on purpose.'
+    '  note     .env.local exists and overrides .env, including after `pnpm env:pull`. The Vercel CLI creates it; delete it unless you need it.'
   );
 }
 
-// A password prompt on `pnpm dev` surprises people, because .env.tpl ships
-// APP_PASSWORD blank — the gate is opt-in locally. Say where it came from.
-// The value is never printed; the name and the source are enough.
+// .env.tpl leaves APP_PASSWORD blank, so explain an unexpected password prompt.
 function localGateNote() {
   if (!present(process.env, 'APP_PASSWORD')) return null;
   if (!present(process.env, 'TOGGL_API_TOKEN') && !present(process.env, 'MONGODB_URI')) return null;
-  return 'the password gate is active — APP_PASSWORD is set in your .env, where .env.tpl leaves it blank';
+  return 'the password gate is on: APP_PASSWORD is set in your .env (.env.tpl leaves it blank)';
 }
 
-// prod / preview / dev decides which specs are required and which combinations
-// are worth complaining about.
 const environment =
   process.env.VERCEL_ENV === 'production' ? 'prod' : process.env.VERCEL_ENV === 'preview' ? 'preview' : 'dev';
 

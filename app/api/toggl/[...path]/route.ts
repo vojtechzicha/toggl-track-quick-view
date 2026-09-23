@@ -1,21 +1,12 @@
 import { NextRequest } from 'next/server';
 
-// Server-side proxy for the Toggl Track API (v9).
+// Same-origin proxy for the Toggl Track API v9. Browsers cannot call Toggl
+// directly: CORS allows only whitelisted origins, and the whitelist call is
+// itself blocked by CORS.
 //
-// The browser cannot call the Toggl API directly: v9 only allows cross-origin
-// requests from domains a user has explicitly whitelisted, and that whitelist
-// call is itself blocked by CORS from the browser. Routing every request
-// through this same-origin proxy sidesteps the problem entirely and keeps the
-// API token out of any third-party hands.
-//
-// The token is taken from the `x-toggl-token` request header (sent by the
-// client from localStorage) or, as a fallback, from the TOGGL_API_TOKEN
-// environment variable (handy when deploying a private instance to Vercel).
-//
-// When TOGGL_CACHE_INTERVAL is set AND we're using the server-held token,
-// responses are served from a shared in-process cache (see lib/serverCache.ts)
-// so multiple devices/tabs collapse onto a single upstream request per
-// interval instead of each spending from Toggl's hourly budget.
+// The token comes from the `x-toggl-token` header (the browser's token), or
+// else TOGGL_API_TOKEN. With TOGGL_CACHE_INTERVAL set, server-token requests
+// go through the shared cache (lib/serverCache.ts).
 
 import { cacheIntervalSec, cachedToggl } from '@/lib/serverCache';
 import { gateEnabled, verifyToken } from '@/lib/serverAuth';
@@ -39,11 +30,10 @@ export async function GET(
   const { path } = await params;
   const headerToken = req.headers.get('x-toggl-token');
 
-  // Password gate: requests that would fall back to the SERVER token must carry
-  // a valid app session token. Requests bringing their own browser token use
-  // that user's own Toggl account, so they aren't gated. The `x-app-auth:
-  // required` header lets the client tell "log in" apart from a Toggl 401 and
-  // re-prompt for the password.
+  // Password gate: requests using the server token need a valid session.
+  // Requests with their own token only reach their own account, so they are
+  // not gated. `x-app-auth: required` tells the client to log in again,
+  // as distinct from a Toggl 401.
   if (gateEnabled() && !headerToken && !verifyToken(req.headers.get('x-app-auth'))) {
     return new Response(JSON.stringify({ error: 'auth_required' }), {
       status: 401,
@@ -61,17 +51,14 @@ export async function GET(
   const search = req.nextUrl.search;
   const auth = Buffer.from(`${token}:api_token`).toString('base64');
 
-  // Shared-cache path: only for the server's own token (no per-browser token),
-  // so every cached viewer is the same user seeing identical data.
-  // A manual refresh asks for live data, bypassing the shared cache read (but
-  // the fresh value still updates the cache for everyone else).
+  // Cache only the server token, so all viewers are the same user. A manual
+  // refresh skips the cached read but still updates the cache.
   const force = req.headers.get('x-toggl-refresh') === '1';
   const interval = cacheIntervalSec();
   if (interval !== null && !headerToken && process.env.TOGGL_API_TOKEN) {
     try {
       const cached = await cachedToggl(joined, search, auth, interval, force);
-      // When this came from the shared cache (or a stale error fallback), `at`
-      // is the ORIGINAL upstream fetch time — the client shows it as data age.
+      // `at` is the original upstream fetch time; the client shows data age.
       return new Response(cached.body, {
         status: cached.status,
         headers: {
