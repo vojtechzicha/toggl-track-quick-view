@@ -1,11 +1,8 @@
-// The standalone source: a thin client around the app's own MongoDB-backed
-// store (see app/api/store/...) wrapped in the TrackBackend contract, plus the
-// mutation calls only the tracker UI and the Settings workspace section use.
+// Standalone source: client for the MongoDB store (app/api/store/...) as a
+// TrackBackend, plus the mutation calls used by the tracker and Settings.
 //
-// Every request carries the password-gate session token — in standalone mode
-// the gate is mandatory (the store accepts writes), so there is no per-user
-// credential like the Toggl token; the `token` arguments of the TrackBackend
-// contract are simply ignored.
+// Requests carry the password-gate session token, which is mandatory in
+// standalone mode. The TrackBackend `token` arguments are ignored.
 
 import type { TimeEntry } from '@/lib/calc';
 import type { PresetValue } from '@/components/SettingsPanel';
@@ -45,27 +42,24 @@ async function sApi<T>(
     headers,
     body: opts.body !== undefined ? JSON.stringify(opts.body) : undefined,
     cache: 'no-store',
-    // A write fired as the page goes away: the browser sees it through even
-    // though this document is gone. (sendBeacon can't carry the session header.)
+    // Lets a write outlive the page. (sendBeacon cannot send the session header.)
     keepalive: opts.keepalive,
   });
-  // Session missing/expired: re-prompt for the password (same flag the Toggl
-  // proxy uses, so the shared error classifiers work unchanged).
+  // Session missing/expired: re-prompt for the password.
   if (res.status === 401 && res.headers.get('x-app-auth') === 'required') {
     clearAuth();
     throw new AuthRequiredError();
   }
   const text = await res.text();
   if (!res.ok) {
-    // The store's error responses carry the underlying cause in `detail`
-    // (see lib/store/guard.ts) — surface it so a misconfigured database is
-    // diagnosable from the UI instead of a mute 502.
+    // Store errors carry the cause in `detail` (lib/store/guard.ts); pass it
+    // on so database problems are visible in the UI.
     let detail: string | undefined;
     try {
       const body = JSON.parse(text) as { detail?: string; error?: string };
       detail = body.detail ?? body.error;
     } catch {
-      /* non-JSON body — no detail to surface */
+      /* non-JSON body */
     }
     throw new ApiError(res.status, detail);
   }
@@ -121,7 +115,7 @@ export const suggestTagsApi = (q: string, prefix: string) =>
   });
 
 // ---- Toggl history import (the /import page) ----
-/** What one bulk-import call reports back, all counts for THIS batch only. */
+/** Counts for one bulk-import batch. */
 export interface ImportResult {
   imported: number;
   duplicates: number; // togglId already in the store (re-run) — skipped
@@ -146,7 +140,7 @@ export function workspacesToProjects(ws: StoreWorkspace[]): ConnectInfo['project
 
 export const standaloneBackend: TrackBackend = {
   mode: 'standalone',
-  hourlyRequestLimit: null, // our own store — the request meter goes dormant
+  hourlyRequestLimit: null, // unmetered
 
   async connect(): Promise<ConnectInfo> {
     const ws = await listWorkspaces();
@@ -157,8 +151,7 @@ export const standaloneBackend: TrackBackend = {
     };
   },
 
-  // The store is read live on every call — no cache layer sits in between —
-  // so the moment of the fetch IS the moment the data was produced.
+  // No cache in between, so fetch time is data time.
   async fetchEntries(_token, startISO, endISO) {
     const entries = await fetchStoreEntries(startISO, endISO);
     return { entries: entries ?? [], dataAtMs: Date.now() };

@@ -1,24 +1,18 @@
 'use client';
 
-// Post-deploy refresh hint. A tab left open across a deploy keeps running the
-// old bundle, and an old bundle can do real damage: it doesn't know settings
-// keys added since, so saving settings from it would silently drop them from
-// the synced document. This component compares the build id inlined into this
-// bundle (see next.config.js) against GET /api/version, and when they diverge
-// shows a persistent toast asking the user to refresh.
+// Post-deploy refresh hint. A tab open across a deploy runs the old bundle,
+// which does not know newer settings keys and would drop them from the synced
+// document on its next save. Compares the bundle's build id (next.config.js)
+// with GET /api/version and shows a toast when they differ.
 //
-// Checks run when the tab regains focus or becomes visible again — the exact
-// moment someone returns to a long-lived tab — plus a slow background
-// interval. A fresh page load is by definition current, so there is no check
-// on mount. Dismissing hides the hint for that server build only; a later
-// deploy brings it back.
+// Checks on focus / visibility and every 5 minutes, not on mount (a fresh load
+// is current). Dismissing hides the hint until the next deploy.
 
 import { useEffect, useState } from 'react';
 
 const CLIENT_BUILD_ID = process.env.NEXT_PUBLIC_BUILD_ID ?? null;
 const CHECK_INTERVAL_MS = 5 * 60 * 1000;
-/** Minimum gap between checks, so focus + visibilitychange firing together
- *  (or rapid tab switching) don't burst requests. */
+/** Minimum gap between checks; focus and visibilitychange often fire together. */
 const CHECK_DEBOUNCE_MS = 30 * 1000;
 
 export default function UpdateHint() {
@@ -26,8 +20,7 @@ export default function UpdateHint() {
   const [dismissedId, setDismissedId] = useState<string | null>(null);
 
   useEffect(() => {
-    // 'unversioned' means the build had no git commit to derive an id from
-    // (see next.config.js) — comparisons would be meaningless, so don't poll.
+    // 'unversioned': the build had no git commit (next.config.js). Don't poll.
     if (!CLIENT_BUILD_ID || CLIENT_BUILD_ID === 'unversioned') return;
     let cancelled = false;
     let lastCheck = 0;
@@ -43,7 +36,7 @@ export default function UpdateHint() {
         const data = (await res.json()) as { buildId?: string | null };
         if (!cancelled && data.buildId) setServerBuildId(data.buildId);
       } catch {
-        // Offline or transient failure — the next trigger tries again.
+        // Offline or transient; the next trigger retries.
       }
     };
 
@@ -70,8 +63,7 @@ export default function UpdateHint() {
   return (
     <div className="toast update" role="alert">
       <span className="update-msg">
-        A new version has been deployed — refresh to avoid saving with the old
-        one.
+        A new version is available. Refresh before changing settings.
       </span>
       <button
         type="button"

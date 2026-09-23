@@ -1,10 +1,6 @@
-// Access guard shared by every /api/store route.
-//
-// The store routes MUTATE data, so unlike the read-only Toggl proxy the
-// password gate is not optional here: standalone mode requires APP_PASSWORD,
-// and a deployment without one is refused as misconfigured rather than left
-// open to anyone who knows the URL. The session-token mechanics are the same
-// gate the Toggl proxy uses (lib/serverAuth.ts).
+// Access guard for every /api/store route. These routes write data, so the
+// password gate is mandatory: without APP_PASSWORD they refuse to run rather
+// than stay open. Session tokens: lib/serverAuth.ts.
 
 import type { NextRequest } from 'next/server';
 import { verifyToken } from '@/lib/serverAuth';
@@ -18,11 +14,9 @@ export function jsonRes(body: unknown, status: number): Response {
 }
 
 /**
- * The 502 every store route returns when the database layer throws. The
- * underlying error is logged (it shows up in the host's function logs, e.g.
- * Vercel's) AND echoed in the response `detail` — these routes sit behind the
- * password gate, so the operator is the only one who can see it, and a
- * misconfigured Atlas URI / network-access list is otherwise undiagnosable.
+ * 502 for a database error. The cause is logged and returned in `detail`.
+ * Safe to expose because only gated users reach these routes, and it makes
+ * a bad Atlas URI or network-access list diagnosable.
  */
 export function storeError(e: unknown): Response {
   const detail = e instanceof Error ? `${e.name}: ${e.message}` : String(e);
@@ -31,9 +25,8 @@ export function storeError(e: unknown): Response {
 }
 
 /**
- * Returns an error Response when the request may not touch the store, or null
- * to proceed. The `x-app-auth: required` header on the 401 is what lets the
- * client tell "log in again" apart from any other failure.
+ * An error Response if the request may not touch the store, else null. The
+ * `x-app-auth: required` header on the 401 tells the client to log in again.
  */
 export function storeGuard(req: NextRequest): Response | null {
   if (!standaloneEnabled()) {

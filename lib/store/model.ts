@@ -1,10 +1,8 @@
-// Data model of the standalone store and its serialization to the shapes the
-// client already speaks.
+// Standalone store data model and its serialization to client shapes.
 //
-// The one design move that keeps the rest of the app untouched: a WORKSPACE is
-// served to the client as a "project" — entries carry the workspace's numeric
-// id in the TimeEntry.project_id slot, so ProjectSet / selectedProjects /
-// codeMappings (and everything downstream of them) work unchanged.
+// A workspace is served to the client as a project: entries carry the
+// workspace's numeric id in TimeEntry.project_id, so selectedProjects,
+// codeMappings and everything downstream work unchanged.
 
 import type { Db, ObjectId } from 'mongodb';
 import type { TimeEntry } from '@/lib/calc';
@@ -14,8 +12,7 @@ import {
   DEFAULT_ROUNDING_HOURS,
   DEFAULT_TIME_OFF_TAG,
 } from '@/lib/calc';
-// Type-only import from a client module — erased at compile time, so the
-// server bundle never pulls the component in.
+// Type-only, so the server bundle does not pull in the client component.
 import type { PresetValue } from '@/components/SettingsPanel';
 import { EMPTY_EXPORT_FIELDS } from '@/lib/exportFields';
 
@@ -23,20 +20,20 @@ export interface WorkspaceDoc {
   _id?: ObjectId;
   numericId: number; // small, stable; allocated from the counters collection
   name: string;
-  color?: string; // hex, shown in chips exactly like Toggl project colors
-  settings: PresetValue; // the same shape localStorage presets snapshot
+  color?: string; // hex, like Toggl project colors
+  settings: PresetValue; // same shape as localStorage presets
   createdAt: Date;
 }
 
 export interface EntryDoc {
   _id?: ObjectId;
-  numericId: number; // TimeEntry.id is a number
+  numericId: number; // exposed as TimeEntry.id
   workspaceId: number; // → workspaces.numericId
   description: string;
   start: Date; // UTC
   stop: Date | null; // null = running
-  tags: string[]; // billing tag included here, same as Toggl
-  togglId?: number; // set by the importer; enables idempotent re-runs
+  tags: string[]; // includes the billing tag, as in Toggl
+  togglId?: number; // set by the importer; makes re-runs idempotent
   createdAt: Date;
   updatedAt: Date;
 }
@@ -46,10 +43,7 @@ export async function nextSeq(db: Db, key: 'workspaces' | 'entries'): Promise<nu
   return nextSeqBlock(db, key, 1);
 }
 
-/**
- * Allocate `count` consecutive numeric ids in one atomic bump (the importer
- * inserts whole windows at once); returns the FIRST id of the block.
- */
+/** Allocate `count` consecutive ids in one atomic bump; returns the first. */
 export async function nextSeqBlock(
   db: Db,
   key: 'workspaces' | 'entries',
@@ -66,9 +60,8 @@ export async function nextSeqBlock(
 }
 
 /**
- * An entry in the exact shape lib/calc.ts consumes. A running entry follows the
- * Toggl convention (stop: null, duration = -unixStart) that normalize() already
- * treats as "running, clamp to now" — the live ring needs no special handling.
+ * An entry in the shape lib/calc.ts consumes. A running entry uses the Toggl
+ * convention (stop: null, duration = -unixStart).
  */
 export function toTimeEntry(e: EntryDoc): TimeEntry {
   return {
@@ -78,8 +71,8 @@ export function toTimeEntry(e: EntryDoc): TimeEntry {
     duration: e.stop
       ? Math.round((e.stop.getTime() - e.start.getTime()) / 1000)
       : -Math.floor(e.start.getTime() / 1000),
-    project_id: e.workspaceId, // ← the workspace-is-a-project trick
-    workspace_id: 1, // constant; nothing reads it downstream
+    project_id: e.workspaceId, // workspace served as a project
+    workspace_id: 1, // constant; unused downstream
     description: e.description,
     tags: e.tags,
   };
@@ -104,8 +97,7 @@ export function toStoreWorkspace(w: WorkspaceDoc): StoreWorkspace {
   };
 }
 
-// Toggl-ish palette new workspaces cycle through (by numericId), so chips are
-// distinguishable out of the box; the color stays editable in Settings.
+// Default colors for new workspaces, cycled by numericId. Editable in Settings.
 export const WORKSPACE_COLORS = [
   '#0b83d9',
   '#9e5bd9',
@@ -153,9 +145,7 @@ export function defaultWorkspaceSettings(): PresetValue {
     codeMappings: [],
     timesheetMode: 'summary',
     exportName: '',
-    // A workspace created without a snapshot (e.g. one per Toggl project on the
-    // import page) starts with export details of its own rather than inheriting
-    // another client's: the first export fills them in, and they stay here.
+    // Empty rather than inherited, so no other client's details carry over.
     exportFields: { ...EMPTY_EXPORT_FIELDS },
   };
 }

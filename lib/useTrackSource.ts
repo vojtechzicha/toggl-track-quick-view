@@ -1,22 +1,14 @@
 'use client';
 
-// Shared track-source connection + polling for the dashboard, the timesheet
-// and the tracker pages.
+// Data-source connection and polling shared by the dashboard, timesheet and
+// tracker pages: settings, server-managed / password-gate status, connecting
+// (cache-first), and the poll that fetches the week's entries. All pages use
+// this one hook so a metered source's request budget is spent once. Pages
+// derive their own views from the raw entries.
 //
-// This hook owns everything that talks to the data source: loading settings,
-// resolving the server-managed / password-gate status, connecting
-// (cache-first), and the self-scheduling poll that fetches the week's entries.
-// Every page consumes the SAME hook so they share one fetch cadence and never
-// double-spend a metered source's request budget. Page-specific derivations
-// (the ring, timelines, the timesheet grid) live in the pages; this hook just
-// hands back the raw ingredients (entries, nowMs, settings, gate state,
-// errors).
-//
-// The source itself is a TrackBackend (lib/source/types.ts), picked from
-// AppConfig.mode once /api/config resolves: the Toggl proxy client, or — in
-// standalone mode — the app's own MongoDB-backed store. Standalone mode also
-// brings mutations (the tracker writes entries; Settings manages workspaces),
-// which this hook wraps with optimistic updates against its entries state.
+// The backend (lib/source/types.ts) is chosen from AppConfig.mode: the Toggl
+// proxy or the standalone MongoDB store. Standalone mode adds mutations, which
+// this hook applies optimistically to its entries state.
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { getConfig } from '@/lib/source/config';
@@ -80,28 +72,21 @@ const CACHE_KEY = 'tqv.cache.v1';
 const REQLOG_KEY = 'tqv.reqlog.v1';
 const CACHE_TTL = 24 * 3600 * 1000; // me/projects cache lifetime
 const HOUR_MS = 3600 * 1000;
-const DEFAULT_REFRESH_SEC = 180; // ~20 requests/hour, well under Toggl's limit
-// The standalone store has no request budget, so it polls briskly at a fixed
-// cadence (plus an instant refetch after every mutation).
+const DEFAULT_REFRESH_SEC = 180; // 20 requests/hour, under Toggl's limit
+// The standalone store has no request budget. Mutations also refetch at once.
 export const STANDALONE_REFRESH_SEC = 30;
 
 export interface StoredSettings extends SettingsValue {
   workspaceId: number | null;
-  // The account's display name, captured at connect time. Used as the default
-  // "name" on exports; not directly user-edited (see exportName).
+  // Account display name from connect time; the default name on exports.
   accountName: string;
-  // Saved "workspaces": named snapshots of the configurable settings the user can
-  // recall from Settings → Workspaces to quick-switch between setups (see
-  // SettingsPreset).
-  // Toggl mode only — in standalone mode workspaces live in the store instead.
+  // Saved workspaces (named settings snapshots). Toggl mode only; standalone
+  // keeps workspaces in the store.
   presets: SettingsPreset[];
-  // Id of the workspace last recalled (a preset id in Toggl mode, the stored
-  // workspace's numeric id as a string in standalone). A pointer, not a
-  // setting: it disambiguates which workspace these settings mirror when two
-  // of them are identical apart from their export details — which
-  // presetMatches deliberately cannot see. Always re-checked against the
-  // content before it is used, so settings edited away from that workspace
-  // never keep writing into it.
+  // Id of the workspace last recalled (preset id, or the store workspace's id
+  // as a string). Tells apart two workspaces that differ only in export
+  // details, which presetMatches ignores. Re-checked against the content
+  // before use, so edited settings stop writing into that workspace.
   activePresetId: string | null;
 }
 
@@ -133,10 +118,9 @@ export const DEFAULTS: StoredSettings = {
 };
 
 /**
- * Apply a stored workspace over the current settings, returning the new value to
- * persist. Refreshes each recalled project's name/color from the live project
- * list (denormalised copies drift as the source changes); the token, workspace
- * and stored-workspace list are left untouched.
+ * Apply a stored workspace over the current settings. Refreshes each recalled
+ * project's name/color from the live project list; leaves the token, workspace
+ * and stored-workspace list alone.
  */
 export function applyPreset(
   settings: StoredSettings,
@@ -147,39 +131,30 @@ export function applyPreset(
     ...settings,
     ...preset.value,
     selectedProjects: enrichSelected(preset.value.selectedProjects, projects),
-    // A preset stored before linked codes existed has no key to spread in, which
-    // would otherwise leak the current mappings into the recalled workspace.
+    // Presets saved before a setting existed lack its key. Without these
+    // defaults the current value would leak into the recalled workspace.
     codeMappings: preset.value.codeMappings ?? [],
-    // Same for presets stored before the description limit existed.
     maxDescriptionLength: preset.value.maxDescriptionLength ?? null,
-    // And for presets stored before start times could leave the rounding grid.
     startWindowHours: preset.value.startWindowHours ?? null,
-    // And for presets stored before the time-off tag existed.
     timeOffTag: preset.value.timeOffTag ?? DEFAULT_TIME_OFF_TAG,
-    // And for presets stored before the parentheses strip existed.
     stripCodeParens: preset.value.stripCodeParens ?? false,
-    // And for presets stored before projects-only billing existed.
     billByProject: preset.value.billByProject ?? false,
-    // Export identity fields are per workspace: recalling one recalls its own
-    // company/client/rate, so another client's details can never ride along.
-    // A workspace stored BEFORE they were scoped carries none at all — it
-    // inherits the ones in use instead of blanking them. (A workspace whose
-    // snapshot does carry them keeps them even when they're all empty: that is
-    // a workspace deliberately without export details, not an unscoped one.)
+    // Export fields are per workspace, so one client's details never carry
+    // over to another. A workspace saved before they were scoped has none and
+    // inherits the current ones. One that has them keeps them, even if empty.
     exportFields: preset.value.exportFields
       ? normalizeExportFields(preset.value.exportFields)
       : normalizeExportFields(settings.exportFields),
-    // Remember WHICH workspace this is, so later writes (export details) reach
-    // it and not a twin with the same tracking settings.
+    // So later export-field writes reach this workspace, not a twin with the
+    // same tracking settings.
     activePresetId: preset.id,
   };
 }
 
 /**
- * Hash of what a never-configured device looks like: default settings (keeping
- * only the connect-derived workspace/account identity) and no export fields.
- * A fresh device matching this adopts the server's synced setup silently
- * instead of raising a conflict banner over nothing.
+ * Hash of a never-configured device: defaults plus the connect-derived
+ * workspace/account. A fresh device matching it adopts the synced setup
+ * without a conflict banner.
  */
 function pristineHash(s: StoredSettings): string {
   return payloadHash(
@@ -191,12 +166,10 @@ function loadSettings(): StoredSettings {
   if (typeof window === 'undefined') return DEFAULTS;
   try {
     const raw = window.localStorage.getItem(LS_KEY);
-    // No settings yet still goes through the migrations below: the export
-    // identity fields lived in keys of their own, which can outlive a cleared
-    // settings entry.
+    // Run the migrations even with no settings: the legacy export-field keys
+    // can outlive a cleared settings entry.
     const parsed = raw ? (JSON.parse(raw) as Record<string, unknown>) : {};
-    // Migrate the v1 single-project shape ({ projectId, projectName }) to the
-    // selectedProjects array — in place, so every other stored setting survives.
+    // Migrate the v1 single-project shape ({ projectId, projectName }).
     if (!parsed.selectedProjects && parsed.projectId != null) {
       parsed.selectedProjects = [
         { id: parsed.projectId, name: (parsed.projectName as string) ?? '' },
@@ -205,20 +178,17 @@ function loadSettings(): StoredSettings {
     delete parsed.projectId;
     delete parsed.projectName;
     const loaded = { ...DEFAULTS, ...parsed } as StoredSettings;
-    // Export identity fields used to live in their own device-wide localStorage
-    // keys. Fold them in once (they become the active — and therefore the
-    // inherited — set) and drop the old keys.
+    // Fold the legacy device-wide export-field keys in once.
     if (!parsed.exportFields) {
       const legacy = readLegacyExportFields();
       if (legacy) {
         loaded.exportFields = legacy;
-        // Write the migrated settings back BEFORE dropping the old keys — a
-        // migration that only lived in memory would lose them on the next load.
+        // Persist before deleting the old keys, or a failed write loses them.
         try {
           window.localStorage.setItem(LS_KEY, JSON.stringify(loaded));
           clearLegacyExportFields();
         } catch {
-          /* private mode / quota — the old keys stay put and we migrate again */
+          /* private mode / quota: old keys stay, migrate again next load */
         }
       }
     }
@@ -229,9 +199,8 @@ function loadSettings(): StoredSettings {
   }
 }
 
-// ---- me/projects cache (avoids spending the request budget on every reload) ----
-// Toggl mode only: the standalone workspace list is unmetered and changes from
-// Settings, so it is always fetched live.
+// ---- me/projects cache (saves request budget on reload) ----
+// Toggl mode only. Standalone always fetches the workspace list live.
 interface Cache {
   workspaceId: number;
   projects: TrackProject[];
@@ -247,9 +216,8 @@ function loadCache(): Cache | null {
   }
 }
 /**
- * Refresh each selected project's denormalised name/color from the freshly loaded
- * list (names/colors can change at the source, and migrated v1 selections have no
- * color yet). Unknown ids — e.g. an archived project — keep their stored copy.
+ * Refresh each selected project's stored name/color from the loaded list.
+ * Unknown ids (e.g. archived projects) keep their stored copy.
  */
 function enrichSelected(selected: SelectedProject[], projects: TrackProject[]): SelectedProject[] {
   return selected.map((sp) => {
@@ -266,7 +234,7 @@ function saveCache(c: Cache) {
   }
 }
 
-// ---- rolling 60-minute request log (estimate, to show budget usage) ----
+// ---- rolling 60-minute request log (an estimate, for the budget meter) ----
 function pruneLoad(): number[] {
   try {
     const arr = JSON.parse(window.localStorage.getItem(REQLOG_KEY) || '[]');
@@ -292,8 +260,7 @@ export function fmtInterval(sec: number): string {
   return sec % 60 === 0 ? `${sec / 60} min` : `${sec}s`;
 }
 
-// The Toggl importer spends the same hourly budget the Toggl poll does, so it
-// shares this rolling log (the /import page throttles itself against it).
+// The /import page spends the same Toggl budget, so it shares this log.
 /** Toggl requests recorded in the last rolling hour. */
 export function togglRequestsThisHour(): number {
   return pruneLoad().length;
@@ -304,12 +271,9 @@ export function recordTogglRequests(n: number): number {
 }
 
 // ---- Cross-tab store change notifications (standalone mode) ----
-// A mutation made on the tracker must not leave a dashboard/timesheet that is
-// open in ANOTHER tab or PWA window showing stale numbers until its next 30s
-// poll. Every successful mutation posts here; every hook instance listens and
-// refetches immediately. (Within one tab this is a no-op — a BroadcastChannel
-// never delivers to the instance that posted, and the mutating hook already
-// reconciles + refetches itself. Other devices still catch up via the poll.)
+// Every successful mutation posts here so other tabs and PWA windows refetch
+// at once instead of waiting for their next poll. A BroadcastChannel does not
+// deliver to its own sender. Other devices catch up via the poll.
 type StoreChangeKind = 'entries' | 'workspaces';
 let storeBC: BroadcastChannel | null = null;
 function storeChannel(): BroadcastChannel | null {
@@ -321,17 +285,15 @@ function broadcastStoreChange(kind: StoreChangeKind): void {
   try {
     storeChannel()?.postMessage(kind);
   } catch {
-    /* ignore — freshness falls back to the regular poll */
+    /* ignore: the regular poll catches up */
   }
 }
 
 /**
- * The window the shared poll keeps fresh: from the week's start (Saturday —
- * needed for the weekly model and so the leading weekend's entries load) but
- * never later than the start of yesterday, so unreported-time detection always
- * has both yesterday and today even on the first day of the week; through the
- * end of this week so pre-entered ("scheduled") future entries are included.
- * Exported so the tracker can load history seamlessly up to this window's edge.
+ * The range the poll keeps fresh. Starts at the week's start (Saturday) or
+ * the start of yesterday, whichever is earlier, so unreported-time detection
+ * always sees yesterday. Ends at the end of this week to include future
+ * ("scheduled") entries. The tracker loads older history up to this edge.
  */
 export function pollWindow(now: Date): { startMs: number; endMs: number } {
   const weekStart = startOfWeek(now).getTime();
@@ -375,11 +337,9 @@ export interface UseTrackSource {
   connect: (token: string, force?: boolean) => Promise<void>;
   entries: TimeEntry[];
   /**
-   * When the entries on screen were produced by the SOURCE (ms epoch; 0 = no
-   * successful fetch yet). This is the source-reported data time, not the
-   * receipt time: a shared-server-cache hit carries the original upstream
-   * Toggl fetch time, so the pages show true data age. Stays put while
-   * fetches fail or the tab sleeps.
+   * Source-reported data time of the entries (ms epoch; 0 = no fetch yet).
+   * A server-cache hit carries the original Toggl fetch time, so this is the
+   * real data age, not receipt time. Unchanged while fetches fail.
    */
   lastUpdatedMs: number;
   nowMs: number;
@@ -388,41 +348,26 @@ export interface UseTrackSource {
   effectiveRefreshSec: number;
   showSettings: boolean;
   setShowSettings: React.Dispatch<React.SetStateAction<boolean>>;
-  // Pause the live current-week poll (e.g. while viewing a historical week, so
-  // we don't keep spending the budget on data that isn't on screen).
+  // Pause the current-week poll, e.g. while a past week is on screen.
   livePollPaused: boolean;
   setLivePollPaused: React.Dispatch<React.SetStateAction<boolean>>;
-  // General on-demand fetch of any date range as raw entries — the primitive
-  // behind the historical timesheet (and, later, the weekly/monthly exports).
-  // Forced fetches bypass the shared server cache; budget is metered the same
-  // way the live poll is (skipped when a plain cache hit is expected). Resolves
-  // the entries together with the source-reported data time (see FetchedEntries).
+  // On-demand fetch of any date range (historical timesheet, exports). Forced
+  // fetches bypass the server cache. Metered like the live poll.
   loadRange: (startISO: string, endISO: string, opts?: { force?: boolean }) => Promise<FetchedEntries>;
 
   /**
-   * Remember the export dialog's identity fields (company, client, rate,
-   * engagement note …). They are scoped to the workspace the settings currently
-   * mirror: the write lands both in the active settings and in that stored
-   * workspace, so switching away and back keeps each workspace's own details.
+   * Save the export dialog's identity fields (company, client, rate, ...) to
+   * the active settings and to the active workspace, if any.
    */
   setExportFields: (fields: ExportFieldValues) => void;
   /**
-   * The stored workspace the current settings mirror — a store document in
-   * standalone mode (its numeric id as a string), a saved preset in Toggl mode
-   * — or null when they match none; per-workspace state, like the export
-   * fields above, is then simply this device's.
+   * The stored workspace the current settings match (standalone: store id as
+   * a string; Toggl: preset id), or null.
    */
   activeWorkspace: { id: string; name: string } | null;
-  /**
-   * Every stored workspace in one shape, whichever mode this is (standalone:
-   * server documents; Toggl: the saved presets) — the list behind the topbar's
-   * quick switcher. `color` is standalone-only.
-   */
+  /** All stored workspaces in one shape, for the quick switcher. `color` is standalone-only. */
   workspaceList: { id: string; name: string; color?: string; value: PresetValue }[];
-  /**
-   * Recall a stored workspace by id: the same live switch the Settings list
-   * performs, for the quick switcher. Unknown ids are ignored.
-   */
+  /** Recall a stored workspace by id. Unknown ids are ignored. */
   switchWorkspace: (id: string) => void;
 
   // ---- Cross-device settings sync (see lib/sync) ----
@@ -431,9 +376,8 @@ export interface UseTrackSource {
     enabled: boolean;
     /** Sync-specific deployment problem the operator must fix, or null. */
     misconfigured: string | null;
-    /** Sync is enabled but this device hasn't passed the password gate yet
-     * (only reachable in browser-token Toggl mode, where no page-level gate
-     * shows — the Settings panel offers the password form instead). */
+    /** Sync is on but this device has no session. Only in browser-token Toggl
+     * mode, where Settings shows the password form instead of a page gate. */
     needsAuth: boolean;
     status: 'idle' | 'syncing' | 'error';
     error: string | null;
@@ -442,11 +386,9 @@ export interface UseTrackSource {
     /** Both sides changed since the last sync — the user picks a winner. */
     conflict: { rev: number; updatedAt: string; device: string } | null;
     /**
-     * How many times a document from ANOTHER device has replaced these
-     * settings (a background pull that adopted it, or a conflict resolved in
-     * its favour). Any UI holding a mount-time snapshot of the settings — the
-     * Settings form, the export dialog — should key on this so it re-seeds
-     * instead of writing its stale copy back on the next save.
+     * Count of times another device's document replaced these settings. UI
+     * that snapshots settings on mount (Settings form, export dialog) should
+     * key on it, or it writes a stale copy back on its next save.
      */
     appliedEpoch: number;
     resolveConflict: (choice: 'remote' | 'local') => void;
@@ -464,9 +406,9 @@ export interface UseTrackSource {
   /** Last failed mutation, for a toast; cleared via clearMutationError. */
   mutationError: string | null;
   clearMutationError: () => void;
-  // Entry mutations (tracker UI). All optimistic against `entries`, reconciled
-  // with the canonical server response; they resolve null on failure (the error
-  // lands in mutationError, or the password gate re-arms on an expired session).
+  // Entry mutations, optimistic against `entries` and reconciled with the
+  // server response. Resolve null on failure (error in mutationError, or the
+  // password gate returns on an expired session).
   startTimer: (input: {
     description: string;
     tags: string[];
@@ -482,8 +424,7 @@ export interface UseTrackSource {
   editEntry: (id: number, patch: EntryInput) => Promise<TimeEntry | null>;
   removeEntry: (id: number) => Promise<boolean>;
   stopTimer: (id: number) => Promise<TimeEntry | null>;
-  // Workspace CRUD (Settings; the importer also creates). Each refreshes the
-  // workspace/project lists.
+  // Workspace CRUD. Each refreshes the workspace/project lists.
   createWorkspace: (
     name: string,
     settings?: PresetValue,
@@ -498,8 +439,7 @@ export interface UseTrackSource {
 
 export function useTrackSource(): UseTrackSource {
   const [mode, setMode] = useState<SourceMode | null>(null);
-  // Until config resolves, mode is unknown; the connect effect waits for it, so
-  // the provisional Toggl backend here is never actually used prematurely.
+  // The Toggl fallback is never used before config resolves: connect waits.
   const backend = mode === 'standalone' ? standaloneBackend : togglBackend;
   const metered = backend.hourlyRequestLimit !== null;
 
@@ -532,11 +472,11 @@ export function useTrackSource(): UseTrackSource {
   // Counts documents adopted from another device (see applyRemoteDoc).
   const [appliedEpoch, setAppliedEpoch] = useState(0);
   const [lastSyncedAt, setLastSyncedAt] = useState<number | null>(null);
-  // The initial pull must finish before any push: a fresh device that pushed
-  // first (baseRev null) would race the established document into a conflict.
+  // The initial pull must finish before any push, or a fresh device (baseRev
+  // null) would conflict with the existing document.
   const [syncReady, setSyncReady] = useState(false);
-  // Bumped after a successful pull so the push effect re-evaluates whether the
-  // syncable content drifted (e.g. a push that failed while offline).
+  // Bumped after each pull so the push effect retries content that drifted
+  // (e.g. a push that failed offline).
   const [syncTick, setSyncTick] = useState(0);
 
   const [entries, setEntries] = useState<TimeEntry[]>([]);
@@ -562,8 +502,7 @@ export function useTrackSource(): UseTrackSource {
   }, [settings]);
   const lastPullRef = useRef(0);
 
-  // Hydrate from localStorage after mount (avoids SSR/client mismatch) and
-  // find out which mode the server runs / whether it already holds a token.
+  // Hydrate after mount (avoids SSR mismatch) and fetch the server config.
   useEffect(() => {
     setSettings(loadSettings());
     setNowMs(Date.now());
@@ -573,8 +512,7 @@ export function useTrackSource(): UseTrackSource {
     getConfig()
       .then((c) => {
         setMode(c.mode);
-        // Standalone deployments are always server-managed — there is no
-        // browser credential; the store sits behind the password gate.
+        // Standalone has no browser credential; the password gate guards it.
         setServerManaged(c.mode === 'standalone' ? true : !!c.serverToken);
         setPasswordRequired(!!c.passwordRequired);
         setMisconfigured(c.misconfigured ?? null);
@@ -588,9 +526,8 @@ export function useTrackSource(): UseTrackSource {
       });
   }, []);
 
-  // When the shared server cache is on, its interval governs polling and the
-  // per-device refresh picker is hidden (the server owns the budget). The
-  // standalone store polls at a fixed brisk cadence — no budget to manage.
+  // With the server cache on, its interval sets the poll rate and the
+  // per-device picker is hidden. Standalone uses a fixed rate.
   const standalone = backend.mode === 'standalone';
   const cacheEnabled = !standalone && serverCache.enabled && !!serverCache.intervalSec;
   const effectiveRefreshSec = standalone
@@ -598,15 +535,15 @@ export function useTrackSource(): UseTrackSource {
     : cacheEnabled
     ? serverCache.intervalSec!
     : settings.refreshSec;
-  // Poll one second SLOWER than the cache TTL so a client's poll reliably lands
-  // just after the entry has expired (a guaranteed miss → fresh data).
+  // Poll 1s slower than the cache TTL so each poll lands after expiry and
+  // gets fresh data.
   const pollIntervalSec = standalone
     ? STANDALONE_REFRESH_SEC
     : cacheEnabled
     ? serverCache.intervalSec! + 1
     : settings.refreshSec;
 
-  // 1s tick drives the live clock and lets the request meter decay.
+  // 1s tick for the live clock and the request meter.
   useEffect(() => {
     const id = setInterval(() => {
       setNowMs(Date.now());
@@ -624,8 +561,7 @@ export function useTrackSource(): UseTrackSource {
     }
   }, []);
 
-  // Exchange the entered password for a session token, then let the connect
-  // effect proceed. The password is never stored — only the returned token is.
+  // Exchange the password for a session token. Only the token is stored.
   const submitPassword = useCallback(async (password: string) => {
     setPwBusy(true);
     setPwError(null);
@@ -634,17 +570,15 @@ export function useTrackSource(): UseTrackSource {
       setAuthed(true);
     } catch (e) {
       setPwError(
-        isRateLimit(e) ? 'Too many attempts — wait a moment and try again.' : 'Incorrect password.'
+        isRateLimit(e) ? 'Too many attempts. Wait a moment and try again.' : 'Incorrect password.'
       );
     } finally {
       setPwBusy(false);
     }
   }, []);
 
-  // Verify credentials, resolve the workspace/project list. Toggl mode uses the
-  // 24h cache unless forced (e.g. the user clicks Connect/Reconnect), to
-  // conserve requests; standalone always fetches live (unmetered, and the list
-  // changes right here in Settings).
+  // Verify credentials and load the workspace/project list. Toggl mode uses
+  // the 24h cache unless forced (Connect/Reconnect); standalone is always live.
   const connect = useCallback(
     async (token: string, force = false) => {
       setConnecting(true);
@@ -699,17 +633,16 @@ export function useTrackSource(): UseTrackSource {
       } catch (e) {
         setReady(false);
         setProjects([]);
-        // Session missing/expired (or password rotated): drop back to the gate
-        // instead of showing a source auth error.
+        // Session missing/expired (or password rotated): back to the gate.
         if (isAuthRequired(e)) {
           setAuthed(false);
           return;
         }
         setAuthError(
           isRateLimit(e)
-            ? 'Toggl rate limit reached — wait a bit, then try again.'
+            ? 'Toggl rate limit reached. Wait a bit, then try again.'
             : standalone
-            ? `Could not reach the store — check MONGODB_URI and the database's network access.${
+            ? `Could not reach the store. Check MONGODB_URI and the database's network access.${
                 errorDetail(e) ? ` (${errorDetail(e)})` : ''
               }`
             : serverManaged
@@ -724,19 +657,17 @@ export function useTrackSource(): UseTrackSource {
     [backend, metered, serverManaged, standalone]
   );
 
-  // Once we know the server-token status, connect appropriately (cache-first).
+  // Connect once the server-token status is known.
   useEffect(() => {
     if (!hydrated || serverManaged === null || ready) return;
-    // A misconfigured deployment (standalone without APP_PASSWORD) can't serve
-    // anything — surface the problem instead of a doomed connect.
+    // e.g. standalone without APP_PASSWORD: show the problem, don't connect.
     if (misconfigured) {
       setAuthError(misconfigured);
       setShowSettings(true);
       return;
     }
     if (serverManaged) {
-      // When a password gate is active, wait until we hold a session before
-      // connecting — the proxy would reject the fetch anyway.
+      // Behind a password gate, wait for a session; the proxy would reject us.
       if (passwordRequired && !authed) return;
       connect(''); // server holds the credential; ignore any stored browser token
     } else if (settings.token) {
@@ -747,9 +678,9 @@ export function useTrackSource(): UseTrackSource {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [hydrated, serverManaged, passwordRequired, authed, misconfigured]);
 
-  // Poll time entries. A single request (the entries list already includes the
-  // running timer). Self-scheduling so we can pause while the tab is hidden and
-  // back off on rate limits; the live counter ticks locally in between.
+  // Poll time entries: one request, which includes the running timer.
+  // Self-scheduling so it can pause while the tab is hidden and back off on
+  // rate limits.
   useEffect(() => {
     if (!ready || livePollPaused) return;
     let cancelled = false;
@@ -758,8 +689,7 @@ export function useTrackSource(): UseTrackSource {
 
     const fetchNow = async () => {
       lastFetchRef.current = Date.now();
-      // In cache mode this device's poll is usually a server cache hit (no
-      // upstream call), so the per-device hourly meter would over-count — skip it.
+      // In cache mode most polls are server cache hits; don't count them.
       if (metered && !cacheEnabled) setReqThisHour(recordReqs(1));
       try {
         const win = pollWindow(new Date());
@@ -777,7 +707,7 @@ export function useTrackSource(): UseTrackSource {
       } catch (e) {
         if (cancelled) return;
         if (isAuthRequired(e)) {
-          // Session expired mid-session — fall back to the password gate.
+          // Session expired: back to the password gate.
           setReady(false);
           setAuthed(false);
           return;
@@ -786,13 +716,13 @@ export function useTrackSource(): UseTrackSource {
           backoffStepRef.current = Math.min(backoffStepRef.current + 1, 5);
           const wait = Math.min(intervalMs * 2 ** backoffStepRef.current, 15 * 60_000);
           backoffUntilRef.current = Date.now() + wait;
-          setFetchError('Rate limited by Toggl — slowing down automatically.');
+          setFetchError('Rate limited by Toggl. Slowing down automatically.');
         } else {
           setFetchError('Failed to refresh data.');
         }
       }
     };
-    // Let mutations request an immediate canonical refresh out of band.
+    // Lets mutations trigger an immediate refetch.
     refetchRef.current = () => {
       fetchNow();
     };
@@ -831,11 +761,9 @@ export function useTrackSource(): UseTrackSource {
     };
   }, [ready, livePollPaused, settings.token, pollIntervalSec, cacheEnabled, backend, metered]);
 
-  // On-demand fetch of an arbitrary range (historical timesheet; future exports).
-  // A plain (unforced) fetch in shared-cache mode is normally a server cache hit,
-  // so — like the live poll — it isn't charged to the per-device meter; a forced
-  // refresh always hits the source, so it is. AuthRequired bubbles up so the
-  // caller can re-gate; other errors surface as thrown ApiErrors.
+  // In cache mode an unforced fetch is usually a cache hit and is not counted;
+  // a forced one always reaches Toggl and is. Errors (including AuthRequired)
+  // are thrown to the caller.
   const loadRange = useCallback(
     async (startISO: string, endISO: string, opts?: { force?: boolean }): Promise<FetchedEntries> => {
       const force = opts?.force === true;
@@ -853,9 +781,7 @@ export function useTrackSource(): UseTrackSource {
   }, []);
   const clearMutationError = useCallback(() => setMutationError(null), []);
 
-  // React to store changes made in OTHER tabs/windows: refetch entries at
-  // once (and re-list workspaces when those changed) instead of waiting out
-  // the poll interval on stale data.
+  // Refetch on store changes made in other tabs/windows.
   useEffect(() => {
     if (!standalone || !ready) return;
     const ch = storeChannel();
@@ -868,13 +794,10 @@ export function useTrackSource(): UseTrackSource {
     return () => ch.removeEventListener('message', onMessage);
   }, [standalone, ready]);
 
-  // Standalone workspaces live in their own collection, outside the sync
-  // payload — so a rename, recapture, create or delete made on ANOTHER device
-  // reaches this one through neither the settings pull nor the (same-browser)
-  // BroadcastChannel. Re-list them when the window regains focus, throttled the
-  // way the sync pull is. Without this a recall could reapply an obsolete
-  // snapshot, and an export-detail write would be built on one (see
-  // setExportFields, which patches the workspace's cached settings).
+  // Standalone workspaces are outside the sync payload, so changes from other
+  // devices arrive through neither the settings pull nor the BroadcastChannel.
+  // Re-list on focus (throttled like the sync pull). Otherwise a recall or a
+  // setExportFields write could build on an obsolete snapshot.
   const lastWsListRef = useRef(0);
   useEffect(() => {
     if (!standalone || !ready) return;
@@ -883,7 +806,7 @@ export function useTrackSource(): UseTrackSource {
       if (Date.now() - lastWsListRef.current < 30_000) return;
       lastWsListRef.current = Date.now();
       refreshWorkspacesRef.current?.().catch(() => {
-        /* transient — the next focus (or any mutation) tries again */
+        /* transient: the next focus or mutation retries */
       });
     };
     window.addEventListener('focus', onFocus);
@@ -895,13 +818,12 @@ export function useTrackSource(): UseTrackSource {
   }, [standalone, ready]);
 
   // ---- Cross-device settings sync ----
-  // Engine: pull on load and on window focus; push (debounced) whenever the
-  // syncable content differs from what this device last synced. Every decision
-  // goes through the content hash stored in the sync bookmark (tqv.sync.v1),
-  // so identical content never generates traffic and applying a pulled
-  // document never echoes back as a push. Conflicts (both sides changed since
-  // the last common revision) are never auto-resolved — the newer document is
-  // parked in `syncConflict` and the Settings panel asks the user to pick.
+  // Pull on load and on focus; push (debounced) when the syncable content
+  // differs from the last-synced hash in the sync bookmark (tqv.sync.v1). The
+  // hash keeps identical content from generating traffic and stops a pulled
+  // document echoing back as a push. Conflicts (both sides changed since the
+  // last common revision) are never auto-resolved: the server document waits
+  // in `syncConflict` for the user to pick in Settings.
   const syncActive = syncEnabled && hydrated && (!passwordRequired || authed);
 
   const applyRemoteDoc = useCallback(
@@ -910,11 +832,9 @@ export function useTrackSource(): UseTrackSource {
       persist(applySyncPayload(settingsRef.current, doc.payload));
       setSyncConflict(null);
       setLastSyncedAt(Date.now());
-      // Surfaces that another device's document replaced these settings — the
-      // Settings form and the export dialog both hold mount-time snapshots and
-      // must re-seed, or the next Save/Export would write the stale values
-      // back over what was just adopted (and push them at the NEW revision, so
-      // not even a conflict would catch it).
+      // Forms holding mount-time snapshots must re-seed. Otherwise their next
+      // save writes stale values back at the new revision, which no conflict
+      // check would catch.
       setAppliedEpoch((n) => n + 1);
     },
     [persist]
@@ -926,8 +846,8 @@ export function useTrackSource(): UseTrackSource {
       const doc = await fetchSyncDoc();
       const meta = loadSyncMeta();
       if (doc && (!meta || doc.rev > meta.rev)) {
-        // The server moved past this device. Adopt it unless this device has
-        // unsynced changes of its own — then hold both and let the user pick.
+        // The server is ahead. Adopt it unless this device has unsynced
+        // changes; then the user picks.
         const localHash = payloadHash(buildSyncPayload(settingsRef.current));
         const unchanged = meta
           ? meta.hash === localHash
@@ -940,8 +860,7 @@ export function useTrackSource(): UseTrackSource {
       setSyncStatus('idle');
       setSyncErrorMsg(null);
       setSyncReady(true);
-      // Re-evaluate the push effect: local drift (or a push that failed while
-      // offline) gets uploaded now that the store is reachable again.
+      // Re-run the push effect so local drift is uploaded.
       setSyncTick((t) => t + 1);
     } catch (e) {
       if (isAuthRequired(e)) {
@@ -955,8 +874,7 @@ export function useTrackSource(): UseTrackSource {
     }
   }, [applyRemoteDoc]);
 
-  // Pull on activation, then again whenever the window regains focus (another
-  // device may have synced meanwhile) — throttled so tab-switching is free.
+  // Pull on activation and on focus, throttled to once per 30s.
   useEffect(() => {
     if (!syncActive) return;
     pullSync();
@@ -980,10 +898,8 @@ export function useTrackSource(): UseTrackSource {
     const hash = payloadHash(payload);
     const meta = loadSyncMeta();
     if (meta?.hash === hash) return;
-    // A never-configured device that has never synced has nothing worth
-    // creating the server document for — and letting it push would make the
-    // user's REAL device raise a conflict over a document full of defaults
-    // if the fresh one merely loaded first.
+    // A pristine, never-synced device must not create the server document,
+    // or the user's real device would hit a conflict over defaults.
     if (!meta && hash === pristineHash(settings)) return;
     const timer = setTimeout(async () => {
       setSyncStatus('syncing');
@@ -1020,7 +936,7 @@ export function useTrackSource(): UseTrackSource {
         applyRemoteDoc(doc);
         return;
       }
-      // Keep this device: overwrite the server's revision explicitly.
+      // Keep this device: overwrite the server's revision.
       setSyncStatus('syncing');
       try {
         const payload = buildSyncPayload(settingsRef.current);
@@ -1032,7 +948,7 @@ export function useTrackSource(): UseTrackSource {
         setLastSyncedAt(Date.now());
       } catch (e) {
         if (e instanceof SyncConflictError) {
-          // Another device raced in between — re-offer with the newest copy.
+          // Another device pushed meanwhile; re-offer with the newest copy.
           setSyncStatus('idle');
           setSyncConflict(e.doc);
           return;
@@ -1048,8 +964,7 @@ export function useTrackSource(): UseTrackSource {
     [syncConflict, applyRemoteDoc]
   );
 
-  // Manual transfer: the same payload sync moves, as a downloadable file —
-  // the zero-infrastructure path for deployments without a sync store.
+  // The sync payload as a file, for deployments without a sync store.
   const exportSettingsFile = useCallback(() => {
     const payload = buildSyncPayload(settingsRef.current);
     const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
@@ -1084,11 +999,9 @@ export function useTrackSource(): UseTrackSource {
   );
 
   // ---- Standalone mutations ----
-  // Shared shape: apply the optimistic change to the entries state, run the
-  // server call, reconcile with the canonical result, and kick an instant poll
-  // so any side effects (e.g. the previously running entry a new timer closed)
-  // turn canonical too. On failure everything rolls back and the error surfaces
-  // as a toastable message. Resolves null (or false) on failure.
+  // Apply the optimistic change, call the server, reconcile with its result,
+  // then refetch so side effects (e.g. the timer a new start closed) become
+  // canonical. On failure, roll back and set mutationError; resolves null.
   const runMutation = useCallback(
     async <R,>(
       optimistic: (list: TimeEntry[]) => TimeEntry[],
@@ -1152,9 +1065,8 @@ export function useTrackSource(): UseTrackSource {
 
   const addEntry = useCallback<UseTrackSource['addEntry']>(
     async ({ description, tags, workspaceId, start, stop }) => {
-      // Only surface the optimistic copy in the shared poll state when it falls
-      // inside the poll's window; a backdated entry belongs to the tracker's
-      // own history list, which reconciles from the returned canonical entry.
+      // Only add the optimistic copy if it is inside the poll window. Older
+      // entries belong to the tracker's history list.
       const inWindow = Date.parse(start) >= pollWindow(new Date()).startMs;
       const temp: TimeEntry = patchEntry(
         {
@@ -1217,9 +1129,7 @@ export function useTrackSource(): UseTrackSource {
     [runMutation]
   );
 
-  // ---- Standalone workspace CRUD (Settings) ----
-  // Every operation refreshes the workspace + project lists so the pickers and
-  // chips reflect the change at once.
+  // ---- Standalone workspace CRUD ----
   const refreshWorkspaces = useCallback(async (): Promise<StoreWorkspace[]> => {
     const ws = await listWorkspaces();
     setWorkspaces(ws);
@@ -1273,14 +1183,12 @@ export function useTrackSource(): UseTrackSource {
     async (id, force = false) => {
       try {
         await deleteWorkspaceApi(id, force);
-        // The server strips references out of the OTHER workspace documents;
-        // this device's active settings may reference the deleted workspace
-        // too (as a tracked selection or a linked billing code) — strip those
-        // the same way so nothing keeps pointing at a workspace that's gone.
+        // The server strips references from the other workspace documents.
+        // Strip them from this device's active settings too (selection,
+        // linked codes, recalled-workspace pointer).
         setSettings((prev) => {
           const selectedProjects = prev.selectedProjects.filter((p) => p.id !== id);
           const codeMappings = (prev.codeMappings ?? []).filter((m) => m.projectId !== id);
-          // The recalled-workspace pointer goes too when it named this one.
           const activePresetId =
             prev.activePresetId === String(id) ? null : prev.activePresetId;
           if (
@@ -1318,24 +1226,16 @@ export function useTrackSource(): UseTrackSource {
     [refreshWorkspaces]
   );
 
-  // ---- Export identity fields (the export dialog's remembered details) ----
-  // They belong to the workspace being billed, so a write goes two places: the
-  // active settings (what the next export starts from) and the stored workspace
-  // those settings mirror, which is what makes the values survive a switch to
-  // another workspace and back. With no workspace stored — or with the settings
-  // no longer matching any — only the active settings are written, exactly as
-  // the device-wide behaviour used to be.
-  //
-  // The store write is debounced: the engagement note saves as it is typed, and
-  // a workspace document is a server round-trip.
+  // ---- Export identity fields ----
+  // Written to the active settings and to the stored workspace they match (if
+  // any), so each workspace keeps its own details across switches. The store
+  // write is debounced because the engagement note saves on every keystroke.
   const workspacesRef = useRef<StoreWorkspace[]>([]);
   useEffect(() => {
     workspacesRef.current = workspaces;
   }, [workspaces]);
 
-  // The stored workspaces of whichever mode this is, in one shape (standalone:
-  // server documents; Toggl: the localStorage preset list). The chip color is
-  // standalone-only — Toggl-mode presets carry none.
+  // Standalone: store documents. Toggl: the localStorage presets.
   const storedWorkspaces = useMemo(
     () =>
       standalone
@@ -1354,11 +1254,9 @@ export function useTrackSource(): UseTrackSource {
     [standalone, workspaces, settings.presets]
   );
 
-  // Which one the settings currently mirror. Content decides whether ANY of
-  // them is active; the recalled id then decides WHICH — two workspaces can be
-  // identical apart from their export details, and presetMatches (rightly)
-  // ignores those, so content alone could not tell them apart and a write
-  // would land on both.
+  // Content decides whether any workspace is active; the recalled id picks
+  // which, since presetMatches ignores export details and two workspaces can
+  // differ only in those.
   const activeWorkspace = useMemo(() => {
     const matching = storedWorkspaces.filter((w) => presetMatches(w.value, settings));
     return matching.find((w) => w.id === settings.activePresetId) ?? matching[0] ?? null;
@@ -1369,10 +1267,7 @@ export function useTrackSource(): UseTrackSource {
     activeWorkspaceRef.current = activeWorkspace?.id ?? null;
   }, [activeWorkspace]);
 
-  // Recall a stored workspace by id — exactly what clicking one in
-  // Settings → Workspaces does, minus the panel (the topbar switcher). Recalled
-  // projects are re-enriched from the live list, so a renamed/recolored project
-  // shows its current name rather than the snapshot's.
+  // Same as clicking a workspace in Settings → Workspaces.
   const switchWorkspace = useCallback(
     (id: string) => {
       const ws = storedWorkspaces.find((w) => w.id === id);
@@ -1383,14 +1278,12 @@ export function useTrackSource(): UseTrackSource {
   );
 
   const exportCommitRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  // The workspace to commit to is resolved when the write happens, not when the
-  // timer fires — switching workspaces mid-note must not redirect the note.
+  // The target workspace is fixed at write time, so switching workspaces
+  // before the timer fires does not redirect the note.
   const exportPendingRef = useRef<{ workspaceId: number; fields: ExportFieldValues } | null>(null);
 
-  // Send the pending workspace write. `beacon` is the page-is-going-away path:
-  // it calls the API directly (nothing to reconcile into state that is about to
-  // disappear) with keepalive, so the browser finishes the request after this
-  // document is gone.
+  // `beacon`: the page is going away. Call the API directly with keepalive so
+  // the request outlives the document.
   const commitExportFields = useCallback(
     (pending: { workspaceId: number; fields: ExportFieldValues }, beacon = false) => {
       const ws = workspacesRef.current.find((w) => w.id === pending.workspaceId);
@@ -1398,8 +1291,7 @@ export function useTrackSource(): UseTrackSource {
       const patch = { settings: { ...ws.settings, exportFields: pending.fields } };
       if (beacon) {
         void updateWorkspaceApi(ws.id, patch, { keepalive: true }).catch(() => {
-          /* the value is already in the local settings; nothing to report to a
-             page that is unloading */
+          /* already in local settings; the page is unloading */
         });
         return;
       }
@@ -1408,10 +1300,8 @@ export function useTrackSource(): UseTrackSource {
     [updateWorkspace]
   );
 
-  // Send whatever is still queued, now. Used when the page is hidden, unloaded
-  // or navigated away from — otherwise a note typed in the last 1.2s would
-  // reach the local settings but never the workspace document, and another
-  // device would never see it.
+  // Send the queued write now, when the page is hidden or left. Otherwise a
+  // note typed in the last 1.2s never reaches the workspace document.
   const flushExportFields = useCallback(
     (beacon = false) => {
       if (exportCommitRef.current) {
@@ -1439,8 +1329,7 @@ export function useTrackSource(): UseTrackSource {
     return () => {
       document.removeEventListener('visibilitychange', onHide);
       window.removeEventListener('pagehide', onHide);
-      // Leaving this page (a route change, or the tab closing without ever
-      // going hidden) — the queued write goes out now rather than dying here.
+      // Route change or close without going hidden: flush now.
       flushExportFieldsRef.current(true);
     };
   }, []);
@@ -1451,9 +1340,8 @@ export function useTrackSource(): UseTrackSource {
       const prev = settingsRef.current;
       if (exportFieldsEqual(prev.exportFields, value)) return;
       const activeId = activeWorkspaceRef.current;
-      // Toggl mode: the stored workspaces are part of the settings, so the
-      // active one — that one only, never a twin with the same tracking
-      // settings — is updated in the same write.
+      // Toggl mode: presets live in the settings, so update the active one
+      // (only that one) in the same write.
       const presets = prev.presets.map((p) =>
         p.id === activeId ? { ...p, value: { ...p.value, exportFields: value } } : p
       );

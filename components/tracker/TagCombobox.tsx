@@ -1,9 +1,8 @@
 'use client';
 
-// Billing-tag combobox: a free-text input with recency-ordered suggestions from
-// the store (GET /api/store/tags). Prefix-aware — suggestions are limited to
-// tags carrying the workspace's billing prefix; free text creates a new tag.
-// Enter accepts, Esc dismisses, arrows navigate; blur commits the typed text.
+// Billing-tag combobox: free text with recent tags from GET /api/store/tags
+// that match the workspace's billing prefix. Enter accepts, Esc cancels,
+// arrows navigate, blur commits the typed text.
 
 import { useEffect, useRef, useState } from 'react';
 import { suggestTagsApi } from '@/lib/source/standalone';
@@ -24,7 +23,7 @@ export default function TagCombobox({
   onCommit: (tag: string | null) => void;
   placeholder?: string;
   autoFocus?: boolean;
-  /** Popover use: called after a commit or Esc so the opener can close it. */
+  /** Called after a commit or Esc, so a popover can close. */
   onClose?: () => void;
 }) {
   const [text, setText] = useState(value ?? '');
@@ -34,15 +33,13 @@ export default function TagCombobox({
   const wrapRef = useRef<HTMLDivElement>(null);
   const committedRef = useRef(false);
 
-  // Keep the field in sync when the entry's tag changes underneath (e.g. the
-  // poll reconciled a canonical value) while the user isn't mid-edit.
+  // Follow outside changes to the tag unless the user is editing.
   useEffect(() => {
     if (!open) setText(value ?? '');
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [value]);
 
-  // Debounced suggestion fetch; also fires on focus with the empty query so the
-  // most recent tags appear before any typing.
+  // Debounced. Also runs on focus, so recent tags show before typing.
   useEffect(() => {
     if (!open) return;
     const id = setTimeout(() => {
@@ -97,7 +94,7 @@ export default function TagCombobox({
           }
         }}
         onBlur={() => {
-          // Give a click on a suggestion time to land first (mousedown commits).
+          // Let a suggestion's mousedown commit first.
           setTimeout(() => {
             if (!committedRef.current && open) commit(text);
           }, 0);
@@ -112,7 +109,7 @@ export default function TagCombobox({
                 role="option"
                 aria-selected={i === active}
                 className={`tagbox-item${i === active ? ' active' : ''}`}
-                // mousedown, not click: it must beat the input's blur handler.
+                // mousedown fires before the input's blur.
                 onMouseDown={(e) => {
                   e.preventDefault();
                   commit(tag);

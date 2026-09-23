@@ -1,9 +1,8 @@
-// Standalone store: tag autocomplete for the tracker's billing-tag combobox.
+// Standalone store: tag autocomplete for the tracker.
 //
-// GET ?q=&prefix= — distinct tags ordered by recency (max entry start), newest
-// first, limit 20. `prefix` narrows to tags starting with the billing prefix
-// (case-sensitive, like billingTagOf); `q` is the user's typed text, matched
-// case-insensitively anywhere in the tag.
+// GET ?q=&prefix= — up to 20 distinct tags, most recently used first.
+// `prefix` matches the tag start, case-sensitive like billingTagOf; `q`
+// matches anywhere, case-insensitive.
 
 import { NextRequest } from 'next/server';
 import { getStoreDb } from '@/lib/store/mongo';

@@ -1,15 +1,13 @@
-// Standalone store: the entries collection.
+// Standalone store: entries.
 //
-// GET  ?start_date&end_date[&limit] — entries overlapping [start, end), across
-//      ALL workspaces (the client filters by ProjectSet, and linked workspaces
-//      need one another's entries — same as the Toggl API returns every
-//      project's entries today). `limit` returns only the newest N (by start),
-//      which the tracker uses for its "last 100 entries" initial page.
-// POST — create an entry. `stop: null` (or omitted) starts a timer; starting a
-//      timer first stops any running entry at the new start (Toggl semantics).
+// GET  ?start_date&end_date[&limit] — entries overlapping [start, end) in all
+//      workspaces, like the Toggl API; the client filters. `limit` returns
+//      the newest N by start.
+// POST — create an entry. `stop: null` (or omitted) starts a timer and stops
+//      any running entry at the new start, as Toggl does.
 //
-// Every mutation returns the canonical serialized entry so the client can
-// reconcile its optimistic state without a refetch.
+// Mutations return the stored entry so the client can reconcile its
+// optimistic state.
 
 import { NextRequest } from 'next/server';
 import { getStoreDb } from '@/lib/store/mongo';
@@ -42,9 +40,8 @@ export async function GET(req: NextRequest) {
 
   try {
     const db = await getStoreDb();
-    // Overlap, not containment: an entry belongs to the range if any part of it
-    // (a running entry reaches "now") falls inside — matching how the client
-    // clips entries to days/weeks everywhere downstream.
+    // Overlap, not containment: the client clips entries to days and weeks.
+    // A running entry extends to now.
     let cursor = db
       .collection<EntryDoc>('entries')
       .find({
@@ -105,11 +102,10 @@ export async function POST(req: NextRequest) {
       updatedAt: now,
     };
 
-    // Starting a timer stops whatever is running at the new timer's start
-    // (Toggl semantics). The $max keeps the closed entry non-empty even in the
-    // degenerate case where the running entry started at/after the new start.
-    // The partial unique index still backstops a concurrent double-start; one
-    // retry after re-closing covers that race.
+    // Starting a timer stops the running one at the new start. $max keeps the
+    // closed entry at least 1s long if it started at or after the new start.
+    // If a concurrent start trips the one-running-timer index, close again
+    // and retry once.
     for (let attempt = 0; ; attempt++) {
       if (stop === null) {
         await entries.updateMany({ stop: null }, [

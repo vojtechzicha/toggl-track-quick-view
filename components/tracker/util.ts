@@ -1,4 +1,4 @@
-// Small shared helpers for the tracker UI (standalone mode).
+// Helpers for the tracker UI.
 
 import { billingTagOf, type TimeEntry } from '@/lib/calc';
 import type { StoreWorkspace } from '@/lib/source/standalone';
@@ -20,10 +20,8 @@ export function fromLocalInput(v: string): number | null {
 }
 
 /**
- * Replace an entry's billing tag (the first tag matching the workspace's
- * prefix) with `tag`, keeping every other tag untouched. `tag: null` removes
- * it. The tracker edits exactly one billing tag per entry — that's the only
- * tag anything downstream reads.
+ * Replace an entry's billing tag (the first tag with the workspace's prefix)
+ * with `tag`, keeping other tags. `null` removes it.
  */
 export function withBillingTag(
   tags: string[] | undefined,
@@ -42,10 +40,8 @@ export function prefixFor(workspaces: StoreWorkspace[], workspaceId: number | nu
 }
 
 /**
- * True when the workspace bills by project rather than by billing code — its
- * entries carry no billing tag at all, so the tracker offers none. An unknown
- * workspace (and every workspace stored before the setting existed) bills by
- * code, the behaviour the tracker has always had.
+ * True when the workspace bills by project, so its entries have no billing
+ * tag. Unknown workspaces, and those without the setting, bill by code.
  */
 export function billsByProject(
   workspaces: StoreWorkspace[],

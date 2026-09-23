@@ -1,14 +1,10 @@
-// Client half of cross-device settings sync (see app/api/sync/route.ts and
-// lib/sync/model.ts for the contract).
+// Client helpers for settings sync: payload build/apply, hashing, the fetch
+// client and the per-device bookmark. The sync logic is in useTrackSource;
+// the contract is in lib/sync/model.ts and app/api/sync/route.ts.
 //
-// The engine itself lives in useTrackSource; this module is the toolkit:
-// building/applying payloads, content hashing, the tiny fetch client, and the
-// per-device sync bookmark. The bookmark (tqv.sync.v1) remembers the last
-// server revision this device synced to AND the content hash of what was
-// synced — comparing the current settings' hash against it is how the engine
-// tells "this device changed something" apart from "nothing to do", entirely
-// offline. Hashing uses a key-sorted stringify so the same content always
-// hashes the same, no matter what key order a JSON round-trip produced.
+// The bookmark (tqv.sync.v1) holds the last synced revision and the content
+// hash of what was synced. Comparing hashes tells whether this device has
+// local changes, without a network call.
 
 import type { StoredSettings } from '@/lib/useTrackSource';
 import { exportFieldsEqual, normalizeExportFields } from '@/lib/exportFields';
@@ -45,8 +41,8 @@ export function saveSyncMeta(m: SyncMeta): void {
 
 // ---- Content hashing ----
 
-/** JSON.stringify with recursively sorted keys (and undefined values dropped),
- * so hashes depend on content only — never on key insertion order. */
+/** JSON.stringify with sorted keys and undefined values dropped, so the hash
+ * does not depend on key order. */
 function stableStringify(v: unknown): string {
   if (v === null || typeof v !== 'object') return JSON.stringify(v) ?? 'null';
   if (Array.isArray(v)) return `[${v.map(stableStringify).join(',')}]`;
@@ -57,8 +53,8 @@ function stableStringify(v: unknown): string {
   return `{${keys.map((k) => `${JSON.stringify(k)}:${stableStringify(rec[k])}`).join(',')}}`;
 }
 
-/** Cheap content fingerprint (djb2 + length) — collision-resistant enough to
- * answer "did MY settings change since I last synced", which is all it does. */
+/** Cheap content fingerprint (djb2 + length). Only used to detect local
+ * changes since the last sync; not collision-proof. */
 export function payloadHash(p: SyncPayload): string {
   const s = stableStringify(p);
   let h = 5381;
@@ -69,14 +65,11 @@ export function payloadHash(p: SyncPayload): string {
 // ---- Payload build / apply ----
 
 /**
- * Snapshot the syncable state: settings minus the token (a credential never
- * leaves its device) and refreshSec (a device knob).
+ * Snapshot the syncable state: settings minus the token (credentials stay on
+ * the device) and refreshSec (per device).
  *
- * The export identity fields now live inside the settings (per workspace, and
- * again inside every stored workspace), so they travel in `settings` like
- * everything else. The top-level `exportFields` key is still filled with the
- * active set: it is what a client from before workspace scoping reads, and
- * dropping it would blank that client's export dialog.
+ * Export fields travel inside `settings`. The top-level `exportFields` copy
+ * is kept for older clients that read only that key.
  */
 export function buildSyncPayload(settings: StoredSettings): SyncPayload {
   const { token: _token, refreshSec: _refreshSec, ...rest } = settings;
@@ -88,9 +81,8 @@ export function buildSyncPayload(settings: StoredSettings): SyncPayload {
 }
 
 /**
- * Apply a synced payload over the current settings, returning the value to
- * persist. The local token and refresh interval always survive. Spreading over
- * `prev` keeps any field a payload from an older app version doesn't carry.
+ * Apply a synced payload over the current settings. Keeps the local token and
+ * refresh interval, and any field an older payload lacks.
  */
 export function applySyncPayload(prev: StoredSettings, payload: SyncPayload): StoredSettings {
   return {
@@ -103,13 +95,9 @@ export function applySyncPayload(prev: StoredSettings, payload: SyncPayload): St
 }
 
 /**
- * Which copy of the export fields a payload really means.
- *
- * A client that scopes them writes both copies from the same value, so they
- * agree. A client from BEFORE the scoping writes only the top level — while
- * still carrying (and pushing back) whatever nested copy it once pulled from
- * us, which by then is stale. So when the two disagree, the top level is the
- * one that was actually edited; when they agree, either will do.
+ * Which copy of the export fields a payload means. Current clients write both
+ * copies with the same value. Older clients edit only the top level and push
+ * back a stale nested copy, so when they disagree the top level wins.
  */
 function exportFieldsFrom(payload: SyncPayload, prev: StoredSettings) {
   const nested = payload.settings?.exportFields;
@@ -184,8 +172,7 @@ export async function pushSyncDoc(
   return syncApi<SyncDocInfo>({ method: 'PUT', body: { baseRev, device, payload } });
 }
 
-/** A short human label for this device, shown in conflict prompts ("changed on
- * macOS · Chrome"). Best-effort — it only has to be recognizable, not exact. */
+/** Rough device label for conflict prompts, e.g. "macOS · Chrome". */
 export function deviceLabel(): string {
   if (typeof navigator === 'undefined') return 'unknown';
   const ua = navigator.userAgent;

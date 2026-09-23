@@ -1,6 +1,5 @@
-// Error taxonomy shared by every track source. The UI only ever imports the
-// classifiers — callers switch on "is this a rate limit / a password-gate
-// re-login" without caring which backend threw.
+// Errors shared by both sources. Callers use the classifiers below and need
+// not know which backend threw.
 
 export class ApiError extends Error {
   status: number;

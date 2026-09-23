@@ -1,30 +1,25 @@
-// MongoDB connection for standalone mode — the app's own store of time entries.
+// MongoDB connection for the store (standalone mode and settings sync).
 //
-// Standard serverless pattern: one MongoClient promise cached on globalThis so
-// warm lambda invocations (and Next dev HMR reloads) reuse the connection pool
-// instead of opening a fresh one per request. Indexes are ensured once as part
-// of the initial connect, so every route can assume they exist — most notably
-// the partial unique index that lets the DATABASE guarantee at most one running
-// timer, closing the two-devices-start-simultaneously race.
+// One MongoClient promise is cached on globalThis so warm invocations and dev
+// reloads reuse the pool. Indexes are ensured during the initial connect, so
+// routes can rely on them, including the one that limits the store to one
+// running timer.
 
 import { MongoClient, type Db } from 'mongodb';
 
 const DEFAULT_DB = 'toggl-quick-view';
 
 /**
- * Presence of MONGODB_URI is what switches a deployment to standalone mode —
- * unless APP_MODE=toggl explicitly keeps the Toggl source, in which case the
- * database serves only the settings-sync store (see lib/sync/server.ts).
+ * MONGODB_URI switches a deployment to standalone mode, unless APP_MODE=toggl,
+ * in which case the database only backs settings sync (lib/sync/server.ts).
  */
 export function standaloneEnabled(): boolean {
   return !!process.env.MONGODB_URI && process.env.APP_MODE !== 'toggl';
 }
 
 async function connect(uri: string): Promise<Db> {
-  // Fail fast when the cluster is unreachable (wrong URI, Atlas network-access
-  // list rejecting the host): the driver's default 30s server-selection wait
-  // would push a serverless function toward its execution limit and turn a
-  // clear config error into an opaque timeout.
+  // Fail fast on an unreachable cluster. The driver's default 30s wait would
+  // run into the serverless time limit and hide the config error.
   const client = new MongoClient(uri, { serverSelectionTimeoutMS: 8000 });
   await client.connect();
   const db = client.db(process.env.MONGODB_DB || DEFAULT_DB);
@@ -35,25 +30,22 @@ async function connect(uri: string): Promise<Db> {
 async function ensureIndexes(db: Db): Promise<void> {
   await Promise.all([
     db.collection('workspaces').createIndex({ numericId: 1 }, { unique: true }),
-    // Range queries (entries overlapping [start, end)) scan per-workspace by
-    // recency; the numericId lookup serves the by-id routes.
     db.collection('entries').createIndex({ workspaceId: 1, start: -1 }),
     db.collection('entries').createIndex({ numericId: 1 }, { unique: true }),
-    // At most ONE running entry (stop: null) in the whole store, enforced by
-    // the database itself so two devices cannot race a second timer in.
+    // At most one running entry (stop: null) in the store, enforced by the
+    // database so two devices cannot both start a timer.
     db.collection('entries').createIndex(
       { stop: 1 },
       { unique: true, partialFilterExpression: { stop: { $type: 'null' } } }
     ),
-    // The Phase-5 importer stamps each imported entry with its Toggl id so
-    // re-running an import never duplicates.
+    // Imported entries carry their Toggl id, so re-running an import never
+    // duplicates.
     db.collection('entries').createIndex({ togglId: 1 }, { unique: true, sparse: true }),
   ]);
 }
 
-// globalThis (rather than a module-local) so the cache survives Next's dev-mode
-// module re-evaluation. Keyed by URI so a changed env var doesn't serve a stale
-// connection forever.
+// On globalThis so it survives dev-mode module reloads. Keyed by URI so a
+// changed env var gets a new connection.
 const g = globalThis as typeof globalThis & {
   _tqvMongo?: { uri: string; promise: Promise<Db> };
 };
@@ -63,8 +55,8 @@ export async function getStoreDb(): Promise<Db> {
   if (!uri) throw new Error('MONGODB_URI is not set');
   if (!g._tqvMongo || g._tqvMongo.uri !== uri) {
     const promise = connect(uri).catch((e) => {
-      // A failed connect must not be cached, or the store would stay broken
-      // until the next cold start even after a transient outage.
+      // Don't cache a failed connect, or a transient outage lasts until the
+      // next cold start.
       if (g._tqvMongo?.promise === promise) g._tqvMongo = undefined;
       throw e;
     });

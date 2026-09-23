@@ -1,8 +1,6 @@
-// Password-gate session for server-managed deploys (APP_PASSWORD). We persist
-// only the signed, expiring session token the server hands back — never the
-// password itself. See lib/serverAuth.ts for the server side. This is shared
-// by every track source: the Toggl proxy and the standalone store sit behind
-// the same gate.
+// Client side of the password gate (APP_PASSWORD), shared by both sources.
+// Stores only the signed, expiring session token, never the password. Server
+// side: lib/serverAuth.ts.
 
 import { ApiError } from './errors';
 
@@ -25,8 +23,7 @@ export function loadAuth(): AuthSession | null {
   }
 }
 
-/** True if we hold a session token that hasn't expired (client-side check; the
- * server re-validates the signature on every request regardless). */
+/** True if the stored session token has not expired. The server re-checks it on every request. */
 export function hasValidAuth(): boolean {
   const s = loadAuth();
   return !!s && s.exp > Date.now();

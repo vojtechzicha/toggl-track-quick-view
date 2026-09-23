@@ -1,10 +1,9 @@
 'use client';
 
-// The tracker's sticky top bar. Two shapes:
-//  - idle: description + billing-tag combobox + workspace selector, in TIMER
-//    mode (big Start button) or MANUAL mode (start/end datetime-locals + Add).
-//  - running: the bar becomes the running strip — live H:MM:SS, description
-//    and tag editable in place, Stop button.
+// The tracker's sticky top bar.
+//  - idle: description, billing tag and workspace, in timer mode (Start) or
+//    manual mode (start/end inputs and Add).
+//  - running: live clock, editable description and tag, Stop.
 
 import { useEffect, useState } from 'react';
 import TagCombobox from './TagCombobox';
@@ -47,8 +46,8 @@ export default function AddBar({
   const [manualError, setManualError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
-  // The running strip edits the entry itself; local state so typing doesn't
-  // fight the 1s re-render, re-seeded whenever a different entry runs.
+  // Local state so typing survives the 1s re-render; reset when a different
+  // entry starts running.
   const [runDesc, setRunDesc] = useState('');
   useEffect(() => {
     setRunDesc(running?.description ?? '');
@@ -74,8 +73,7 @@ export default function AddBar({
     </select>
   );
 
-  // A workspace that bills by project has no billing tags: the tag box goes
-  // away and nothing tags what is created here.
+  // A workspace that bills by project has no billing tags.
   const byProject = billsByProject(workspaces, wsId);
 
   if (running) {
@@ -118,8 +116,7 @@ export default function AddBar({
     );
   }
 
-  // A tag picked before switching to a bills-by-project workspace must not ride
-  // along — that workspace's entries carry no billing tag.
+  // Drop a tag picked before switching to a bills-by-project workspace.
   const tagsToSave = () => (tag && !byProject ? [tag] : []);
 
   const startTimer = () => {
@@ -152,7 +149,7 @@ export default function AddBar({
     if (ok) {
       setDesc('');
       setTag(null);
-      // Chain the next manual entry from where this one ended.
+      // The next manual entry starts where this one ended.
       setManualStart(manualStop);
       setManualStop('');
     }

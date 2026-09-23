@@ -1,14 +1,10 @@
 'use client';
 
-// Topbar quick switch between stored workspaces — the one-click version of
-// Settings → Workspaces, which stays the place to create, rename, recapture and
-// delete them. Both modes are covered: standalone lists the server's workspace
-// documents (with their chip colors), Toggl mode the saved presets.
+// Topbar switcher between stored workspaces (standalone: store documents;
+// Toggl: saved presets). Managing them stays in Settings → Workspaces.
 //
-// The menu is a popover under the button on wide screens and a bottom sheet on
-// narrow ones (see .ws-switch-menu in globals.css) — on a phone the topbar
-// buttons collapse to icons, so a dropdown anchored to a 44px button would be
-// both cramped and hard to hit.
+// The menu is a popover on wide screens and a bottom sheet on narrow ones
+// (.ws-switch-menu in globals.css), where the topbar buttons are icon-sized.
 
 import { useEffect, useRef, useState } from 'react';
 import type { UseTrackSource } from '@/lib/useTrackSource';
@@ -18,8 +14,7 @@ export default function WorkspaceSwitcher({
   onManage,
 }: {
   t: UseTrackSource;
-  // Open the Settings panel *on* its Workspaces section — creating, renaming,
-  // recapturing and deleting all stay there.
+  // Opens Settings at its Workspaces section.
   onManage: () => void;
 }) {
   const { workspaceList, activeWorkspace, switchWorkspace } = t;
@@ -27,8 +22,7 @@ export default function WorkspaceSwitcher({
   const btnRef = useRef<HTMLButtonElement>(null);
   const menuRef = useRef<HTMLDivElement>(null);
 
-  // Escape closes (returning focus to the button, so keyboard users don't get
-  // dropped at the top of the page), as does a click anywhere outside.
+  // Escape (focus returns to the button) or an outside click closes.
   useEffect(() => {
     if (!open) return;
     const onKey = (e: KeyboardEvent) => {
@@ -52,8 +46,7 @@ export default function WorkspaceSwitcher({
     };
   }, [open]);
 
-  // Move focus into the menu when it opens — onto the current workspace, so
-  // ↑/↓ start from where you are.
+  // On open, focus the current workspace so ↑/↓ start there.
   useEffect(() => {
     if (!open) return;
     const el =
@@ -62,9 +55,6 @@ export default function WorkspaceSwitcher({
     el?.focus();
   }, [open]);
 
-  // Nothing stored yet: there is nothing to switch between, and Settings is
-  // where the first workspace gets created. Keeps the topbar clean for anyone
-  // who never saved one.
   if (workspaceList.length === 0) return null;
 
   const activeEntry = workspaceList.find((w) => w.id === activeWorkspace?.id) ?? null;
@@ -82,8 +72,8 @@ export default function WorkspaceSwitcher({
 
   const choose = (id: string) => {
     setOpen(false);
-    // Recalling the workspace already on screen would be a no-op write; skip it
-    // so a stray click can't bump the sync revision.
+    // Skip re-applying the active one, so a stray click can't bump the sync
+    // revision.
     if (id !== activeWorkspace?.id) switchWorkspace(id);
     btnRef.current?.focus();
   };
@@ -117,7 +107,7 @@ export default function WorkspaceSwitcher({
             <div className="ws-switch-head">Workspace</div>
             {!activeWorkspace && (
               <p className="ws-switch-note">
-                The current settings don&apos;t match a stored workspace — picking one replaces
+                Your current settings don&apos;t match a saved workspace. Picking one replaces
                 them.
               </p>
             )}

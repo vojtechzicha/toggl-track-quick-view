@@ -1,17 +1,14 @@
-// Standalone store: bulk import of Toggl history (the Phase-5 importer).
+// Standalone store: bulk import of Toggl history.
 //
 // POST — body: { entries: TogglTimeEntry[], mapping: { key → workspaceNumericId } }
-// where a mapping key is a Toggl project id, '0' for entries carrying no
-// project, or '*' as the catch-all for any project not otherwise listed
-// (archived projects no longer returned by the projects API still appear in
-// history). A key that is absent (or mapped to 0) means "skip those entries".
+// A mapping key is a Toggl project id, '0' for entries without a project, or
+// '*' for any project not listed (archived projects still appear in history).
+// A missing key, or one mapped to 0, skips those entries.
 //
-// Idempotency is the whole design: every imported entry is stamped with its
-// Toggl id, and the sparse unique index on togglId makes a re-run skip what a
-// previous (possibly interrupted) run already brought in — it never overwrites,
-// so local edits made after an import always win. A Toggl entry still running
-// at import time is imported as STOPPED at the time of import (the store's
-// one-running-timer invariant belongs to local tracking, not history).
+// Idempotent: each entry keeps its Toggl id, and the unique togglId index
+// makes a re-run skip entries already imported. Existing entries are never
+// overwritten, so local edits win. A running Toggl entry is imported as
+// stopped at import time.
 
 import { NextRequest } from 'next/server';
 import { MongoBulkWriteError } from 'mongodb';
@@ -22,8 +19,7 @@ import { nextSeqBlock, type EntryDoc, type WorkspaceDoc } from '@/lib/store/mode
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 
-// One ~90-day window of a single account's entries fits comfortably; the
-// client batches larger windows into several calls.
+// Enough for a 90-day window; the client splits larger batches.
 const MAX_ENTRIES = 2000;
 
 function parseDate(v: unknown): Date | null {
@@ -52,7 +48,7 @@ export async function POST(req: NextRequest) {
     return jsonRes({ error: 'mapping must be an object of { togglProjectId: workspaceId }.' }, 400);
   }
 
-  // Keep only real assignments; 0 / non-numeric values mean "skip".
+  // 0 or non-numeric values mean "skip".
   const mapping = new Map<string, number>();
   for (const [key, value] of Object.entries(body.mapping as Record<string, unknown>)) {
     const ws = Number(value);
@@ -62,8 +58,7 @@ export async function POST(req: NextRequest) {
   try {
     const db = await getStoreDb();
 
-    // Every mapping target must be a real workspace — catching a stale id here
-    // beats scattering orphaned entries across the store.
+    // Reject unknown workspace ids rather than create orphaned entries.
     const targets = [...new Set(mapping.values())];
     if (targets.length > 0) {
       const found = await db
@@ -99,8 +94,7 @@ export async function POST(req: NextRequest) {
       }
       let stop: Date | null;
       if (e.stop == null) {
-        // A running entry becomes history stopped at import time (never before
-        // its own start, so the duration stays positive even on a skewed clock).
+        // Stop at import time, but after its start in case of clock skew.
         stop = now.getTime() > start.getTime() ? now : new Date(start.getTime() + 1000);
         stoppedRunning++;
       } else {
@@ -122,8 +116,7 @@ export async function POST(req: NextRequest) {
         description: typeof e.description === 'string' ? e.description.trim() : '',
         start,
         stop,
-        // Tags copy verbatim — billing prefixes, "(X)" markers and linked-code
-        // tags keep working because the timesheet only ever reads strings.
+        // Tags copy verbatim, so billing tags keep working.
         tags: Array.isArray(e.tags)
           ? e.tags.filter((t): t is string => typeof t === 'string' && t.trim() !== '')
           : [],
@@ -150,8 +143,8 @@ export async function POST(req: NextRequest) {
         const res = await entriesCol.insertMany(docs, { ordered: false });
         imported = res.insertedCount;
       } catch (e) {
-        // Two runs racing the same window: the unique togglId index rejects the
-        // loser's duplicates — count them as skipped, surface anything else.
+        // Concurrent runs: togglId duplicates count as skipped; rethrow
+        // anything else.
         if (!(e instanceof MongoBulkWriteError)) throw e;
         const writeErrors = Array.isArray(e.writeErrors) ? e.writeErrors : [e.writeErrors];
         if (!writeErrors.every((w) => w?.code === 11000)) throw e;

@@ -1,17 +1,12 @@
-// Shared shape of the cross-device settings sync document (client + server).
+// Settings sync document, shared by client and server.
 //
-// The payload is everything the user thinks of as "their setup": the active
-// settings, the stored Toggl-mode workspaces (presets), and the export
-// dialog's identity fields. Two things deliberately never sync:
-//  - the Toggl API token — a live credential stays on the device it was
-//    entered on (mirroring how PresetValue has always excluded it);
-//  - refreshSec — a device/network knob, not part of "the setup".
+// The payload holds the active settings, the Toggl-mode presets and the
+// export fields. It never holds the Toggl API token (credentials stay on the
+// device) or refreshSec (per device).
 //
-// The server stores exactly one document per deployment (these are
-// single-tenant personal deploys behind APP_PASSWORD) with a monotonically
-// increasing `rev`. Every write carries the rev it was based on, so a stale
-// device can never silently clobber a newer setup — it gets a 409 with the
-// current document and the user picks a side (see lib/sync/client.ts).
+// The server keeps one document per deployment with an increasing `rev`.
+// Each write names the rev it was based on; a stale write gets a 409 with the
+// current document and the user picks a side.
 
 import type { StoredSettings } from '@/lib/useTrackSource';
 import type { ExportFieldValues } from '@/lib/exportFields';
@@ -20,12 +15,10 @@ export const SYNC_PAYLOAD_VERSION = 1;
 
 export interface SyncPayload {
   v: number;
-  /** StoredSettings minus the credential and the per-device refresh knob.
-   * Carries the export dialog's identity fields twice over: the active set
-   * (settings.exportFields) and each stored workspace's own. */
+  /** StoredSettings minus token and refreshSec. Includes the active export
+   * fields and each preset's own. */
   settings: Omit<StoredSettings, 'token' | 'refreshSec'>;
-  /** The active export identity fields, mirrored for clients from before they
-   * were scoped to a workspace (they read the payload's top level only). */
+  /** Copy of the active export fields for older clients that read only this. */
   exportFields: ExportFieldValues;
 }
 

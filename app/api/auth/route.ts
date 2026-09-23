@@ -1,8 +1,5 @@
-// Password gate login endpoint.
-//
-// POST { password } -> { token, exp } on success, 401 on a wrong password.
-// The password is checked (timing-safe) against APP_PASSWORD and immediately
-// discarded; only the signed session token is returned. See lib/serverAuth.ts.
+// Password gate login. POST { password } -> { token, exp }, or 401.
+// See lib/serverAuth.ts.
 
 import { NextRequest } from 'next/server';
 import { gateEnabled, verifyPassword, issueToken } from '@/lib/serverAuth';
@@ -10,9 +7,9 @@ import { gateEnabled, verifyPassword, issueToken } from '@/lib/serverAuth';
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 
-// Best-effort in-memory brute-force throttle. A correct password resets it.
-// Per server instance (like lib/serverCache), so it's not airtight across a
-// fanned-out serverless deploy — a strong APP_PASSWORD is the real defense.
+// Best-effort brute-force throttle, reset by a correct password. It is per
+// server instance, so serverless scaling weakens it; rely on a strong
+// APP_PASSWORD.
 let consecutiveFailures = 0;
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 

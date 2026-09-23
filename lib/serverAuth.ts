@@ -1,33 +1,25 @@
-// Server-side password gate for the single-user, server-managed deploy.
+// Server side of the password gate (APP_PASSWORD). Without it, a deployment
+// holding TOGGL_API_TOKEN is readable by anyone with the URL. See README
+// "Password protection".
 //
-// When the app holds the Toggl token itself (TOGGL_API_TOKEN) the dashboard is
-// otherwise readable by anyone who knows the URL. Setting APP_PASSWORD turns on
-// a password gate: the Toggl proxy refuses to serve the server token's data
-// unless the request carries a valid session token.
-//
-// Design goals (see README "Password protection"):
-//  - The password is NEVER stored — not on the client, not on the server beyond
-//    the env var the operator set. We only ever compare against it.
-//  - Sessions are stateless, signed tokens (HMAC), so there's nothing to persist
-//    server-side and any number of stateless/serverless instances validate them.
-//  - The HMAC signing key is derived FROM the password, so rotating APP_PASSWORD
-//    instantly invalidates every issued session — no separate secret to manage.
+//  - The password is only compared against, never stored.
+//  - Sessions are stateless HMAC-signed tokens, so any serverless instance can
+//    validate them.
+//  - The signing key is derived from the password, so rotating APP_PASSWORD
+//    invalidates every session.
 //  - All comparisons are timing-safe.
 
 import crypto from 'crypto';
 
-// How long an issued session stays valid. The client is asked for the password
-// at most once per this window.
 export const SESSION_TTL_MS = 7 * 24 * 3600 * 1000; // 7 days
 
-// Domain-separation salt so the derived signing key is specific to this use.
+// Domain-separation salt for the derived signing key.
 const KEY_SALT = 'tqv-auth-v1';
 
 /**
- * The gate is active in server-managed deploys WITH a password configured:
- * either the server holds the Toggl token, or the app runs in standalone mode
- * (MONGODB_URI), where the store routes mutate data and the password is
- * therefore required rather than optional (see lib/store/guard.ts).
+ * Active when APP_PASSWORD is set and the server holds data worth guarding:
+ * a Toggl token, or a database (MONGODB_URI) whose routes write. The store
+ * and sync routes require the password (lib/store/guard.ts).
  */
 export function gateEnabled(): boolean {
   return (
@@ -36,8 +28,8 @@ export function gateEnabled(): boolean {
   );
 }
 
-// Signing key = HMAC(salt, password). One-way: a leaked token can't reveal the
-// password, and a token can't be forged without knowing the password.
+// Signing key = HMAC(salt, password). A leaked token does not reveal the
+// password, and tokens cannot be forged without it.
 function signingKey(): Buffer {
   return crypto
     .createHmac('sha256', KEY_SALT)
@@ -68,8 +60,8 @@ export function verifyToken(token: string | null | undefined, now = Date.now()):
   const expected = sign(payload);
   const a = Buffer.from(sig);
   const b = Buffer.from(expected);
-  // Lengths must match before timingSafeEqual; base64url of a fixed-size HMAC is
-  // constant-length, so a mismatch here just means a malformed token.
+  // timingSafeEqual needs equal lengths. A valid signature always has the
+  // same length, so a mismatch means a malformed token.
   if (a.length !== b.length) return false;
   return crypto.timingSafeEqual(a, b);
 }

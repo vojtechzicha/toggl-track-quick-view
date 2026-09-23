@@ -2,9 +2,8 @@
 
 import { useState } from 'react';
 
-// Full-screen gate shown when the deploy is password-protected and we don't
-// hold a valid session yet. It only collects the password and hands it up; the
-// password is never stored — page.tsx exchanges it for a session token.
+// Full-screen password prompt shown until there is a valid session. The caller
+// (useTrackSource.submitPassword) exchanges the password for a session token.
 export default function PasswordGate({
   onSubmit,
   error,
@@ -26,8 +25,7 @@ export default function PasswordGate({
       <form className="panel" onSubmit={submit}>
         <h2>🔒 Password required</h2>
         <p className="hint">
-          This dashboard is protected. Enter the password to view it. You&apos;ll only need to do
-          this about once a week on this device.
+          Enter the password to continue. You&apos;ll be asked again on this device after 7 days.
         </p>
 
         <div className="field">

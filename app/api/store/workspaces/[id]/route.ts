@@ -1,14 +1,11 @@
-// Standalone store: one workspace by its numeric id.
+// Standalone store: one workspace by numeric id.
 //
-// PATCH  — partial update: name, color, settings (settings replace wholesale —
-//          the client always sends a complete snapshot).
-// DELETE — delete. Refused with 409 while the workspace still has entries;
-//          ?force=1 cascades and deletes them too. Other workspaces whose
-//          settings still reference the deleted one — as a linked billing code
-//          (codeMappings.projectId) or a tracked selection (selectedProjects)
-//          — get those references stripped, so no timesheet is left pointing
-//          at a workspace that no longer exists; the response names them so
-//          the client can warn.
+// PATCH  — partial update of name, color, settings. `settings` is replaced
+//          whole; the client sends a complete snapshot.
+// DELETE — 409 while the workspace has entries; ?force=1 deletes them too.
+//          References to it in other workspaces (codeMappings.projectId,
+//          selectedProjects) are removed, and the response names those
+//          workspaces in `strippedFrom`.
 
 import { NextRequest } from 'next/server';
 import { getStoreDb } from '@/lib/store/mongo';
@@ -94,8 +91,6 @@ export async function DELETE(
     if (res.deletedCount === 0) return jsonRes({ error: 'Workspace not found.' }, 404);
     if (entryCount > 0) await db.collection('entries').deleteMany({ workspaceId: id });
 
-    // Cross-workspace settings integrity: strip dangling references out of
-    // every surviving workspace that linked or tracked the deleted one.
     const refFilter = {
       $or: [
         { 'settings.codeMappings.projectId': id },

@@ -1,15 +1,10 @@
-// Standalone store: the workspaces collection.
+// Standalone store: workspaces. A workspace is a settings snapshot and also
+// the project its entries carry (lib/store/model.ts).
 //
-// A workspace is both a stored settings snapshot (the successor of localStorage
-// presets) and the "project" its entries carry (TimeEntry.project_id =
-// workspaces.numericId — see lib/store/model.ts).
-//
-// GET  — every workspace with its settings, sorted by name.
+// GET  — all workspaces with settings, sorted by name.
 // POST — create. Body: { name, color?, settings? }. The server allocates the
-//        numeric id, auto-assigns a palette color when none is given, and
-//        always points the new workspace's selection at ITSELF — a new
-//        workspace tracks itself by default; multi-workspace setups are a
-//        Settings edit afterwards.
+//        id, picks a palette color if none is given, and sets the new
+//        workspace to track only itself.
 
 import { NextRequest } from 'next/server';
 import { getStoreDb } from '@/lib/store/mongo';
@@ -64,8 +59,6 @@ export async function POST(req: NextRequest) {
       body.settings && typeof body.settings === 'object'
         ? { ...defaultWorkspaceSettings(), ...(body.settings as Partial<PresetValue>) }
         : defaultWorkspaceSettings();
-    // A workspace tracks itself: its numeric id in the project slot is what
-    // keeps ProjectSet / codeMappings working unchanged downstream.
     settings.selectedProjects = [{ id: numericId, name, color }];
     settings.groupName = '';
 

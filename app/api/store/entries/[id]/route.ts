@@ -1,8 +1,7 @@
-// Standalone store: one entry by its numeric id.
+// Standalone store: one entry by numeric id.
 //
-// PATCH — partial update: description, tags, start, stop, workspaceId. Setting
-//         `stop: null` restarts the entry as the running timer (409 if another
-//         entry is already running — the partial unique index enforces it).
+// PATCH — partial update of description, tags, start, stop, workspaceId.
+//         `stop: null` makes it the running timer (409 if another is running).
 // DELETE — delete the entry.
 
 import { NextRequest } from 'next/server';
@@ -85,8 +84,7 @@ export async function PATCH(
     try {
       await entries.updateOne({ numericId: id }, { $set: { ...patch, updatedAt: next.updatedAt } });
     } catch (e) {
-      // Restarting this entry while another is running trips the one-running-
-      // timer unique index — surface it as a conflict, not a server error.
+      // One-running-timer index: another entry is running.
       if (typeof e === 'object' && e !== null && (e as { code?: number }).code === 11000) {
         return jsonRes({ error: 'Another entry is already running.' }, 409);
       }
