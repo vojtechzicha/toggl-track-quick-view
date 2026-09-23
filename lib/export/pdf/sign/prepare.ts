@@ -1,18 +1,14 @@
-// Phase 1 of signing: turn a finished export into a PDF that carries an empty,
-// visibly rendered signature field.
+// Turn a finished export into a PDF with an empty, visible signature field.
 //
-// Nothing cryptographic happens here. The result is a valid PDF on its own —
-// Adobe Reader shows the unsigned field and its appearance — and it is also
-// exactly the input @signpdf needs: a /Contents placeholder wide enough for the
-// CMS and a /ByteRange it can rewrite (see ./signer.ts).
+// Nothing cryptographic happens here. The result is a valid PDF on its own and
+// the input @signpdf needs: a /Contents placeholder large enough for the CMS
+// and a /ByteRange for @signpdf to fill in.
 //
-// Two constraints shape the implementation:
-//
-//  - `useObjectStreams: false` on save. Object streams would move the signature
-//    dictionary into a compressed stream, where @signpdf's byte-level ByteRange
-//    rewriting cannot find it.
-//  - the appearance must be written BEFORE signing so it falls inside the
-//    signed byte range. True by construction: it is embedded here.
+//  - Saved with `useObjectStreams: false`. Object streams would put the
+//    signature dictionary in a compressed stream, where @signpdf's byte-level
+//    ByteRange rewriting cannot find it.
+//  - The appearance is embedded here, before signing, so it falls inside the
+//    signed byte range.
 
 import {
   PDFDocument,
@@ -31,35 +27,33 @@ export interface PrepareSignatureOptions {
   /** Where the widget goes — the template's declared contract. */
   widget: SignatureWidget;
   /**
-   * The stamp PDF from ./appearance.ts: one page, exactly the widget rect. Null
-   * leaves @signpdf's empty appearance stream in place (an invisible field).
+   * The stamp PDF from ./appearance.ts, one page the size of the widget rect.
+   * Null leaves @signpdf's empty appearance stream (an invisible field).
    */
   appearance: Uint8Array | null;
-  /** Goes into /Name; the person the field records as signer. */
+  /** Written to /Name: the signer the field records. */
   name: string;
   reason: string;
   location: string;
   contactInfo: string;
   /**
-   * Recorded as the signature dictionary's /M. PAdES baseline forbids a signed
-   * signing-time ATTRIBUTE, so this entry is where the claimed time lives.
+   * Written to the signature dictionary's /M. PAdES baseline forbids a signed
+   * signing-time attribute, so this is where the claimed time goes.
    */
   signingTime: Date;
   /**
-   * Room reserved for the CMS, in HEX CHARACTERS — the unit @signpdf compares
-   * against, since /Contents holds the CMS hex-encoded. So this is twice the
-   * byte count, and passing a byte count reserves half of what is needed.
+   * Room reserved for the CMS, in hex characters (twice the byte count), since
+   * /Contents holds the CMS hex-encoded.
    *
-   * The default is @signpdf's 8192, i.e. 4 KiB of CMS: enough for a 2048-bit
-   * signer with a short chain and not enough for a qualified certificate.
-   * `signPdf` measures the real figure instead (see ./index.ts) and always
-   * passes it; the default is what remains for a direct caller.
+   * Defaults to @signpdf's 8192, i.e. 4 KiB of CMS, which is too small for a
+   * qualified certificate with its chain. `signPdf` always passes a measured
+   * value (./index.ts).
    */
   signatureLength?: number;
 }
 
 export interface PreparedSignature {
-  /** The prepared PDF: hand this to ./signer.ts, or download it as is. */
+  /** The prepared PDF, ready for @signpdf and ./signer.ts. */
   bytes: Uint8Array;
   /** Zero-based index of the page the widget landed on (always the last one). */
   pageIndex: number;
@@ -67,19 +61,18 @@ export interface PreparedSignature {
   rect: PdfRect;
 }
 
-/** Read the page box pdfmake actually produced, cropbox-aware. */
+/** The page's MediaBox size, as pdfmake produced it. */
 function pageSize(page: PDFPage): { width: number; height: number } {
   const { width, height } = page.getSize();
   return { width, height };
 }
 
 /**
- * Point the widget's appearance at the embedded stamp page, and drop the empty
+ * Point the widget's appearance at the embedded stamp page and drop the empty
  * stream @signpdf created for it.
  *
- * Kept to ONE flat form XObject: Acrobat has rejected the legacy n0/n2 layering
- * since version 6, and /Resources must be present on the stream even when it is
- * empty (an Acrobat quirk @signpdf already defends against on its own stream).
+ * One flat form XObject: Acrobat has rejected the legacy n0/n2 layering since
+ * version 6. Acrobat also requires /Resources on the stream, even when empty.
  */
 function attachAppearance(doc: PDFDocument, widgetRef: PDFRef, appearanceRef: PDFRef): void {
   const widget = doc.context.lookup(widgetRef, PDFDict);
@@ -117,14 +110,14 @@ export async function prepareSignature(
   const input =
     pdf instanceof Blob ? new Uint8Array(await pdf.arrayBuffer()) : new Uint8Array(pdf as ArrayBuffer);
 
-  // updateMetadata:false keeps pdf-lib from stamping its own ModDate, so the
-  // only difference from the unsigned export is the signature machinery.
+  // updateMetadata: false stops pdf-lib from writing its own producer and
+  // dates, so only the signature machinery differs from the unsigned export.
   const doc = await PDFDocument.load(input, { updateMetadata: false });
   const pages = doc.getPages();
   if (pages.length === 0) throw new Error('Cannot sign an empty document.');
 
-  // The contract says the last page, and the template guarantees it by pushing
-  // its reserved block there (see ../templates.ts).
+  // The template guarantees the rect is free on the last page (SignatureWidget
+  // in ../types.ts).
   const pageIndex = pages.length - 1;
   const page = pages[pageIndex];
   const size = pageSize(page);

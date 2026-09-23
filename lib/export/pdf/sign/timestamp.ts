@@ -1,22 +1,16 @@
-// RFC 3161 timestamps: what turns a PAdES-B-B signature into a B-T one.
+// RFC 3161 timestamps, which turn a PAdES-B-B signature into B-T.
 //
-// The point is not decoration. A signature carries no trustworthy time of its
-// own — the signature dictionary's /M entry is whatever the signing computer's
-// clock said, which is why Acrobat reports "signing time is from the clock on
-// the signer's computer". A qualified certificate is issued for a year, and
-// once it expires a validator has no way to tell a signature made while it was
-// valid from one made afterwards. A timestamp from a trusted third party is the
-// evidence that fixes it: it says the signature existed at a time, and that time
-// can be checked against the certificate's validity window forever.
+// The signature dictionary's /M is only the signing computer's clock. Once the
+// certificate expires, a validator cannot tell whether a signature was made
+// while it was valid. A timestamp from a trusted third party proves the
+// signature existed at a given time.
 //
-// The token goes in as an UNSIGNED attribute, which is what makes it addable at
-// all — it covers the signature value, so it cannot exist until after the card
-// has signed, and it must not disturb the bytes the card put its name to.
+// The token covers the signature value, so it is added after signing as an
+// unsigned attribute (./cms.ts).
 //
-// The request never goes to the TSA from here: public TSAs do not send CORS
-// headers, and the address is server-side configuration rather than something a
-// page gets to choose (see app/api/timestamp). This module talks to our own
-// route and does all of the checking.
+// Requests go to our own route (app/api/timestamp), not the TSA: public TSAs
+// send no CORS headers, and the TSA address is server configuration. All
+// checking of the response happens here.
 
 import * as asn1js from 'asn1js';
 import * as pkijs from 'pkijs';
@@ -27,16 +21,15 @@ export const SIGNATURE_TIMESTAMP_OID = '1.2.840.113549.1.9.16.2.14';
 /** id-ct-TSTInfo — the eContent type inside the token. */
 const TST_INFO_OID = '1.2.840.113549.1.9.16.1.4';
 
-/** Where the proxy lives. Relative, so it follows the deployment. */
 const TIMESTAMP_ENDPOINT = '/api/timestamp';
 
 export interface TimestampOptions {
   /**
-   * Sent as `x-app-auth`, because the route is gated the way the Toggl proxy
-   * is: a timestamp may cost money, and an ungated one is a stranger's budget.
+   * Password-gate session token, sent as `x-app-auth`. The route is gated
+   * because qualified timestamps cost money.
    */
   appAuth?: string | null;
-  /** Overridable for the checks; nothing else should need it. */
+  /** For the checks. */
   endpoint?: string;
   fetchImpl?: typeof fetch;
 }
@@ -56,15 +49,12 @@ const equalBytes = (a: Uint8Array, b: Uint8Array): boolean =>
   a.length === b.length && a.every((byte, i) => byte === b[i]);
 
 /**
- * The bytes inside an OCTET STRING, whichever of the two legal encodings it is.
+ * The bytes inside an OCTET STRING, primitive or constructed.
  *
- * BER allows a constructed OCTET STRING — the content split across nested
- * primitive pieces — and DER does not, but a TimeStampToken's eContent arrives
- * however its producer felt like emitting it. Most TSAs send a primitive one;
- * PKI.js itself emits a constructed one, so a reader that only handles the
- * primitive form falls over on tokens it generated. Reading only
- * `valueHexView` silently yields ZERO bytes on the constructed form, which
- * surfaces as "that is not a TSTInfo" rather than as an encoding difference.
+ * BER allows a constructed OCTET STRING (content split into nested pieces).
+ * Most TSAs send a primitive one, but PKI.js emits a constructed one. On the
+ * constructed form `valueHexView` is empty, which would surface as "not a
+ * TSTInfo".
  */
 function octetsOf(content: asn1js.AsnType): Uint8Array {
   const block = content as unknown as {
@@ -85,10 +75,8 @@ function octetsOf(content: asn1js.AsnType): Uint8Array {
 }
 
 /**
- * Ask the TSA to timestamp `signature`, and return the TimeStampToken's DER.
- *
- * The returned bytes are a ContentInfo — exactly what the unsigned attribute
- * carries, and what a validator will re-parse.
+ * Ask the TSA to timestamp `signature` and return the TimeStampToken's DER (a
+ * ContentInfo, as the unsigned attribute carries it).
  */
 export async function requestTimestamp(
   signature: Uint8Array,
@@ -99,12 +87,10 @@ export async function requestTimestamp(
     await globalThis.crypto.subtle.digest('SHA-256', toArrayBuffer(signature))
   );
 
-  // A nonce is the only thing that ties the answer to THIS request. Without one
-  // a cached or replayed token from any past signature comes back looking
-  // perfectly well-formed, and the resulting file claims a time it never had.
+  // The nonce ties the answer to this request; without it a cached or
+  // replayed token would look valid.
   const nonceBytes = globalThis.crypto.getRandomValues(new Uint8Array(16));
-  // Cleared so the INTEGER is unambiguously positive: a negative nonce is legal
-  // ASN.1 and a needless way to differ from what a TSA echoes back.
+  // Keep the INTEGER positive so it matches what the TSA echoes.
   nonceBytes[0] &= 0x7f;
   const nonce = new asn1js.Integer({ valueHex: toArrayBuffer(nonceBytes) });
 
@@ -114,9 +100,8 @@ export async function requestTimestamp(
       hashAlgorithm: new pkijs.AlgorithmIdentifier({ algorithmId: '2.16.840.1.101.3.4.2.1' }),
       hashedMessage: new asn1js.OctetString({ valueHex: toArrayBuffer(imprint) }),
     }),
-    // Ask for the TSA's certificate. Without it the token names a signer that
-    // the file does not contain, and a validator has to go and find it — the
-    // same offline failure the certificate chain was embedded to avoid.
+    // Include the TSA's certificate in the token, so a validator does not have
+    // to fetch it.
     certReq: true,
     nonce,
   });
@@ -140,7 +125,7 @@ export async function requestTimestamp(
   }
 
   if (!response.ok) {
-    // The route puts a sentence in the body; it is more useful than the status.
+    // The route explains the failure in the body.
     const detail = await response.text().catch(() => '');
     throw new TimestampError(
       detail.slice(0, 300) || `The timestamp authority answered ${response.status}.`
@@ -152,13 +137,9 @@ export async function requestTimestamp(
 }
 
 /**
- * Parse a TimeStampResp and return its token — after checking that the token is
- * an answer to the question that was asked.
- *
- * Every check here is one that a well-formed but WRONG token would otherwise
- * pass. A timestamp nobody verified is a decoration: it would still parse, and
- * a validator downstream would be the first to notice, long after the signature
- * had been sent to a client.
+ * Parse a TimeStampResp and return its token after checking that it answers
+ * this request. A well-formed token over the wrong data parses just as cleanly
+ * as a correct one, so each check below catches a case the parser would not.
  */
 export function readToken(
   raw: Uint8Array,
@@ -174,8 +155,7 @@ export function readToken(
     throw new TimestampError('The timestamp authority sent something that is not a TimeStampResp.');
   }
 
-  // PKIStatus: 0 granted, 1 grantedWithMods. Anything else is a refusal, and
-  // the PKIFailureInfo beside it is the only explanation there will be.
+  // PKIStatus: 0 granted, 1 grantedWithMods. Anything else is a refusal.
   const status = timeStampResp.status.status;
   if (status !== 0 && status !== 1) {
     const text = timeStampResp.status.statusStrings?.map((s) => s.getValue()).join('; ');
@@ -206,8 +186,7 @@ export function readToken(
     throw new TimestampError('The token\u2019s TSTInfo could not be read.');
   }
 
-  // The imprint is the whole claim: it says WHICH bytes were timestamped. A
-  // token over anything else is a true statement about someone else's data.
+  // The imprint says which bytes were timestamped.
   const stamped = new Uint8Array(tstInfo.messageImprint.hashedMessage.valueBlock.valueHexView);
   if (!equalBytes(stamped, expectedImprint)) {
     throw new TimestampError('The token timestamps a different digest than the one sent.');
@@ -221,8 +200,8 @@ export function readToken(
   if (!echoed) {
     throw new TimestampError('The token echoes no nonce, so it cannot be tied to this request.');
   }
-  // Compared after stripping the leading zero DER adds to keep an INTEGER
-  // positive: the value is what has to match, not its encoding.
+  // Compare values, ignoring the leading zero DER may add to keep an INTEGER
+  // positive.
   const strip = (b: Uint8Array) => (b.length > 1 && b[0] === 0x00 ? b.subarray(1) : b);
   if (!equalBytes(strip(echoed), strip(expectedNonce))) {
     throw new TimestampError('The token echoes a different nonce — it answers another request.');
@@ -232,17 +211,11 @@ export function readToken(
 }
 
 /**
- * Room to leave for a timestamp token that does not exist yet.
+ * Room reserved in the CMS placeholder for a timestamp token.
  *
- * The PDF reserves space for the CMS before anything is signed, and the token
- * cannot be fetched until after — it covers the signature. So the reservation
- * has to be an allowance rather than a measurement, and it is generous on
- * purpose: over-reserving costs zero-padding in a file that is already
- * hundreds of kilobytes, while under-reserving throws away a signature the card
- * has already made and the user has already entered a PIN for.
- *
- * 12 KiB against tokens that run 1.5–6 KiB — an RFC 3161 token is a SignedData
- * carrying the TSA's own certificate chain, so its size is the TSA's business
- * and not something to predict closely.
+ * The placeholder is sized before signing and the token only exists after, so
+ * this is an allowance, not a measurement. Tokens run 1.5–6 KiB, depending on
+ * the TSA's certificate chain. Over-reserving costs zero padding;
+ * under-reserving fails the export after the card has signed.
  */
 export const TIMESTAMP_ALLOWANCE_BYTES = 12 * 1024;

@@ -1,14 +1,11 @@
-// The bridges the app knows about, and the one that needs no hardware.
+// The list of bridges, and the WebCrypto bridge.
 //
-// The interface they implement lives in ./tokenBridge.ts; the hardware one in
-// ./extensionBridge.ts. What is here is the WebCrypto bridge and the list:
-//
-//  - ExtensionBridge — the card, through the Sign Bridge extension and helper.
-//    The only one that can produce a qualified signature.
-//  - WebCryptoBridge — a throwaway key generated in the browser. Not a legal
-//    signature and never presented as one: it exists so the whole pipeline runs
-//    end to end without a token, with real CMS, real digests and a really
-//    verifiable signature that simply chains to nothing anyone trusts.
+//  - ExtensionBridge (./extensionBridge.ts): the card, through the Sign Bridge
+//    extension and native host. The only one that can make a qualified
+//    signature.
+//  - WebCryptoBridge: a throwaway key generated in the browser, so the whole
+//    pipeline runs without a token. Its signatures verify but chain to nothing
+//    trusted.
 
 import { ExtensionBridge, type ExtensionBridgeOptions } from './extensionBridge';
 import { generateThrowawayKey, type ThrowawayKey, type ThrowawayKeyOptions } from './throwaway';
@@ -36,30 +33,24 @@ export { readCertificateInfo, type CertificateInfo } from './certificateInfo';
 // ---- WebCrypto (a throwaway key, no hardware) ----
 
 /**
- * Everything ./throwaway.ts takes: a name for the certificate, and — for the
- * checks — a fixed key, serial and validity, so the committed fixture can be
- * regenerated to the same bytes.
+ * Options for ./throwaway.ts. The checks pass a fixed key, serial and validity
+ * so the committed fixture regenerates to the same bytes.
  */
 export type WebCryptoBridgeOptions = ThrowawayKeyOptions;
 
 /**
- * A bridge backed by a self-signed key generated with WebCrypto and held in
- * memory for the session.
- *
- * The key is generated once, on the first call, and never persisted: closing
- * the tab throws it away, which is the point. A PDF signed with it validates
- * cryptographically and reports as untrusted, exactly as an unknown signer
- * should.
+ * A self-signed key generated with WebCrypto on first use and kept in memory
+ * only; closing the tab discards it. A PDF signed with it verifies and reports
+ * an untrusted signer.
  */
 export class WebCryptoBridge implements TokenBridge {
   readonly id = 'webcrypto';
   readonly label = 'Throwaway key (development)';
-  // Generating a key asks nobody anything.
   readonly interactive = false;
 
   private key: Promise<ThrowawayKey> | null = null;
-  // Not a constructor parameter property: node's type stripping, which the
-  // scripts/ checks lean on, does not support that syntax.
+  // Not a constructor parameter property: Node's type stripping, which the
+  // scripts/ checks use, does not support that syntax.
   private readonly options: WebCryptoBridgeOptions;
 
   constructor(options: WebCryptoBridgeOptions = {}) {
@@ -89,13 +80,9 @@ export class WebCryptoBridge implements TokenBridge {
         chain: [],
         providerName: 'This browser',
         hardware: false,
-        // Self-signed and software-held: not qualified, and saying so is the
-        // whole reason the flag exists.
         qualified: false,
-        // It does carry digitalSignature | nonRepudiation (./throwaway.ts), so
-        // it is the right SHAPE of certificate — just not a trusted one.
+        // ./throwaway.ts sets digitalSignature | nonRepudiation.
         forSignature: true,
-        // Generated in this tab, so the key is as present as a key gets.
         hasKey: true,
       },
     ];
@@ -122,19 +109,12 @@ export interface AvailableBridgeOptions {
 }
 
 /**
- * Every bridge the app knows about, most-preferred first.
+ * Every bridge the app knows about, most preferred first.
  *
- * The throwaway key stays on the list wherever the app runs, including the
- * preview deployment — that is where the pipeline gets exercised without a
- * card in the machine. What keeps it from being mistaken for the real thing is
- * not hiding it but `qualified: false` on the certificate it hands out, which
- * the export dialog says out loud.
+ * The throwaway key is offered on every deployment, so the pipeline can be
+ * exercised without a card. Its certificate reports `qualified: false`, and
+ * the export dialog warns about that.
  */
 export function availableBridges(options: AvailableBridgeOptions = {}): TokenBridge[] {
-  // Sign Bridge first: it is the only one that can produce a qualified
-  // signature. Fortify used to sit between the two and is gone — macOS 26
-  // stopped loading it (see docs/pdf-signing-v2.md), and the extension bridge
-  // that replaced it now signs with the card, which was the condition for
-  // deleting it.
   return [new ExtensionBridge(options.signBridge), new WebCryptoBridge()];
 }
