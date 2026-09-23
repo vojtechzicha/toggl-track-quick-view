@@ -1,27 +1,21 @@
-// Linked billing codes: bill another client's project as ONE code on this timesheet.
+// Linked billing codes: bill another client's project as one code on this
+// timesheet.
 //
-// Motivating shape: a prime contractor bills an engagement under a single code
-// (say "D-SUB-1" on its timesheet), but the work itself is tracked for a
-// sub-client project with its own billing codes ("S…" tags) and its own rounding
-// grid. A CodeMapping declares that relationship for one Toggl project: entries on
-// that project are validated against the *mapping's* tag prefix, grouped per linked
-// code and rounded per day on the *mapping's* grid — exactly what the sub-client's
-// own timesheet (a preset with that prefix/rounding) shows — and the day's rounded
-// total is billed here as the single `targetCode` line.
+// Example: a prime contractor bills an engagement as "D-SUB-1", but the work is
+// tracked on a sub-client project with its own codes ("S…" tags) and rounding.
+// A CodeMapping links one Toggl project to that code. Its entries are checked
+// against the mapping's tag prefix, grouped per linked code and rounded per day
+// on the mapping's grid, as the sub-client's own timesheet would show them. The
+// rounded day total bills here as the single `targetCode` line.
 //
-// The load-bearing invariant: **per day, the sum of the sub-client's billed codes
-// equals this sheet's mapped line.** It holds by construction, not reconciliation:
-// `roundQuartersPreservingTotal` makes the per-code cells sum to the rounded day
-// total, and that same rounded total is what the mapped line carries. To keep it,
-// everything that shapes the value happens *upstream, on the sub-client's terms*:
-// the per-day rounding uses the mapping's grid, and — when the mapping declares
-// the sub-client's own no-overtime contract — its weekly cap is applied here with
-// the very same trim its own sheet runs. What arrives at this sheet is therefore
-// exactly what the sub-client's timesheet shows, and the builders treat it as
-// fixed: this sheet's own rounding pass never re-rounds it and this sheet's
-// "don't bill overtime" NEVER trims it, no matter what — the mapped time still
-// counts toward the weekly cap, so trimming shaves that much more off the native
-// rows instead.
+// Invariant: per day, the sub-client's billed codes sum to this sheet's mapped
+// line. roundQuartersPreservingTotal makes the per-code cells sum to the rounded
+// day total, and the mapped line carries that total. So all shaping happens on
+// the sub-client's terms: rounding uses the mapping's grid, and the mapping's
+// own no-overtime cap (if set) is applied with the same trim. This sheet treats
+// the result as fixed: its rounding never re-rounds it and its overtime cap
+// never trims it. Mapped time still counts toward this sheet's cap, so the trim
+// falls on the native rows.
 
 import {
   billingTagsOf,
@@ -36,28 +30,24 @@ import { allocateOvertimeTrimPerDay, weekSegments } from './overtime';
 
 /** One linked-code rule: how a sub-client project bills onto this timesheet. */
 export interface CodeMapping {
-  /** The Toggl project whose entries are mapped (must be among the selected projects). */
+  /** The mapped Toggl project. Must be one of the selected projects. */
   projectId: number;
-  /** The prefix marking that project's billing tags (e.g. "S" for "S123" codes). */
+  /** The billing-tag prefix on that project (e.g. "S" for "S123"). */
   tagPrefix: string;
   /**
-   * The sub-client's rounding grid (hours). Settings enforce it stays on this
-   * config's grid (equal to it, or a whole multiple of it) so every figure on this
-   * sheet remains a clean multiple of the configured unit.
+   * The sub-client's rounding unit (hours). Settings keep it equal to, or a
+   * whole multiple of, this sheet's unit so every figure stays on this grid.
    */
   roundingHours: number;
-  /** The single billing code the mapped time bills to here (e.g. "D-SUB-1"). */
+  /** The billing code the mapped time bills to here (e.g. "D-SUB-1"). */
   targetCode: string;
   /**
-   * The sub-client's own "don't bill overtime" contract. When true, the linked
-   * project's week is capped at `weeklyHours` *before* it bills here — trimmed on
-   * the mapping's grid with the same weekend-in-full / weekday-evening cut its own
-   * sheet applies — so this sheet carries whatever that sheet actually bills.
-   * This sheet's own overtime setting still never touches the linked line.
-   * (Absent on mappings stored before this existed — treated as false.)
+   * The sub-client's "don't bill overtime" setting. When true, the linked
+   * project's week is capped at `weeklyHours` before it bills here, with the
+   * same trim the sub-client's sheet applies. Absent means false.
    */
   noOvertime?: boolean;
-  /** The sub-client's weekly cap (hours); only used when `noOvertime` is true. */
+  /** The sub-client's weekly cap in hours. Used only when `noOvertime` is true. */
   weeklyHours?: number;
 }
 
@@ -71,24 +61,23 @@ export function mappingFor(
 }
 
 /**
- * Summary-grid row key for a mapped project. Its own "m" namespace: a mapped
- * project collapses to one row regardless of how many linked codes it carries, so
- * it can't collide with the native `p{id}|{tag}` keys.
+ * Summary-grid row key for a mapped project, which is always one row. The "m"
+ * prefix keeps it apart from native `p{id}|{tag}` keys.
  */
 export function mappedRowKey(projectId: number): string {
   return `m${projectId}`;
 }
 
-/** True when the summary row key belongs to a mapped (fixed, pre-rounded) row. */
+/** True for a mapped (fixed, pre-rounded) summary row key. */
 export function isMappedRowKey(rowKey: string): boolean {
   return rowKey.startsWith('m');
 }
 
 /**
- * True when the mapping's grid keeps figures on the config's grid: its unit is the
- * config unit or a whole multiple of it (0.5h onto a 0.25h sheet is fine; 0.2h onto
- * a 0.25h sheet is not). Settings coerce incompatible picks on save; the builders
- * still work with an incompatible legacy value, the figures just leave the grid.
+ * True when the mapping's unit equals, or is a whole multiple of, the sheet's
+ * (0.5h on a 0.25h sheet is fine; 0.2h is not). Settings replace an
+ * incompatible unit on save. The builders still work with one, but the figures
+ * leave the sheet's grid.
  */
 export function mappingGridCompatible(
   mappingRoundingHours: number,
@@ -99,19 +88,19 @@ export function mappingGridCompatible(
   return c > 0 && m % c === 0;
 }
 
-/** Accumulator for one (mapped project, day): raw per-code time plus display bits. */
+/** Accumulator for one mapped project on one day. */
 export interface MappedAgg {
-  /** Raw seconds per linked code (display base — "(X)"/"(!)" merged into the plain twin). */
+  /** Raw seconds per linked code, keyed by display base ("(X)"/"(!)" merged in). */
   codeSeconds: Map<string, number>;
-  /** Of `codeSeconds`, the "(X)"-marked share per code — the sub-trim's budget. */
+  /** The "(X)" share of `codeSeconds` per code. */
   codeTrimmable: Map<string, number>;
-  /** Of `codeSeconds`, the "(!)"-marked share per code — never trimmed. */
+  /** The "(!)" share of `codeSeconds` per code. Never trimmed. */
   codeNoTrim: Map<string, number>;
-  /** De-duplicated entry descriptions, first-seen order. */
+  /** Distinct entry descriptions (case-insensitive), in first-seen order. */
   descs: string[];
-  /** Raw total seconds (pre-rounding), for cells that carry raw values. */
+  /** Raw total seconds before rounding. */
   seconds: number;
-  /** Earliest entry start (ms) — anchors the day block in the Individual view. */
+  /** Earliest entry start (ms). Places the day's block in the Individual view. */
   firstStartMs: number;
 }
 
@@ -126,7 +115,7 @@ export function newMappedAgg(startMs: number): MappedAgg {
   };
 }
 
-/** Fold one entry (already validated to carry exactly one linked tag) into the day. */
+/** Add one entry to the day. The entry must carry exactly one linked tag. */
 export function addToMappedAgg(
   agg: MappedAgg,
   tag: string,
@@ -146,36 +135,28 @@ export function addToMappedAgg(
   }
 }
 
-/** A finalized mapped day: the fixed billed value plus what the cell displays. */
+/** A finalized mapped day: the billed value and the cell descriptions. */
 export interface MappedDayValue {
-  /** Rounded (and sub-trimmed) seconds billed to the target code this day. */
+  /** Rounded (and, with the mapping's cap, trimmed) seconds billed this day. */
   seconds: number;
   /**
-   * Cell descriptions: the per-code breakdown first (e.g. "S101 3.25h, S102 1.5h"
-   * — the sub-client sheet's own cells, for traceability), then the merged entry
-   * descriptions.
+   * The per-code breakdown first (e.g. "S101 3.25h, S102 1.5h", matching the
+   * sub-client's sheet), then the entry descriptions.
    */
   descs: string[];
 }
 
 /**
- * Close a week's aggregates for one mapping into the fixed per-day values this
- * sheet bills — reproducing the sub-client's own summary sheet:
+ * Turn a week's aggregates for one mapping into the per-day values this sheet
+ * bills, reproducing the sub-client's summary sheet:
  *
- * 1. Per day, the per-code seconds are rounded on the *mapping's* grid with the
- *    same largest-remainder method, so the breakdown matches that sheet
- *    cell-for-cell and sums to its rounded day total.
- * 2. When the mapping declares the sub-client's own no-overtime contract, the
- *    week is then capped at the mapping's `weeklyHours` with the identical trim
- *    that sheet runs (weekend billed in full, weekdays evened out, "(X)"-marked
- *    portions cut first, a month boundary splitting the cap) — so what bills
- *    here is what that sheet bills, trimmed or not.
+ * 1. Each day's per-code seconds are rounded on the mapping's grid, so the
+ *    breakdown matches that sheet and sums to its day total.
+ * 2. With `noOvertime`, the week is capped at the mapping's `weeklyHours` with
+ *    the Summary view's trim (allocateOvertimeTrimPerDay, per month segment).
  *
- * Week-scoped because the cap is a weekly affair; days with no mapped time simply
- * have no aggregate and produce no value. `holidays` is the sheet's holiday set
- * (days marked by a time-off entry): a holiday shrinks the sub-client's weekly cap
- * exactly as it shrinks this sheet's — the person's day off is the same day off on
- * both engagements.
+ * `holidays` is this sheet's holiday set; it shrinks the sub-client's cap too.
+ * Days without mapped time produce no value.
  */
 export function finalizeMappedWeek(
   aggByDay: ReadonlyMap<number, MappedAgg>,
@@ -185,8 +166,8 @@ export function finalizeMappedWeek(
 ): Map<number, MappedDayValue> {
   const unit = roundingUnitSeconds(mapping.roundingHours);
 
-  // The sub sheet's own per-day rounding pass, yielding one cell per (day, code)
-  // in whole mapping-grid units, each with its "(X)" trim budget and "(!)" floor.
+  // Per-day rounding: one cell per (day, code) in whole mapping units, with its
+  // "(X)" and "(!)" shares.
   const cells: {
     day: number;
     code: string;
@@ -212,7 +193,7 @@ export function finalizeMappedWeek(
     });
   }
 
-  // The sub-client's own overtime pass, when declared on the mapping.
+  // The mapping's own overtime cap.
   if (mapping.noOvertime && (mapping.weeklyHours ?? 0) > 0) {
     for (const seg of weekSegments(weekStart, mapping.weeklyHours as number, unit, holidays)) {
       const idx = cells
@@ -232,8 +213,8 @@ export function finalizeMappedWeek(
     }
   }
 
-  // Collapse to per-day fixed values; the breakdown shows the post-trim figures
-  // (what the sub sheet actually bills), fully-trimmed codes dropped.
+  // Per-day values. The breakdown shows post-trim figures and omits codes
+  // trimmed to zero.
   const out = new Map<number, MappedDayValue>();
   for (const [day, agg] of aggByDay) {
     const parts = cells.filter((c) => c.day === day && c.units > 0);
@@ -245,12 +226,9 @@ export function finalizeMappedWeek(
 }
 
 /**
- * How an entry bills: its billing tags under the prefix its project actually
- * uses, plus the support-ticket fallback — an entry with NO billing tag whose
- * description starts with a bracketed ticket id ("[T-123] Fix login") bills to
- * that id as if tagged, with the bracket dropped from the billed description
- * (see supportTicket in lib/calc). Entries with a real tag — or with several,
- * which stay a warning — keep their description untouched.
+ * An entry's billing tags under its project's prefix. With no billing tag, a
+ * support-ticket id opening the description is used instead and removed from
+ * the description (see supportTicket in lib/calc).
  */
 export function entryBilling(
   tags: string[] | undefined,

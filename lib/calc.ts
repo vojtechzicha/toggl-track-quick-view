@@ -1,44 +1,38 @@
-// Pure calculation helpers for the quick view. Kept free of React / DOM so the
-// logic is easy to reason about (and unit-test) in isolation.
+// Pure calculation helpers for the quick view (no React or DOM).
 
 // ---- Weekly workload model ----
-// The whole targets model is tuned around a baseline 40h week. Every hour value
-// below is expressed at that baseline and scaled linearly by weeklyHours / 40
-// (see resolveTargets), so a shorter (or longer) week keeps the exact same shape
-// — e.g. a 20h week becomes an even 4/4/4/4/4 or a short 4.5/4.5/4.5/4/2.5. Two
-// of these values are also directly user-overridable via WeekConfig: the Friday
-// floor ("minimal target working day") and the timesheet cap ("maximal
-// individually billed timesheet"). When their override is null they fall back to
-// the proportional default.
-export const BASELINE_WEEKLY_HOURS = 40; // the week these base values were tuned for
-export const DEFAULT_WEEKLY_HOURS = 40; // default for a fresh install
+// Every hour value below is for a 40h week and is scaled linearly by
+// weeklyHours / 40 (see resolveTargets), so a 20h week becomes 4/4/4/4/4, or
+// 4.5/4.5/4.5/4/2.5 with Short Friday. Two values can be overridden in
+// WeekConfig: the Friday floor (`minWorkingDayHours`) and the per-line billable
+// cap (`maxBillableHours`). A null override means the proportional default.
+export const BASELINE_WEEKLY_HOURS = 40;
+export const DEFAULT_WEEKLY_HOURS = 40;
 
-// Baseline (40h-week) hour values — private; always read through resolveTargets.
+// 40h-week values. Read them through resolveTargets.
 const BASE_STANDARD_DAY_HOURS = 8; // regular-week Mon–Wed, and weekend fallback (= week / 5)
 const BASE_SHORT_MIDWEEK_HOURS = 9; // short-week Mon/Tue/Wed target
 const BASE_REGULAR_THU_FLOOR_HOURS = 7; // regular-week Thursday never below this
 const BASE_SHORT_THU_MIN_HOURS = 8; // short-week Thursday clamp floor
 const BASE_SHORT_THU_MAX_HOURS = 9; // short-week Thursday clamp ceiling
 const BASE_FRIDAY_RESERVE_HOURS = 5; // short-week Thursday leaves this much for Friday
-const BASE_FRIDAY_MIN_HOURS = 5; // Friday target floor (both modes) — overridable
-const BASE_MAX_DAILY_TARGET_HOURS = 12; // clamp so a bad week can't demand 16h
-const BASE_MAX_BILLABLE_HOURS = 4; // a single billable line item can't exceed this — overridable
+const BASE_FRIDAY_MIN_HOURS = 5; // Friday target floor, both modes (overridable)
+const BASE_MAX_DAILY_TARGET_HOURS = 12; // ceiling for any daily target
+const BASE_MAX_BILLABLE_HOURS = 4; // max length of one billed line (overridable)
 
-// Fixed thresholds — deliberately NOT scaled by the weekly load. The break
-// reminder is an ergonomic limit (you shouldn't work this long straight no
-// matter the week's size); the others are detection/rounding granularities.
-export const BREAK_AFTER_HOURS = 4.5; // remind to take a break after this much continuous work
-export const BREAK_GAP_MINUTES = 10; // a gap >= this counts as a real break
-export const UNREPORTED_MIN_MINUTES = 1; // ignore gaps shorter than this as noise
+// Not scaled by the weekly load: the break reminder is an ergonomic limit, and
+// the others are detection thresholds.
+export const BREAK_AFTER_HOURS = 4.5; // break reminder after this much continuous work
+export const BREAK_GAP_MINUTES = 10; // a gap of at least this long counts as a break
+export const UNREPORTED_MIN_MINUTES = 1; // shorter gaps are ignored as noise
 
 const HOUR = 3600;
 const MS = 1000;
 
 /**
- * The user-facing workload settings that drive every target. `weeklyHours` is
- * the master dial that scales the whole model. The two override values default
- * (when null) to their proportional value, but once set they stay at the
- * absolute hours given — they do not move when weeklyHours later changes.
+ * Workload settings that drive every target. `weeklyHours` scales the whole
+ * model. A null override follows `weeklyHours`; a set override is absolute
+ * hours and does not change when `weeklyHours` does.
  */
 export interface WeekConfig {
   weeklyHours: number;
@@ -99,8 +93,7 @@ function resolveTargets(cfg: WeekConfig): ResolvedTargets {
     regularThuFloor: scaleHours(BASE_REGULAR_THU_FLOOR_HOURS, w) * HOUR,
     shortThuMin: scaleHours(BASE_SHORT_THU_MIN_HOURS, w) * HOUR,
     shortThuMax: scaleHours(BASE_SHORT_THU_MAX_HOURS, w) * HOUR,
-    // The short-week Thursday reserve scales purely with the weekly load; the
-    // user's "minimal target working day" override governs only the Friday floor.
+    // The Thursday reserve ignores the Friday-floor override.
     fridayReserve: scaleHours(BASE_FRIDAY_RESERVE_HOURS, w) * HOUR,
     fridayMin: effectiveMinWorkingDayHours(cfg) * HOUR,
     maxDaily: scaleHours(BASE_MAX_DAILY_TARGET_HOURS, w) * HOUR,
@@ -120,14 +113,12 @@ export interface TimeEntry {
 }
 
 // ---- Billing tags ----
-// A "billing tag" identifies which line a tracked entry bills to. By convention
-// these tag names start with a single-letter prefix (default "D", e.g. "D123").
-// The prefix is configurable in the advanced settings. Every entry on the
-// selected project is expected to carry one; the dashboard and timesheet flag
-// the ones that don't so they can be fixed in Toggl.
+// A billing tag names the line an entry bills to. It is a tag starting with a
+// configurable prefix (default "D", e.g. "D123"). Every entry on the selected
+// project should carry one; the dashboard and timesheet flag those that don't.
 export const DEFAULT_BILLING_TAG_PREFIX = 'D';
 
-/** The prefix to use, falling back to the default when none/empty is given. */
+/** The given prefix, or the default when it is missing or empty. */
 function tagPrefix(prefix?: string): string {
   return prefix && prefix.length > 0 ? prefix : DEFAULT_BILLING_TAG_PREFIX;
 }
@@ -147,24 +138,21 @@ export function billingTagsOf(tags?: string[], prefix?: string): string[] {
 }
 
 // ---- Overtime markers ----
-// A billing code ending in one of these literal suffixes carries an internal
-// overtime-trim marker (see lib/timesheet/overtime):
-//   "(X)" — trimmable: the first time to drop when a contract disallows billing
-//           overtime.
-//   "(!)" — never trimmed: the overtime cap must not touch this time; the cut
-//           falls on the other lines instead (it still consumes the cap).
-// Both suffixes are private — they're stripped from every displayed/exported
-// code so a client never sees them, and `D123(X)` / `D123(!)` merge into the
-// same displayed `D123` line as their plain twin.
+// A billing code ending in one of these suffixes carries an overtime-trim
+// marker (see lib/timesheet/overtime):
+//   "(X)": trimmed first when a contract does not allow billing overtime.
+//   "(!)": never trimmed. It still counts toward the cap, so the cut falls on
+//          other lines.
+// The suffixes are internal. They are stripped from every displayed and
+// exported code, so `D123(X)` and `D123(!)` merge into the same `D123` line.
 export const OVERTIME_TAG_SUFFIX = '(X)';
 export const NO_TRIM_TAG_SUFFIX = '(!)';
 
 /**
- * Remove every parenthetical group from a billing code, tidying the whitespace
- * left behind: `D123 (Phase 2)` → `D123`. A code that is nothing but
- * parentheticals keeps its original text — stripping must never make a code
- * vanish. Callers interpret the overtime markers above FIRST (parseBillingCode
- * does this internally), so `(X)` / `(!)` are never eaten by the strip.
+ * Remove every parenthetical group from a billing code: `D123 (Phase 2)` →
+ * `D123`. A code that is only parentheticals is returned unchanged, so it never
+ * becomes empty. Interpret the overtime markers before calling this (as
+ * parseBillingCode does), or they are stripped too.
  */
 export function stripCodeParens(code: string): string {
   const stripped = code
@@ -175,16 +163,14 @@ export function stripCodeParens(code: string): string {
 }
 
 /**
- * Split a billing code into its displayed base and which internal overtime
- * marker it carries. The suffix (and any whitespace before it) is removed from
- * the base, so `D123(X)` and `D123 (X)` both display as `D123` with
- * trimmable=true, and `D123(!)` displays as `D123` with neverTrim=true.
+ * Split a billing code into its displayed base and its overtime marker.
+ * `D123(X)` and `D123 (X)` both give base `D123` with trimmable=true;
+ * `D123(!)` gives `D123` with neverTrim=true.
  *
- * With `stripParens` (the workspace's "strip parentheses" setting) the base
- * also loses every remaining parenthetical group — `D123 (Phase 2)(!)` →
- * `D123` with neverTrim=true. Order matters: the marker is interpreted first,
- * then the other parentheses are stripped, and only then is the base used —
- * so the setting can never swallow a marker.
+ * With `stripParens` (the workspace's "strip parentheses" setting) the base also
+ * loses its remaining parenthetical groups: `D123 (Phase 2)(!)` → `D123` with
+ * neverTrim=true. The marker is read before stripping, so the setting cannot
+ * remove it.
  */
 export function parseBillingCode(
   code: string,
@@ -214,16 +200,12 @@ export function hasBillingTag(tags?: string[], prefix?: string): boolean {
 }
 
 // ---- Support tickets ----
-// Support work is billed per one-off ticket, so pre-creating a tag for every
-// ticket is not practical. Instead, an entry that carries NO billing tag but
-// whose description starts with a bracketed ticket id — "[T-123] Fix login" —
-// bills to that id as if it were tagged: the bracket's content becomes the
-// entry's billing code and the bracket itself is dropped from the billed
-// description (the code already names the ticket). Always on, in every mode
-// (Toggl and standalone); an explicit billing tag wins over the bracket, so
-// ordinary tagged entries are unaffected. The derived code goes through the
-// same downstream machinery as a real tag, so the "(X)"/"(!)" overtime
-// markers work inside the bracket too ("[T-123(X)] …").
+// Support work is billed per ticket, and creating a tag for each ticket is
+// impractical. An entry with no billing tag whose description starts with a
+// bracketed id ("[T-123] Fix login") bills to that id: the bracket content
+// becomes the billing code and the bracket is dropped from the billed
+// description. A billing tag takes precedence. Applies in Toggl and standalone
+// mode. Overtime markers work inside the bracket too ("[T-123(X)] …").
 const SUPPORT_TICKET_RE = /^\s*\[([^\]]+)\]\s*/;
 
 /**
@@ -237,21 +219,20 @@ export function supportTicket(description?: string): { code: string; rest: strin
   return { code, rest: (description as string).slice(m[0].length) };
 }
 
-/** Just the support-ticket id opening a description, or null. */
+/** The support-ticket id opening a description, or null. */
 export function supportTicketCode(description?: string): string | null {
   return supportTicket(description)?.code ?? null;
 }
 
-// ---- Time off (state holidays etc.) ----
-// An entry carrying the time-off tag marks its whole day as a non-working day —
-// a "holiday" that behaves exactly like a weekend: 0h expected, the weekly goal
-// and the no-overtime cap drop by a day's worth (weeklyHours / 5). The marker
-// entry itself is never billed, counted or exported; its duration is irrelevant.
-// Any OTHER entry on such a day still counts normally — work done on a holiday
-// is real work, billed in full on top of the reduced cap like weekend work.
+// ---- Time off (public holidays etc.) ----
+// An entry with the time-off tag makes its day a holiday, treated like a
+// weekend day: 0h expected, and the weekly goal and the no-overtime cap drop by
+// weeklyHours / 5. The marker entry is never billed, counted or exported, and
+// its duration is ignored. Other entries on that day count normally and are
+// billed in full on top of the reduced cap, like weekend work.
 export const DEFAULT_TIME_OFF_TAG = '.Time Off';
 
-/** The effective time-off tag, falling back to the default when none/empty. */
+/** The time-off tag, lower-cased, or the default when missing or empty. */
 function timeOffMarker(tag?: string): string {
   const t = tag?.trim();
   return t && t.length > 0 ? t.toLowerCase() : DEFAULT_TIME_OFF_TAG.toLowerCase();
@@ -269,9 +250,9 @@ export type HolidaySet = ReadonlySet<number>;
 const NO_HOLIDAYS: HolidaySet = new Set<number>();
 
 /**
- * The week's holiday days: indices (0=Sat … 6=Fri) of days on which a selected
- * project carries a time-off entry. Only the current selection counts — a day
- * can be time off in one workspace and a normal working day in another.
+ * Indices (0=Sat … 6=Fri) of days with a time-off entry on a selected project.
+ * Only the selection counts: a day can be time off in one workspace and a
+ * working day in another.
  */
 export function holidayDaysOfWeek(
   entries: TimeEntry[],
@@ -292,7 +273,7 @@ export function holidayDaysOfWeek(
   return days;
 }
 
-/** Normalised entry with absolute millisecond bounds (running => stop is "now"). */
+/** Entry with absolute millisecond bounds. A running entry stops at "now". */
 export interface NormEntry {
   id: number;
   startMs: number;
@@ -302,9 +283,8 @@ export interface NormEntry {
 }
 
 /**
- * The set of project ids that count as "the project". Multiple selected projects
- * behave as one for every tracking/target calculation — there's no distinction
- * between them here (the per-project split only matters in the timesheet views).
+ * The selected project ids. They are pooled as one project for tracking and
+ * targets; only the timesheet views split them.
  */
 export type ProjectSet = ReadonlySet<number>;
 
@@ -314,9 +294,8 @@ function inSet(projectId: number | null, projects: ProjectSet): boolean {
 }
 
 /**
- * Normalise entries to ms bounds. When `timeOffTag` is given, time-off marker
- * entries are dropped — they flag a holiday, they are not tracked work, so
- * nothing downstream (rings, targets, streaks, gaps) should ever count them.
+ * Normalise entries to ms bounds, sorted by start. When `timeOffTag` is given,
+ * time-off markers are dropped because they are not tracked work.
  */
 export function normalize(entries: TimeEntry[], nowMs: number, timeOffTag?: string): NormEntry[] {
   return entries
@@ -342,28 +321,24 @@ export function startOfDay(d: Date): Date {
 }
 
 /**
- * Saturday 00:00 (local) of the week containing `d`. The week starts on Saturday,
- * so a weekend leads the week it belongs to (Sat/Sun sit *before* the following
- * Mon–Fri rather than trailing the preceding ones).
+ * Saturday 00:00 (local) of the week containing `d`. Weeks start on Saturday,
+ * so a weekend belongs to the Mon–Fri that follows it.
  */
 export function startOfWeek(d: Date): Date {
   const x = startOfDay(d);
   const day = x.getDay(); // 0 Sun .. 6 Sat
-  // Days since the most recent Saturday: Sat→0, Sun→1, Mon→2 … Fri→6.
+  // Days since Saturday: Sat→0, Sun→1, Mon→2 … Fri→6.
   const diff = (day + 1) % 7;
   x.setDate(x.getDate() - diff);
   return x;
 }
 
 // ---- Month-split weeks ----
-// Billing runs to month-end, so when the 1st of a month falls mid-week the week
-// splits in two and each side settles against its own month — the same rule the
-// timesheet's overtime cap uses (see weekSegments in lib/timesheet/overtime).
-// The targets model follows suit: each side of the split is an independent
-// mini-week with its own budget of weeklyHours/5 per weekday it contains, and
-// hours logged on one side never bank against the other. That's what keeps
-// overtime in the old month's half from (wrongly) shortening the new month's
-// days — the old month's surplus is that month's business, not a credit here.
+// Billing is per month, so when the 1st falls mid-week the week splits in two,
+// as the timesheet's overtime cap does (weekSegments in lib/timesheet/overtime).
+// Each side is a separate mini-week with a budget of weeklyHours / 5 per
+// weekday it contains. Hours logged on one side never count toward the other,
+// so overtime in the old month does not shorten the new month's days.
 
 /** Day index within the Sat-start week: Sat→0, Sun→1, Mon→2 … Fri→6. */
 function weekDayIndex(d: Date): number {
@@ -373,8 +348,8 @@ function weekDayIndex(d: Date): number {
 /** The first day index (1…6) whose calendar month differs from the week's first day, or null. */
 export function monthSplitDay(weekStart: number): number | null {
   const monthKey = (d: number) => {
-    // setDate keeps it on local calendar days, so a DST change at a month-end
-    // midnight can't drift the boundary the way fixed-ms day math could.
+    // setDate stays on local calendar days; fixed-ms day math would drift
+    // across a DST change.
     const dt = new Date(weekStart);
     dt.setDate(dt.getDate() + d);
     return dt.getFullYear() * 12 + dt.getMonth();
@@ -393,8 +368,8 @@ function segmentOf(dayIdx: number, split: number | null): { startDay: number; en
 }
 
 /**
- * Seconds spent on any selected project that overlap [fromMs, toMs). Overlap-based
- * so a running entry contributes live time as `toMs` (now) advances.
+ * Seconds of selected-project entries overlapping [fromMs, toMs). A running
+ * entry counts up to its stop, which normalize() set to now.
  */
 export function projectSecondsInRange(
   entries: NormEntry[],
@@ -413,13 +388,10 @@ export function projectSecondsInRange(
 }
 
 /**
- * Project time (seconds) scheduled *strictly after* `nowMs` within [nowMs, untilMs).
- *
- * "Scheduled later" = selected-project entries whose start is in the future — work
- * you've planned but not done yet. An entry that merely *covers* now (started in
- * the past, ends in the future) is deliberately excluded: its remaining tail is
- * live work-in-progress, not separately-bankable scheduled time, and counting it
- * here would double-discount the day's remaining live work.
+ * Seconds of selected-project entries that start after `nowMs`, clipped to
+ * `untilMs`: work planned but not yet done. An entry that covers now is
+ * excluded; its remaining part is work in progress, and counting it here would
+ * discount it twice.
  */
 export function scheduledLaterSeconds(
   entries: NormEntry[],
@@ -430,7 +402,7 @@ export function scheduledLaterSeconds(
   let total = 0;
   for (const e of entries) {
     if (!inSet(e.projectId, projects)) continue;
-    if (e.startMs <= nowMs) continue; // covering-now or already past — not "later"
+    if (e.startMs <= nowMs) continue; // started already
     const b = Math.min(e.stopMs, untilMs);
     if (b > e.startMs) total += (b - e.startMs) / MS;
   }
@@ -438,10 +410,9 @@ export function scheduledLaterSeconds(
 }
 
 /**
- * A selected-project entry whose span contains `nowMs` but that isn't the live
- * running timer — i.e. a pre-entered ("planned") block you're currently inside.
- * Running entries are excluded (normalize() clamps their stop to now, so they
- * never satisfy stop > now) since the live-tracking path already handles those.
+ * A stopped selected-project entry whose span contains `nowMs`: a planned
+ * block you are currently inside. Running entries never match, because
+ * normalize() sets their stop to now.
  */
 export function coveringEntry(
   entries: NormEntry[],
@@ -456,9 +427,8 @@ export function coveringEntry(
 }
 
 /**
- * The ordered working-day indices of a segment: its weekdays (Mon–Fri, idx ≥ 2)
- * minus any holidays. Weekends and holidays contribute no budget and take no
- * position — a holiday behaves exactly like a weekend day inside the model.
+ * A segment's working-day indices in order: its weekdays (idx ≥ 2) minus
+ * holidays.
  */
 function workingDaysOfSegment(
   seg: { startDay: number; endDay: number },
@@ -472,14 +442,14 @@ function workingDaysOfSegment(
 }
 
 /**
- * Target for one working day given its position within its segment's working
- * days and the segment time still unaccounted for. The segment's last working
- * day closes it out Friday-style (take everything remaining, never below the
- * floor); the second-to-last adapts Thursday-style (half the remainder regular,
- * reserve-clamped short); every earlier working day is a fixed base day. In a
- * whole-month week with no holidays these positions are literally Friday,
- * Thursday and Mon–Wed; a Friday holiday shifts the closing role to Thursday.
- * Always clamped to the daily maximum.
+ * Target for a working day from its position in the segment and the time still
+ * remaining in the segment's budget:
+ * - last working day ("Friday"): all that remains, at least the Friday floor;
+ * - second to last ("Thursday"): half the remainder (regular) or the remainder
+ *   minus the Friday reserve, clamped (short);
+ * - earlier days: the fixed base day.
+ * In a normal week these are Fri, Thu and Mon–Wed; a Friday holiday moves the
+ * closing role to Thursday. Clamped to the daily maximum.
  */
 function positionTarget(
   dayIdx: number,
@@ -504,40 +474,29 @@ function positionTarget(
 /**
  * Today's target in seconds.
  *
- * Both modes aim for the configured weekly total in three stages — base days,
- * an adaptive second-to-last day, an adaptive closing day — and a day's target
- * is fixed for the whole day: it depends only on the selected project's hours
- * logged *before* today (from the segment's start → today 00:00, so a weekend at
- * the week's start counts toward Thu/Fri), so it does not shrink as you work
- * today. Every hour figure below is the 40h-week baseline scaled by
- * weeklyHours / 40 (the Friday floor can be overridden).
+ * The target is fixed for the whole day. It depends only on selected-project
+ * hours logged from the segment's start to today 00:00 (so weekend work at the
+ * start of the week counts toward Thu/Fri), and does not shrink as you work
+ * today. Hours below are for a 40h week, scaled by weeklyHours / 40.
  *
- * Regular week (shortFriday = false):
- *   - Mon/Tue/Wed: 8h each (week / 5).
- *   - Thursday: half of the time remaining to reach the weekly total, never below 7h.
- *   - Friday: whatever remains to reach the weekly total, but no less than the floor (5h).
+ * Regular week:
+ *   - Mon–Wed: 8h (week / 5).
+ *   - Thu: half of what remains of the weekly total, at least 7h.
+ *   - Fri: all that remains, at least the Friday floor (5h, overridable).
  *
- * Short week (shortFriday = true):
- *   - Mon/Tue/Wed: 9h each.
- *   - Thursday: the time remaining minus a reserved 5h for Friday, clamped to [8h, 9h].
- *   - Friday: whatever remains, but no less than the floor (5h).
+ * Short Friday:
+ *   - Mon–Wed: 9h.
+ *   - Thu: what remains minus 5h reserved for Friday, clamped to [8h, 9h].
+ *   - Fri: all that remains, at least the Friday floor.
  *
- * Month rollover: when the 1st falls mid-week the week splits into two
- * independent segments (see monthSplitDay), each budgeted weeklyHours/5 per
- * weekday it holds — matching how the timesheet caps billing per month. The
- * adaptive Thursday/Friday roles shift to each segment's last two weekdays and
- * settle against the segment's own budget, counting only hours logged inside
- * that segment. So overtime banked before the boundary no longer (wrongly)
- * shortens the new month's days, and the old month's half absorbs its own
- * shortfall/surplus on its closing day instead.
+ * Month split (see monthSplitDay): each segment has its own budget of
+ * weeklyHours / 5 per weekday and counts only hours logged inside it. The
+ * Thu/Fri roles move to the segment's last two working days.
  *
- * Holidays: days in `holidays` (marked by a time-off entry, see isTimeOffEntry)
- * are non-working days exactly like the weekend — their target is 0h, they add
- * no budget (the segment shrinks by weeklyHours/5 per holiday) and the adaptive
- * closing roles shift to the segment's last actual working days.
+ * Holidays (see isTimeOffEntry): target 0h, no budget, and the Thu/Fri roles
+ * move to the last working days.
  *
- * In both modes the weekend falls back to the standard day, and every day is
- * finally clamped to at most 12h (scaled) so an unusual week stays sane.
+ * Weekend days return the standard day. Every target is clamped to 12h (scaled).
  */
 export function dailyTargetSeconds(
   now: Date,
@@ -550,17 +509,16 @@ export function dailyTargetSeconds(
   const t = resolveTargets(cfg);
   const idx = weekDayIndex(now);
   if (idx < 2) return t.standardDay; // weekend
-  if (holidays.has(idx)) return 0; // holiday — no work expected
+  if (holidays.has(idx)) return 0;
 
   const weekStart = startOfWeek(now);
   const seg = segmentOf(idx, monthSplitDay(weekStart.getTime()));
   const workingDays = workingDaysOfSegment(seg, holidays);
   const pos = workingDays.indexOf(idx);
-  // Base days (more than two working days before the segment closes) are fixed
-  // and need no pool arithmetic at all.
+  // Base days are fixed.
   if (pos < workingDays.length - 2) return shortFriday ? t.shortMidweek : t.standardDay;
 
-  const budget = t.standardDay * workingDays.length; // Sat/Sun/holidays add nothing
+  const budget = t.standardDay * workingDays.length; // weekends and holidays add nothing
   const segStart = new Date(weekStart);
   segStart.setDate(segStart.getDate() + seg.startDay);
   const loggedSoFar = projectSecondsInRange(
@@ -573,14 +531,11 @@ export function dailyTargetSeconds(
 }
 
 /**
- * The fixed, nominal target for a weekday assuming every day hits its goal —
- * i.e. the plain weekly plan (regular 8/8/8/8/8, short 9/9/9/8/5, all scaled).
- * Computed by walking the day's segment as if each prior day landed exactly on
- * target, so the adaptive positions see the pool the plan leaves them — which
- * also makes the plan come out right on a month-split week (e.g. a Friday alone
- * in the new month plans a full standard day, not a short one). Used to show a
- * stable target for days that haven't happened yet, where the adaptive
- * dailyTargetSeconds would otherwise swing to the clamp for want of logged time.
+ * The planned target for a day, assuming every earlier day hit its target:
+ * regular 8/8/8/8/8, short 9/9/9/8/5 (scaled). It walks the day's segment, so
+ * month splits come out right (a Friday alone in the new month plans a full
+ * standard day). Used for future days, where dailyTargetSeconds would hit the
+ * clamp because nothing is logged yet.
  */
 export function plannedTargetSeconds(
   date: Date,
@@ -590,8 +545,8 @@ export function plannedTargetSeconds(
 ): number {
   const t = resolveTargets(cfg);
   const idx = weekDayIndex(date);
-  if (idx < 2) return t.standardDay; // weekend fallback
-  if (holidays.has(idx)) return 0; // holiday — no work expected
+  if (idx < 2) return t.standardDay; // weekend
+  if (holidays.has(idx)) return 0;
 
   const seg = segmentOf(idx, monthSplitDay(startOfWeek(date).getTime()));
   const workingDays = workingDaysOfSegment(seg, holidays);
@@ -603,22 +558,17 @@ export function plannedTargetSeconds(
     if (d === idx) return target;
     planned += target;
   }
-  return t.standardDay; // unreachable — idx is always a working day inside its segment
+  return t.standardDay; // unreachable: idx is a working day of its segment
 }
 
 /**
- * How long you've been continuously working on the selected project(s) right now.
+ * How long you have worked on the selected projects without a break.
  *
- * Returns `working: false` unless a selected-project entry is currently running.
- * The streak is determined purely by the selected project(s)' own coverage:
- * starting from now it walks backwards through their entries and ends (i.e. a
- * break is detected) at the first real hole of >= BREAK_GAP_MINUTES.
- *
- * Entries outside the selection are ignored entirely — a *parallel* timesheet
- * that merely overlaps yours is not a break (you never stopped working on the
- * project), and a *sequential* switch away already shows up as a hole in the
- * selected coverage, so the gap rule still catches it. Because the selected
- * projects pool together, working straight across two of them is one streak.
+ * `working` is false unless a selected-project entry is running. The streak
+ * walks back from now through selected-project entries and ends at the first
+ * gap of at least BREAK_GAP_MINUTES. Other projects are ignored: an overlapping
+ * entry elsewhere is not a break, and switching away leaves a gap in the
+ * selected coverage anyway. Moving between selected projects is one streak.
  */
 export function continuousWorkSeconds(
   entries: NormEntry[],
@@ -630,10 +580,8 @@ export function continuousWorkSeconds(
 
   const gapMs = BREAK_GAP_MINUTES * 60 * MS;
 
-  // Walk the selected project(s)' entries from latest to earliest, extending the
-  // streak back as long as each entry's coverage reaches within gapMs of it. A
-  // running entry is clamped to now by normalize(), so coverage always reaches
-  // `nowMs`.
+  // Walk from latest to earliest, extending the streak while each entry ends
+  // within gapMs of it. The running entry stops at now (normalize()).
   const spans = entries
     .filter((e) => inSet(e.projectId, projects))
     .sort((a, b) => a.startMs - b.startMs);
@@ -641,14 +589,14 @@ export function continuousWorkSeconds(
   let streakStart = nowMs;
   for (let i = spans.length - 1; i >= 0; i--) {
     const s = spans[i];
-    if (s.stopMs < streakStart - gapMs) break; // real gap before the streak => break taken
+    if (s.stopMs < streakStart - gapMs) break; // a break
     if (s.startMs < streakStart) streakStart = s.startMs;
   }
 
   return { working: true, seconds: (nowMs - streakStart) / MS };
 }
 
-/** A span of time with no time entry at all (any project) — "unreported" time. */
+/** A span with no time entry on any project ("unreported" time). */
 export interface Gap {
   startMs: number;
   stopMs: number;
@@ -691,12 +639,9 @@ export function subtractIntervals(base: Interval[], cut: Interval[]): Interval[]
 }
 
 /**
- * Holes in the timeline within [fromMs, toMs) where *no* entry (any project) was
- * running — i.e. unreported time. Only gaps *between* entries count: time before
- * the first entry or after the last is ignored (you simply weren't tracking
- * then). Entries are clipped to the window and overlapping ones merged first, so
- * the result is the true gaps. Gaps shorter than `minMinutes` are dropped as
- * noise (e.g. a few seconds between back-to-back entries).
+ * Gaps within [fromMs, toMs) where no entry on any project was running. Only
+ * gaps between entries count; time before the first or after the last entry is
+ * ignored. Gaps shorter than `minMinutes` are dropped as noise.
  */
 export function unreportedGaps(
   entries: NormEntry[],
@@ -704,8 +649,6 @@ export function unreportedGaps(
   toMs: number,
   minMinutes = UNREPORTED_MIN_MINUTES
 ): Gap[] {
-  // Merge to genuine coverage spans so a gap is a real hole, not just the
-  // boundary between two adjacent entries.
   const merged = mergeIntervals(
     entries.map((e) => ({ a: Math.max(e.startMs, fromMs), b: Math.min(e.stopMs, toMs) }))
   );
@@ -722,31 +665,26 @@ export function unreportedGaps(
   return gaps;
 }
 
-export const QUARTER_SECONDS = 15 * 60; // default timesheet rounding granularity (15 min)
-export const DEFAULT_ROUNDING_HOURS = 0.25; // 15 minutes, the default rounding unit
-// Granularities a user can pick (hours). 0.25 = 15 min; 0.2 = 12 min (some clients
-// can't enter quarter-hours); 0.5 = half an hour; 1 = a full hour (clients that bill
-// in whole hours). All are exact divisors that keep figures tidy.
+export const QUARTER_SECONDS = 15 * 60; // default rounding unit
+export const DEFAULT_ROUNDING_HOURS = 0.25;
+// Rounding units a user can pick, in hours. 0.2 (12 min) is for clients that
+// cannot enter quarter-hours; 1 is for clients that bill whole hours.
 export const ROUNDING_HOURS_OPTIONS = [0.25, 0.2, 0.5, 1] as const;
-// The billable cap is per-config now; see effectiveMaxBillableHours / WeekConfig.
 
 /** Convert a rounding granularity in hours (e.g. 0.25) to whole seconds (900). */
 export function roundingUnitSeconds(hours: number): number {
   return Math.round((hours > 0 ? hours : DEFAULT_ROUNDING_HOURS) * 3600);
 }
 
-// Grids the Individual view can anchor a line's *start time* to (hours), picked
-// independently of the rounding unit above. Normally the two are the same — 15-min
-// rounding puts times on :00/:15/:30/:45 — but some clients round durations finely
-// while only accepting coarser start times (e.g. 15-min blocks that may only begin
-// at :00 or :30). Null/absent means "follow the rounding unit", and a window at or
-// below it is exactly that, so only coarser picks are meaningful.
+// Grids (hours) the Individual view can snap a line's start time to,
+// independent of the rounding unit. Some clients take 15-min durations but only
+// accept start times on :00 or :30. Null means "use the rounding unit"; a
+// window at or below the rounding unit has the same effect.
 export const START_WINDOW_HOURS_OPTIONS = [0.25, 0.5, 1] as const;
 
 /**
- * The grid line start times snap to, in seconds: the workspace's start window when
- * it's coarser than the rounding unit, else the rounding unit itself (the default —
- * start times and rounding linked, as they always were).
+ * The start-time grid in seconds: the workspace's start window when it is
+ * coarser than the rounding unit, else the rounding unit.
  */
 export function startWindowUnitSeconds(
   windowHours: number | null | undefined,
@@ -757,24 +695,17 @@ export function startWindowUnitSeconds(
 }
 
 /**
- * Round a set of second-durations to whole rounding units (15 minutes by default,
- * or whatever `unitSeconds` is set to) so that the rounded values still **sum to
- * the rounded total** of the originals — i.e. rounding the parts never drifts away
- * from rounding the whole.
+ * Round durations (seconds) to whole units (`unitSeconds`, default 15 min) so
+ * the rounded values sum to the rounded total.
  *
- * The total is rounded to the nearest unit; each value is floored to a unit; then
- * the leftover units needed to reach the total are handed out one-by-one to the
- * values with the largest fractional remainder (the largest-remainder / Hamilton
- * method). That spreads the unavoidable rounding error as evenly as possible — the
- * parts closest to rounding up are the ones bumped up. Returns rounded seconds in
- * the input order.
+ * The total is rounded to the nearest unit and each value floored. The spare
+ * units go one at a time to the values with the largest remainder
+ * (largest-remainder / Hamilton method). Negative values count as 0. Returns
+ * seconds in input order.
  *
- * With `biasZero`, the spare units go **first** to values that would
- * otherwise floor to zero (a small entry the summary would silently drop),
- * so the individual view can surface them; the largest-remainder order only
- * breaks ties among that group and orders the rest. A value can still end up at
- * zero when there aren't enough spare units to reach it — the caller decides
- * whether to keep or drop it.
+ * With `biasZero`, spare units go first to values that would floor to zero, so
+ * the Individual view can show small entries. Such a value can still end at
+ * zero when spare units run out; the caller decides whether to drop it.
  */
 export function roundQuartersPreservingTotal(
   secs: number[],
@@ -783,14 +714,14 @@ export function roundQuartersPreservingTotal(
   const unit = opts.unitSeconds && opts.unitSeconds > 0 ? opts.unitSeconds : QUARTER_SECONDS;
   const quarters = secs.map((s) => Math.max(0, s) / unit);
   const floors = quarters.map((q) => Math.floor(q));
-  const target = Math.round(quarters.reduce((a, b) => a + b, 0)); // whole units in the total
-  let extra = target - floors.reduce((a, b) => a + b, 0); // spare units to distribute (>= 0)
+  const target = Math.round(quarters.reduce((a, b) => a + b, 0));
+  let extra = target - floors.reduce((a, b) => a + b, 0); // spare units, >= 0
 
   const order = quarters
     .map((q, i) => ({ i, r: q - floors[i], surface: opts.biasZero === true && floors[i] === 0 && q > 0 }))
     .sort((a, b) => {
-      if (a.surface !== b.surface) return a.surface ? -1 : 1; // rescue would-be-zeros first
-      return b.r - a.r; // then largest-remainder
+      if (a.surface !== b.surface) return a.surface ? -1 : 1; // would-be zeros first
+      return b.r - a.r; // then largest remainder
     });
 
   const out = floors.slice();
@@ -805,7 +736,7 @@ export function fmtHoursLabel(hours: number): string {
   return `${Number(hours.toFixed(2))}h`;
 }
 
-/** Duration as decimal hours, e.g. 30000s → "8.33h" (for the timesheet). */
+/** Duration as decimal hours, e.g. 30000s → "8.33h". */
 export function fmtHours(seconds: number): string {
   return `${(Math.max(0, seconds) / 3600).toFixed(2)}h`;
 }

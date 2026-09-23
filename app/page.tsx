@@ -67,17 +67,16 @@ export default function Page() {
   const standalone = mode === 'standalone';
 
   const [snoozeUntil, setSnoozeUntil] = useState(0);
-  // Settings was opened from the switcher's "Manage workspaces…", so the panel
-  // should land on that section. One opening only — the gear must still open
-  // the form at the top, so it clears whenever the panel closes.
+  // Settings was opened from the switcher's "Manage workspaces…" and should open
+  // at that section. Cleared when the panel closes, so the gear opens it at the top.
   const [manageWorkspaces, setManageWorkspaces] = useState(false);
   const [dayTab, setDayTab] = useState<'today' | 'yesterday'>('today');
-  // The side panel is hidden by CSS at narrow widths; this opens it as a
-  // full-screen overlay sheet instead (toggled from the topbar Details button).
+  // At narrow widths CSS hides the side panel; the Details button opens it as
+  // a full-screen sheet.
   const [showDetails, setShowDetails] = useState(false);
 
-  // Close the details sheet on Escape, and whenever the viewport grows back to
-  // a width where the panel is shown inline (so it can't get stuck open).
+  // Close the sheet on Escape, and when the viewport grows wide enough to show
+  // the panel inline.
   useEffect(() => {
     if (!showDetails) return;
     const onKey = (e: KeyboardEvent) => {
@@ -94,9 +93,8 @@ export default function Page() {
     };
   }, [showDetails]);
 
-  // The selected projects together count as "the project". The set drives every
-  // tracking/target calculation (they're indistinguishable there); the array keeps
-  // names/colors for the header chips and the running-entry label.
+  // The selected projects are pooled for tracking and targets (the id set); the
+  // array supplies names and colors for display.
   const sel = settings.selectedProjects;
   const multi = sel.length > 1;
   const projectIds = useMemo(() => new Set(sel.map((p) => p.id)), [sel]);
@@ -112,9 +110,8 @@ export default function Page() {
     if (ready && projectIds.size === 0) setShowSettings(true);
   }, [ready, projectIds, setShowSettings]);
 
-  // Days of the current week marked as time off by a selected project's entry
-  // (see isTimeOffEntry). They behave exactly like weekend days: 0h target, and
-  // the week's goal drops by weeklyHours/5 for each.
+  // This week's holidays (see isTimeOffEntry): 0h target, and the weekly goal
+  // drops by weeklyHours / 5 for each.
   const weekHolidays = useMemo(() => {
     if (projectIds.size === 0 || !nowMs) return new Set<number>();
     return holidayDaysOfWeek(
@@ -145,9 +142,8 @@ export default function Page() {
     const remaining = Math.max(0, target - trackedToday);
     const fraction = target > 0 ? trackedToday / target : 1;
 
-    // Time you've scheduled for later today: counts toward the day's target but is
-    // not yet worked, so it lets you stop the live work sooner. The ring is left
-    // alone (worked time only); only the live work still required shrinks.
+    // Entries scheduled later today count toward the target, so they reduce the
+    // live work still needed. The ring shows worked time only.
     const scheduledLater = scheduledLaterSeconds(norm, projectIds, nowMs, dayEnd);
     const remainingLive = Math.max(0, remaining - scheduledLater);
     const leaveAtMs = remainingLive > 0 ? nowMs + remainingLive * 1000 : null;
@@ -217,10 +213,9 @@ export default function Page() {
     weekHolidays,
   ]);
 
-  // Day timelines for the side panel (no extra API calls — both days come from
-  // the same week fetch). Selected-project entries are listed individually and
-  // flagged when they lack a billing tag; other-project time collapses into a
-  // single "Break" block, and genuine unreported gaps are interleaved.
+  // Today and yesterday timelines for the side panel, from the same fetch.
+  // Selected-project entries are listed and flagged when missing a billing tag;
+  // other-project time shows as "Break", plus unreported gaps.
   type TLItem = {
     key: string;
     kind: 'project' | 'scheduled' | 'break' | 'unreported';
@@ -244,8 +239,7 @@ export default function Page() {
       const dayEnd = dayStart + dayMs;
       const liveCap = isToday ? Math.min(nowMs, dayEnd) : dayEnd;
       const dayEntries = entries
-        // Time-off markers flag a holiday; they're not tracked work, so they
-        // don't belong on the timeline (and must not read as a "Break").
+        // Time-off markers are not work and would otherwise show as a "Break".
         .filter((e) => !isTimeOffEntry(e.tags, settings.timeOffTag))
         .map((e) => {
           const startMs = new Date(e.start).getTime();
@@ -257,7 +251,7 @@ export default function Page() {
             projectId: e.project_id,
             tags: e.tags,
             startMs,
-            stopMs: Math.min(rawStop, dayEnd), // clip a day-crossing entry to the day
+            stopMs: Math.min(rawStop, dayEnd), // clip to the day
             running: running && isToday,
           };
         })
@@ -284,11 +278,8 @@ export default function Page() {
           stopMs: e.stopMs,
           running: e.running,
           dur,
-          // A linked-code project's entries carry the mapping's own tag prefix,
-          // so they're checked against that instead of this sheet's. An entry
-          // whose description opens with "[ticket]" bills to that ticket
-          // (support tickets), so it isn't missing a tag. A workspace that
-          // bills by project has no billing tags to miss.
+          // Linked-code projects use the mapping's prefix. A "[ticket]"
+          // description counts as a billing code.
           missingTag:
             !settings.billByProject &&
             !hasBillingTag(
@@ -360,16 +351,16 @@ export default function Page() {
     settings.codeMappings,
   ]);
 
-  // Week summary for the side panel: logged vs target for each weekday. Mon–Fri
-  // always show; Sat/Sun appear only when the selected project was tracked then.
+  // Week summary for the side panel: logged vs target per day. Sat/Sun show
+  // only when they have selected-project time.
   const weekSummary = useMemo(() => {
     if (projectIds.size === 0 || !nowMs) return null;
     const norm = normalize(entries, nowMs, settings.timeOffTag);
-    const repId = [...projectIds][0]; // a representative project for the projection
+    const repId = [...projectIds][0]; // any selected project, for the synthetic fill
     const dayMs = 24 * 3600 * 1000;
     const weekStart = startOfWeek(new Date(nowMs)).getTime();
     const todayStart = startOfDay(new Date(nowMs)).getTime();
-    const beforeThursday = new Date(nowMs).getDay() < 4; // Mon–Wed (Sun=0 counts as before)
+    const beforeThursday = new Date(nowMs).getDay() < 4; // Sun–Wed
 
     const todayTarget = dailyTargetSeconds(
       new Date(todayStart),
@@ -380,10 +371,9 @@ export default function Page() {
       weekHolidays
     );
     const todayLogged = projectSecondsInRange(norm, projectIds, todayStart, nowMs);
-    // Time the rest of today is already covered by real entries (scheduled blocks
-    // and the running tail). The synthetic fill below must only make up whatever
-    // those leave short of target, or today would be double-counted and future
-    // days' targets would wrongly collapse to the floor.
+    // Future days assume today hits its target. The synthetic fill covers only
+    // what logged and scheduled time leave short; counting today twice would
+    // drop later targets to the floor.
     const todayCovered = projectSecondsInRange(norm, projectIds, nowMs, todayStart + dayMs);
     const shortfall = Math.max(0, todayTarget - todayLogged - todayCovered);
     const projected: NormEntry[] =
@@ -418,10 +408,10 @@ export default function Page() {
       const holiday = weekHolidays.has(i);
       const logged = projectSecondsInRange(norm, projectIds, dayStart, Math.min(dayEnd, nowMs));
       const scheduled = projectSecondsInRange(norm, projectIds, Math.max(dayStart, nowMs), dayEnd);
-      if (isWeekend && logged === 0 && scheduled === 0) continue; // hide untouched weekend days
+      if (isWeekend && logged === 0 && scheduled === 0) continue;
       const isFuture = dayStart > todayStart;
-      // A weekday holiday stays visible (unlike an untouched weekend) — it
-      // explains why the week's remaining targets shrank — with a 0h target.
+      // Before Thursday, future days show the plan; from Thursday, the adaptive
+      // target. A weekday holiday stays visible with a 0h target.
       const target =
         isFuture && beforeThursday
           ? plannedTargetSeconds(date, settings.shortFriday, settings, weekHolidays)
@@ -458,7 +448,7 @@ export default function Page() {
     weekHolidays,
   ]);
 
-  // Unreported time (no entry at all) for the side card — today and yesterday.
+  // Unreported time (no entry on any project), today and yesterday.
   const unreported = useMemo(() => {
     if (!nowMs) return null;
     const norm = normalize(entries, nowMs, settings.timeOffTag);
@@ -491,8 +481,7 @@ export default function Page() {
 
   const done = view ? view.remaining <= 0 : false;
   const maxBillableLabel = fmtHoursLabel(effectiveMaxBillableHours(settings));
-  // The week's effective goal: each weekday marked as time off shaves a day's
-  // worth (weeklyHours / 5) off it, exactly like the targets and the billing cap.
+  // Weekly goal minus weeklyHours / 5 per weekday holiday.
   const holidayWeekdays = [...weekHolidays].filter((d) => d >= 2).length;
   const effectiveWeeklyHours = (settings.weeklyHours * (5 - holidayWeekdays)) / 5;
   const timeline = dayTab === 'today' ? timelines.today : timelines.yesterday;
@@ -563,7 +552,7 @@ export default function Page() {
           <div className="breakbar" role="alert">
             <span>☕</span>
             <span className="grow">
-              You&apos;ve worked {fmtHM(view!.continuous)} straight — time for a break.
+              You&apos;ve worked {fmtHM(view!.continuous)} without a break. Take one.
             </span>
             <button onClick={() => setSnoozeUntil(Date.now() + SNOOZE_MS)}>Snooze 15m</button>
           </div>
@@ -609,7 +598,7 @@ export default function Page() {
                     <span className="sched-note"> · {fmtHM(view.scheduledLater)} scheduled later</span>
                   </div>
                 ) : (
-                  <div className="next-time done">🎉 Target reached — you can leave</div>
+                  <div className="next-time done">🎉 Target reached · you can leave</div>
                 )}
 
                 <div className="stats">
@@ -734,7 +723,7 @@ export default function Page() {
                         <span className="week-day">
                           {d.label}
                           {d.holiday && (
-                            <span className="week-holiday" title="Time off — no work expected">
+                            <span className="week-holiday" title="Time off: no work expected">
                               off
                             </span>
                           )}
@@ -812,7 +801,7 @@ export default function Page() {
                             {h.missingTag && (
                               <span
                                 className="tag-warn"
-                                title={`No billing tag — add one ${standalone ? 'in the tracker' : 'in Toggl'}`}
+                                title={`No billing tag. Add one ${standalone ? 'in the tracker' : 'in Toggl'}.`}
                               >
                                 ⚠
                               </span>
@@ -820,7 +809,7 @@ export default function Page() {
                             {h.tooLong && (
                               <span
                                 className="tag-warn"
-                                title={`Longer than ${maxBillableLabel} — can't be billed individually; split it ${standalone ? 'in the tracker' : 'in Toggl'}`}
+                                title={`Longer than ${maxBillableLabel}, the limit for one billed line. Split it ${standalone ? 'in the tracker' : 'in Toggl'}.`}
                               >
                                 ⚠
                               </span>
@@ -848,12 +837,11 @@ export default function Page() {
             <span className="err">{fetchError}</span>
           ) : cacheEnabled ? (
             <span>
-              Shared server cache · refreshes every {fmtInterval(effectiveRefreshSec)} across all
-              devices
+              Shared server cache · refreshes every {fmtInterval(effectiveRefreshSec)} for all devices
             </span>
           ) : (
             <span>
-              Refreshes every {fmtInterval(effectiveRefreshSec)} · live counter each second
+              Refreshes every {fmtInterval(effectiveRefreshSec)} · timer updates every second
             </span>
           )}
           <LastUpdated lastUpdatedMs={lastUpdatedMs} nowMs={nowMs} refreshSec={effectiveRefreshSec} />
@@ -927,16 +915,15 @@ function StatusBadge({
   };
 }) {
   if (view.trackingProject) {
-    // Worked past the target itself — genuine overtime.
+    // Worked time is past the target.
     if (view.remaining <= 0 && view.target > 0) {
       return (
         <span className="badge live overtime">
-          <span className="dot" /> 🏁 Over target · +{fmtHM(view.trackedToday - view.target)} overtime
+          <span className="dot" /> 🏁 +{fmtHM(view.trackedToday - view.target)} over target
         </span>
       );
     }
-    // Not over by worked time, but your scheduled-later blocks already cover the
-    // rest of the target — you can leave now even though a break is still queued.
+    // Entries scheduled later cover the rest of the target.
     if (view.remainingLive <= 0 && view.target > 0) {
       return (
         <span className="badge live ready">

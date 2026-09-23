@@ -3,12 +3,10 @@
 import { fmtTimeOfDay } from '@/lib/calc';
 
 /**
- * Footer note showing when the on-screen data was produced by the source, so a
- * viewer can tell they're looking at a stale page (tab left open overnight,
- * laptop asleep, source unreachable). On the Toggl path this is the upstream
- * fetch time even when the shared server cache served the response. Turns amber
- * once the data is older than two refresh intervals — anything younger is just
- * normal polling cadence, not staleness. Hidden until the first successful fetch.
+ * Footer note with the time the source produced the shown data, so a stale page
+ * is recognizable. With Toggl this is the upstream fetch time, even when the
+ * server cache answered. Marked stale (amber) once older than two refresh
+ * intervals. Hidden until the first successful fetch.
  */
 export default function LastUpdated({
   lastUpdatedMs,
@@ -17,7 +15,7 @@ export default function LastUpdated({
 }: {
   lastUpdatedMs: number;
   nowMs: number;
-  /** Expected refresh cadence; null = manual refresh (never marked stale). */
+  /** Expected refresh interval; null = manual refresh, never stale. */
   refreshSec: number | null;
 }) {
   if (!lastUpdatedMs || !nowMs) return null;

@@ -25,13 +25,10 @@ import {
 
 const DAY_MS = 24 * 3600 * 1000;
 const WEEK_MS = 7 * DAY_MS;
-const PICKER_PAGE = 12; // how many previous weeks the picker reveals at a time
+const PICKER_PAGE = 12; // previous weeks shown per page of the picker
 
-// One entry per timesheet view. Adding a new view is just another row here plus
-// its component — the shell below stays untouched.
-// `windowMins` is the grid the Individual view's start times sit on; it equals the
-// rounding unit unless the workspace anchors starts to a coarser window, which is
-// worth spelling out in the note (the times then leave gaps by design).
+// One entry per timesheet view. The note mentions the start-time window only
+// when it is coarser than the rounding unit, because lines then have gaps.
 const VIEWS: Record<
   TimesheetMode,
   {
@@ -41,26 +38,26 @@ const VIEWS: Record<
 > = {
   summary: {
     note: (m, _w, byProject) =>
-      `Combined per ${byProject ? 'project' : 'billing tag'}, rounded to ${m} min · copy a cell to paste into your timesheet`,
+      `One cell per ${byProject ? 'project' : 'billing tag'} and day, rounded to ${m} min · copy a cell to paste into your timesheet`,
     Component: SummaryTimesheet,
   },
   individual: {
     note: (m, w, byProject) =>
-      `One row per entry, with times · same-${byProject ? 'project' : 'code'} neighbours combined, rounded to ${m} min` +
-      (w > m ? ` · starting every ${w} min` : ''),
+      `One row per entry · adjacent same-${byProject ? 'project' : 'code'} entries combined · rounded to ${m} min` +
+      (w > m ? ` · starts every ${w} min` : ''),
     Component: IndividualTimesheet,
   },
 };
 
-// 'current' = the live, auto-refreshing current week (free from the shared poll).
-// 'picker'  = choosing a past week (no Toggl calls until one is selected).
-// 'history' = a selected past week, fetched once, refreshed only on demand.
+// 'current' = this week, from the live poll.
+// 'picker'  = choosing a past week (nothing is fetched until one is picked).
+// 'history' = a past week, fetched once and refreshed only on demand.
 type Mode = 'current' | 'picker' | 'history';
 
 interface CachedWeek {
   entries: TimeEntry[];
-  // When the SOURCE produced these entries (for the "updated" labels) — a
-  // shared-server-cache hit reports the original Toggl fetch time.
+  // When the source produced these entries. A server-cache hit reports the
+  // original fetch time.
   at: number;
 }
 
@@ -96,16 +93,13 @@ export default function TimesheetPage() {
   const [histLoading, setHistLoading] = useState(false);
   const [histError, setHistError] = useState<string | null>(null);
   const [histLoadedAt, setHistLoadedAt] = useState(0);
-  // Already-fetched past weeks, kept in memory for the session only (no
-  // localStorage, by design): re-opening a week costs zero calls; Refresh forces
-  // a fresh fetch that bypasses both this and the shared server cache.
+  // Past weeks already fetched, in memory only. Reopening a week makes no
+  // request; Refresh bypasses this and the server cache.
   const cacheRef = useRef<Map<number, CachedWeek>>(new Map());
 
   const view = VIEWS[settings.timesheetMode];
   const needsPassword = serverManaged === true && passwordRequired && !authed;
 
-  // The grid the Individual view's clock times sit on: the rounding unit, unless
-  // the workspace anchors line starts to a coarser window (see lib/calc).
   const startWindowSeconds = startWindowUnitSeconds(
     settings.startWindowHours,
     roundingUnitSeconds(settings.roundingHours)
@@ -116,8 +110,8 @@ export default function TimesheetPage() {
   const hasProject = sel.length > 0;
   const projectTitle = multi ? settings.groupName || 'Multiple projects' : sel[0]?.name || 'No project';
 
-  // Off the current week, pause the live poll so we don't keep spending the
-  // hourly budget on data that isn't on screen. Resumed on return / unmount.
+  // Pause the live poll away from the current week, to save the hourly request
+  // budget. Resumed on return or unmount.
   useEffect(() => {
     setLivePollPaused(mode !== 'current');
     return () => setLivePollPaused(false);
@@ -147,8 +141,8 @@ export default function TimesheetPage() {
       } catch (e) {
         setHistError(
           isAuthRequired(e)
-            ? 'Session expired — return to this week to sign in again.'
-            : 'Could not load this week. Try refresh.'
+            ? 'Session expired. Go back to this week to sign in again.'
+            : 'Could not load this week. Try Refresh.'
         );
       } finally {
         setHistLoading(false);
@@ -185,14 +179,11 @@ export default function TimesheetPage() {
     return Array.from({ length: pickerCount }, (_, i) => currentWeekStart - (i + 1) * WEEK_MS);
   }, [currentWeekStart, pickerCount]);
 
-  // Which week + entries the body renders. History shows the selected week's
-  // fetched entries; otherwise the live current-week entries from the poll.
   const shownWeekStart = mode === 'history' && selectedWeek != null ? selectedWeek : currentWeekStart;
   const shownEntries = mode === 'history' ? histEntries : entries;
 
-  // The on-screen week's entries, ready for the export dialog to reuse (so
-  // exporting the week you're looking at costs no extra Toggl request). In history
-  // mode only offer it once the snapshot has actually loaded.
+  // Hand the shown week to the export dialog so exporting it needs no request.
+  // In history mode, only once it has loaded.
   const shownDataReady = mode !== 'history' || (!histLoading && !histError && histLoadedAt > 0);
   const exportPrefetched =
     hasProject && shownWeekStart > 0 && shownDataReady
@@ -351,10 +342,9 @@ export default function TimesheetPage() {
 
       {!needsPassword && showExport && hasProject && (
         <ExportDialog
-          // The dialog seeds its fields from the settings once, on mount. A
-          // document adopted from another device replaces those settings
-          // underneath it, so remount it rather than let the next export write
-          // the superseded details back.
+          // The dialog reads its fields from settings on mount. Remount it when
+          // synced settings arrive from another device, or the next export
+          // writes the old values back.
           key={t.sync.appliedEpoch}
           view={settings.timesheetMode}
           projects={sel}

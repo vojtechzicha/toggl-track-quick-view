@@ -17,16 +17,14 @@ function readableInk(hex?: string): string | undefined {
   const r = (n >> 16) & 0xff;
   const g = (n >> 8) & 0xff;
   const b = n & 0xff;
-  // Perceived luminance (sRGB-ish). Dark backgrounds get white ink, light get black.
+  // Perceived luminance, approximate.
   const lum = (0.299 * r + 0.587 * g + 0.114 * b) / 255;
   return lum > 0.6 ? '#000' : '#fff';
 }
 
 /**
- * The smallest project identifier in the UI: a row of tiny colored chips showing
- * each project's initials (full name on hover). Callers gate this on multi-project
- * mode — it's the least significant info on screen, only shown when several
- * projects are tracked as one.
+ * A row of small colored chips with each project's initials and its full name
+ * on hover. Callers show it only when several projects are selected.
  */
 export default function ProjectChips({
   projects,

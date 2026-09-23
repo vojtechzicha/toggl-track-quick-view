@@ -1,21 +1,14 @@
-// Content checks for billing-code handling. Run with:
-//   npm run check:codes
+// Checks for billing-code handling. Run with `pnpm check:codes`.
 //
-// Two settings are checked here.
+// "Strip parentheses from billing codes": the "(X)" / "(!)" markers are read
+// before the other parenthetical groups are stripped, so the setting never
+// removes a marker and marked codes still merge with their plain base. Off by
+// default, with no effect.
 //
-// "Strip parentheses from billing codes": the load-bearing claim is the ORDER
-// of operations — the internal overtime markers "(X)" / "(!)" are interpreted
-// FIRST, then (with the setting on) the remaining parenthetical groups are
-// stripped, and only then is the base used — so the setting can never swallow a
-// marker, and marker twins keep merging into the same displayed line. Off (the
-// default) nothing changes at all.
-//
-// "Bill by project": the claim is that the whole billing-code layer is GONE,
-// not merely relabelled. The project is the billing line, so no entry can be
-// untagged or multi-tagged (those warnings can never appear), and every
-// code-shaped input — a real billing tag, a support-ticket bracket, an "(X)" /
-// "(!)" marker, a parenthetical, a linked-code mapping — is inert. What is NOT
-// about codes keeps working: rounding, the length cap and the overtime trim.
+// "Bill by project": the project is the billing line. No entry is untagged or
+// multi-tagged, and billing tags, ticket brackets, markers, parentheticals and
+// linked-code mappings have no effect. Rounding, the billable cap and the
+// overtime trim still apply.
 
 import assert from 'node:assert/strict';
 import { registerHooks } from 'node:module';
@@ -69,7 +62,7 @@ const ok = (v: unknown, msg: string) => {
   eq(
     parseBillingCode('D123 (X)', true),
     { base: 'D123', trimmable: true, neverTrim: false },
-    'the "(X)" marker is interpreted first — never eaten as a parenthetical'
+    'the "(X)" marker is read before stripping'
   );
   eq(
     parseBillingCode('D123 (Phase 2)(X)', true),
@@ -151,17 +144,16 @@ const entries = [
     ['D123 (Phase 1)', 'D123 (Phase 2)', 'D123 (Phase 1)'],
     'off: the Individual view lines keep their parentheticals'
   );
-  // The stripped codes are what the combine rule sees, so the three consecutive
-  // entries (1h gaps) now fold into ONE billed line — "then use" includes grouping.
+  // Combining uses the stripped code, so the three entries (1h gaps) become one
+  // line.
   eq(codes(true), ['D123'], 'on: consecutive lines combine under the stripped code');
 }
 
-// ---- bill by project: the billing-code layer is gone, not relabelled ----
+// ---- bill by project: billing codes have no effect ----
 
-// One entry per shape a billing code could arrive in, all on the same project:
-// a plain tag, no tag at all, two tags at once, a support-ticket bracket, and
-// an "(X)" marker. Billing by project every one of them is just an entry on
-// "Proj" — one row, nothing flagged.
+// One entry per billing-code shape, all on one project: a tag, no tag, two
+// tags, a ticket bracket and an "(X)" marker. Billing by project, all of them
+// land on one "Proj" row with nothing flagged.
 const mixed = [
   { ...entry(1, 8, 1, 'D123', 'tagged'), tags: ['D123'] },
   { ...entry(2, 9, 1, 'D123', 'untagged'), tags: [] },
@@ -173,7 +165,7 @@ const byProject = { ...base, entries: mixed, billByProject: true };
 
 {
   const grid = buildSummaryGrid(byProject)!;
-  eq(grid.rows, ['p1|Proj'], 'every entry lands on the one project row — no warning rows at all');
+  eq(grid.rows, ['p1|Proj'], 'every entry lands on the project row, with no warning rows');
   eq(
     grid.rowMeta.get('p1|Proj')!.tag,
     'Proj',
@@ -181,18 +173,17 @@ const byProject = { ...base, entries: mixed, billByProject: true };
   );
   const cell = grid.cells.get('2|p1|Proj')!;
   eq(cell.seconds, 5 * 3600, 'all five entries bill, including the untagged and multi-tagged ones');
-  eq(cell.trimmableSeconds, 0, 'an "(X)" tag is not an overtime marker here — nothing is trimmable');
+  eq(cell.trimmableSeconds, 0, 'an "(X)" tag is not an overtime marker here');
   eq(
     cell.descs.includes('[T-9] ticketed'),
     true,
-    'a leading "[ticket]" stays in the description — it is not a code to strip out'
+    'a leading "[ticket]" stays in the description'
   );
   eq(grid.grandTotal, 5 * 3600, 'the day total counts them all');
 }
 
 {
-  // A linked billing code is billing-code machinery: with no codes to link, the
-  // mapping is ignored rather than collapsing the project onto its target code.
+  // Linked-code mappings are ignored when billing by project.
   const grid = buildSummaryGrid({
     ...byProject,
     codeMappings: [{ projectId: 1, tagPrefix: 'S', roundingHours: 0.25, targetCode: 'D-SUB-1' }],
@@ -201,8 +192,7 @@ const byProject = { ...base, entries: mixed, billByProject: true };
 }
 
 {
-  // Two projects stay two lines — the project IS the billing distinction, so
-  // this is the one thing that still splits rows.
+  // Two projects give two rows.
   const two = [entry(1, 8, 1, 'D1', 'a'), { ...entry(2, 10, 1, 'D2', 'b'), project_id: 2 }];
   const grid = buildSummaryGrid({
     ...base,
@@ -222,17 +212,15 @@ const byProject = { ...base, entries: mixed, billByProject: true };
   eq(
     rows.map((r) => r.kind),
     ['bill'],
-    'the Individual view has no warning rows either — every entry is billable'
+    'the Individual view has no warning rows either'
   );
   eq(rows[0].code, 'Proj', 'the line is coded by project');
-  // Five back-to-back 1h entries: same-project neighbours combine exactly as
-  // same-code ones do, so they bill as one 5h line under an 8h cap.
+  // Five back-to-back 1h entries combine into one 5h line under an 8h cap.
   eq(rows[0].rounded, 5 * 3600, 'adjacent same-project entries combine into one line');
 }
 
 {
-  // The per-line billable cap is a duration rule, not a code rule, so it still
-  // splits the run — here after the fourth hour.
+  // The billable cap still splits the run, here after the fourth hour.
   const week = buildIndividualWeek({ ...byProject, maxBillableHours: 4 })!;
   eq(
     week.days.flatMap((d) => d.rows).map((r) => r.rounded),
@@ -242,9 +230,8 @@ const byProject = { ...base, entries: mixed, billByProject: true };
 }
 
 {
-  // A project archived at the source can leave a blank denormalised name. A
-  // blank billing line would be a silent hole on the client's sheet, so it
-  // falls back to the id — and both views agree on that fallback.
+  // A project with a blank stored name (possible once archived) bills as its
+  // id in both views.
   const nameless = { ...base, entries: [entry(1, 8, 1, 'D1', 'a')], projects: [{ id: 1, name: '' }], billByProject: true };
   eq(
     buildSummaryGrid(nameless)!.rowMeta.get('p1|#1')!.tag,
@@ -259,11 +246,9 @@ const byProject = { ...base, entries: mixed, billByProject: true };
 }
 
 {
-  // The exported document's contract for a projects-only sheet, which a
-  // template pack is told it can rely on: `billingCode` equals `project` on
-  // every row, and neither is ever blank — a template that lays the two out
-  // separately must not print an empty cell where the billing column shows the
-  // nameless-project fallback.
+  // Export contract for a projects-only sheet, which templates rely on:
+  // `billingCode` equals `project` on every row and neither is blank, including
+  // for a nameless project.
   const range = { fromMs: WEEK, toMs: WEEK + 7 * 24 * 3600e3 };
   const docOpts = {
     range,
@@ -280,14 +265,12 @@ const byProject = { ...base, entries: mixed, billByProject: true };
     personName: 'P',
   };
   const views: ('summary' | 'individual')[] = ['summary', 'individual'];
-  // Both a named project and a nameless (archived) one, which is where the two
-  // fields could drift apart.
+  // A named project and a nameless one.
   const projectSets: { id: number; name: string }[][] = [[{ id: 1, name: 'Proj' }], [{ id: 1, name: '' }]];
   for (const view of views) {
     for (const projects of projectSets) {
       const doc = buildExportDoc({ ...docOpts, view, projects });
-      // `label` (summary) and `code` (individual) are the same slot: the text
-      // the billing column prints.
+      // `label` (summary) and `code` (individual) are the billing column text.
       const rows =
         doc.view === 'summary'
           ? doc.weeks.flatMap((w) => w.rows.map((r) => ({ ...r, shown: r.label })))
@@ -304,8 +287,7 @@ const byProject = { ...base, entries: mixed, billByProject: true };
 }
 
 {
-  // The overtime cap is about time, not codes, so it still trims — and with
-  // nothing marked "(X)" or "(!)" the whole billed total is fair game.
+  // The overtime cap still trims, with no "(X)" or "(!)" shares.
   const grid = buildSummaryGrid({ ...byProject, noOvertime: true, weeklyHours: 3 })!;
   eq(grid.grandTotal, 3 * 3600, 'the weekly cap still trims a projects-only sheet');
   eq(grid.overtimeTotal, 2 * 3600, 'and reports what it took off');
