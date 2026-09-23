@@ -11,25 +11,14 @@ import {
 import InstallGuideSheet from '@/components/InstallGuideSheet';
 
 /**
- * "Install as an app" block at the bottom of Settings. Two ways in, one
- * button:
- *
- * - Chromium fires `beforeinstallprompt`; lib/installPrompt.ts parks the event
- *   from page load and the click replays it as the native install dialog.
- * - WebKit never fires it (iPhone/iPad in any browser, Safari on the Mac), so
- *   there the click opens InstallGuideSheet, a walkthrough of the Share →
- *   "Add to Home Screen" / File → "Add to Dock" route. Which one, and whether
- *   at all, is `manualInstallGuide` (lib/pwa.ts).
- *
- * Renders nothing anywhere else, and never inside the installed app. It sits
- * in Settings rather than the footer because Settings is the one surface all
- * three pages share (see components/AppSettings.tsx), and because the other
- * per-device knob, the refresh interval, already lives there.
+ * "Install as an app" block at the bottom of Settings. On Chromium the button
+ * replays the parked `beforeinstallprompt` (lib/installPrompt.ts); on WebKit
+ * it opens InstallGuideSheet. `manualInstallGuide` (lib/pwa.ts) decides which
+ * guide, if any. Renders nothing where neither applies, including inside the
+ * installed app.
  */
 
-/** Running as the installed app — the platform's "standalone display mode",
- *  named differently here because "standalone" is the no-Toggl mode in this
- *  app (see lib/pwa.ts). */
+/** The platform's "standalone display mode" (see lib/pwa.ts for the naming). */
 function runningInstalled(): boolean {
   return (
     window.matchMedia('(display-mode: standalone)').matches ||
@@ -49,8 +38,7 @@ export default function InstallAppBlock() {
   const [guideOpen, setGuideOpen] = useState(false);
 
   useEffect(() => {
-    // Client-only sniff: decided once per mount, and a captured
-    // beforeinstallprompt simply takes precedence
+    // Client-only; a captured beforeinstallprompt takes precedence
     setGuide(
       manualInstallGuide({
         userAgent: navigator.userAgent,
@@ -76,9 +64,7 @@ export default function InstallAppBlock() {
               setGuideOpen(true);
               return;
             }
-            // One-shot: take it out of the store first, so a dismissed dialog
-            // doesn't leave a button that replays a spent event (see
-            // lib/installPrompt.ts)
+            // An event can be prompted once (see lib/installPrompt.ts)
             const event = consumeInstallPrompt();
             if (event) void event.prompt().catch(() => {});
           }}
@@ -91,8 +77,7 @@ export default function InstallAppBlock() {
         </button>
       </div>
       <p className="hint">
-        {APP_NAME} opens from its own icon, in its own window, without the browser around it.
-        Same live data, no app store.
+        Open {APP_NAME} from its own icon, in its own window. No app store needed.
       </p>
       {guideOpen && guide && (
         <InstallGuideSheet guide={guide} appName={APP_NAME} onClose={closeGuide} />

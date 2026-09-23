@@ -4,9 +4,8 @@ import ServiceWorkerRegister from '@/components/ServiceWorkerRegister';
 import UpdateHint from '@/components/UpdateHint';
 import { appName } from '@/lib/pwa';
 
-// Same naming as the manifest (app/manifest.ts): a preview install is
-// "Toggl Quick View (beta)". iOS reads the home-screen title from the Apple
-// meta tag rather than the manifest, so it has to agree here too.
+// Must match app/manifest.ts: iOS takes the home-screen title from the Apple
+// meta tag, not the manifest.
 const { name: APP_NAME, shortName: APP_SHORT_NAME } = appName(process.env.VERCEL_ENV);
 
 export const metadata: Metadata = {

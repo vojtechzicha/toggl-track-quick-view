@@ -216,9 +216,9 @@ shortens Thursday instead.
 Under **Settings → Advanced targets**. Each of the first two shows its scaled
 default; leave it blank to keep scaling, or enter a value to fix it.
 
-- **Maximal individually billed timesheet** (4h): the longest a single entry
+- **Maximum individually billed timesheet** (4h): the longest a single entry
   can be and still bill as one line. Longer entries are flagged.
-- **Minimal target working day** (5h): the floor for the closing day of the
+- **Minimum target working day** (5h): the floor for the closing day of the
   week.
 - **Round timesheet to**: the unit timesheet entries are rounded to. 15 minutes
   by default; also 12 minutes, 30 minutes or 1 hour. Affects the timesheet and
@@ -411,7 +411,7 @@ Exports contain only the billed figures.
 
 ### Max description length
 
-For client systems that reject long descriptions. Set **Maximal description
+For client systems that reject long descriptions. Set **Maximum description
 length** (under Advanced; blank means no limit) and every description in the
 views, copy buttons and CSV/XLSX fits:
 

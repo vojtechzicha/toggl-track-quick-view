@@ -5,16 +5,12 @@ import { createPortal } from 'react-dom';
 import type { ManualInstallGuide } from '@/lib/pwa';
 
 /**
- * The manual-install walkthrough behind the Settings "Install as an app"
- * button where the browser has no install prompt to trigger (see
- * `manualInstallGuide` in lib/pwa.ts). Reuses the settings overlay + panel
- * shell, one level above it (the button lives inside the settings panel), and
- * is portaled to body so the panel's own scroll box can't clip it.
+ * Manual install walkthrough for browsers with no install prompt (see
+ * `manualInstallGuide` in lib/pwa.ts). It opens from inside the settings
+ * panel, so it is portaled to body to escape the panel's scroll box.
  *
- * Each step names the control the person has to find and shows it as a "menu
- * chip" — the iOS share glyph, the Add-to-Home-Screen row, the Add button —
- * so the sheet can be matched against the real share sheet at a glance rather
- * than read.
+ * Each step shows the control to look for as a "menu chip" (share glyph,
+ * "Add to Home Screen" row, Add button) to match against the real menu.
  */
 interface Step {
   text: string;
@@ -37,8 +33,7 @@ const IOS_STEPS: Step[] = [
 
 const STEPS: Record<ManualInstallGuide, Step[]> = {
   ios: IOS_STEPS,
-  // The browser in hand cannot do it (old third-party browser or an in-app
-  // one), so Safari comes first and the rest is the same
+  // Old third-party or in-app browser: switch to Safari first
   'ios-safari-needed': [
     {
       text: 'Open this page in Safari',
@@ -67,9 +62,7 @@ export default function InstallGuideSheet({
 }) {
   const closeRef = useRef<HTMLButtonElement>(null);
 
-  // Escape + focus: the sheet is short, so focus lands on the one button and
-  // returns to the opener afterwards. No scroll lock — body is overflow:hidden
-  // already (globals.css) and the settings panel below scrolls on its own.
+  // Escape closes. Focus moves to the close button and returns to the opener.
   useEffect(() => {
     const opener = document.activeElement as HTMLElement | null;
     closeRef.current?.focus();
@@ -96,14 +89,13 @@ export default function InstallGuideSheet({
     >
       <div className="panel install-guide-panel" onClick={(e) => e.stopPropagation()}>
         <div className="install-guide-head">
-          {/* the real app icon, so what lands on the home screen is recognisable */}
           <img src="/icons/icon-192.png" alt="" width={56} height={56} className="install-guide-icon" />
           <div>
             <h2 id="install-guide-title">{appName} as an app</h2>
             <p className="hint">
               {mac
-                ? 'Add this site to your Dock. It then opens in its own window, like an app.'
-                : 'Add this site to your home screen. It then opens like an app, full screen.'}
+                ? 'Add this site to your Dock to open it in its own window.'
+                : 'Add this site to your home screen to open it full screen, like an app.'}
             </p>
           </div>
         </div>
@@ -125,8 +117,8 @@ export default function InstallGuideSheet({
 
         <p className="hint">
           {mac
-            ? 'The icon in your Dock opens this site as an app, without going through the App Store. The menu item is there in Safari on macOS Sonoma and later.'
-            : 'The icon on your home screen opens this site as an app, without going through the App Store.'}
+            ? 'Needs Safari on macOS Sonoma or later.'
+            : 'No App Store needed.'}
         </p>
 
         <div className="row">
@@ -140,7 +132,7 @@ export default function InstallGuideSheet({
   );
 }
 
-/** A system menu row as the person will see it: glyph, label, or both. */
+/** A system menu row: glyph, label, or both. */
 function MenuChip({
   icon,
   label,
@@ -148,7 +140,7 @@ function MenuChip({
 }: {
   icon?: React.ReactNode;
   label?: string;
-  /** the confirming "Add" button, blue like the real one */
+  /** Blue, like the system's confirming "Add" button. */
   accent?: boolean;
 }) {
   return (
@@ -163,8 +155,7 @@ function MenuChip({
   );
 }
 
-// Inline glyphs (no icon library in this app): the iOS share box, the
-// "add to home screen" plus square, Safari's compass and the macOS Dock.
+// Inline glyphs; the app has no icon library.
 const GLYPH = {
   width: 15,
   height: 15,

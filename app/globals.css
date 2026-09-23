@@ -24,8 +24,7 @@ body {
   height: 100%;
 }
 
-/* Dark base color so the safe-area / overscroll regions (e.g. behind the
-   iPhone home indicator) never flash white, in the browser or installed. */
+/* Dark base so safe-area and overscroll regions never flash white. */
 html {
   background: var(--bg);
 }
@@ -44,8 +43,7 @@ body {
   height: 100dvh;
   display: flex;
   flex-direction: column;
-  /* Base padding, plus safe-area insets so the shell clears the notch and
-     home indicator when installed/run as a standalone PWA (viewport-fit=cover). */
+  /* Safe-area insets clear the notch and home indicator (viewport-fit=cover). */
   padding: calc(clamp(14px, 2.4vmin, 28px) + env(safe-area-inset-top, 0px))
     calc(clamp(14px, 2.4vmin, 28px) + env(safe-area-inset-right, 0px))
     calc(clamp(14px, 2.4vmin, 28px) + env(safe-area-inset-bottom, 0px))
@@ -247,7 +245,7 @@ body {
   stroke-linecap: round;
   transition: stroke-dashoffset 0.6s ease, stroke 0.4s ease;
 }
-/* Scheduled (planned) arc: a fainter band sitting just outside the worked arc. */
+/* Planned arc: a fainter band just outside the worked arc. */
 .ring-sched {
   opacity: 0.38;
   stroke-width: 10;
@@ -473,8 +471,7 @@ body {
   color: var(--muted);
   font-weight: 600;
 }
-/* Scheduled (planned, not-yet-worked) block: dashed accent outline so it reads
-   as upcoming rather than logged time. */
+/* Planned, not-yet-worked block: dashed outline reads as upcoming. */
 .hist-item.sched {
   border-style: dashed;
   border-color: rgba(96, 165, 250, 0.5);
@@ -483,8 +480,8 @@ body {
 .hist-item.sched .hist-desc {
   color: var(--accent-soft);
 }
-/* Unreported gap: a divider line, deliberately *not* a card, so it reads as a
-   hole in the timeline rather than another tracked entry. */
+/* Unreported gap: a divider line, not a card, so it reads as a hole in the
+   timeline. */
 .gap-marker {
   display: flex;
   align-items: center;
@@ -681,8 +678,8 @@ body {
     display: none;
   }
 
-  /* ...but the Details button re-opens it as a centered overlay sheet, reusing
-     the Settings overlay aesthetic (dim + blur backdrop, scrollable card). */
+  /* ...but the Details button opens it as an overlay sheet, styled like
+     Settings. */
   .side-backdrop {
     position: fixed;
     inset: 0;
@@ -698,8 +695,7 @@ body {
     left: 50%;
     transform: translate(-50%, -50%);
     width: min(460px, calc(100% - 28px));
-    /* Leave room for the notch / Dynamic Island and home indicator; the sheet
-       is centred, so subtracting both insets keeps it clear top and bottom. */
+    /* Centred, so subtract both safe-area insets. */
     max-height: calc(
       100dvh - 48px - env(safe-area-inset-top, 0px) - env(safe-area-inset-bottom, 0px)
     );
@@ -709,8 +705,7 @@ body {
     border: 1px solid var(--line);
     border-radius: 20px;
   }
-  /* As an overlay the whole sheet scrolls as one column, so the history list
-     shouldn't claim flex space or scroll independently. */
+  /* As an overlay the whole sheet scrolls, not the history list alone. */
   .side.side-open .history-card {
     flex: 0 0 auto;
   }
@@ -756,8 +751,7 @@ body {
   backdrop-filter: blur(6px);
   display: grid;
   place-items: center;
-  /* Keep the centered panel clear of the notch / Dynamic Island and the home
-     indicator when the panel is tall (viewport-fit=cover). */
+  /* Keep a tall panel clear of the notch and home indicator. */
   padding: calc(20px + env(safe-area-inset-top, 0px))
     calc(20px + env(safe-area-inset-right, 0px))
     calc(20px + env(safe-area-inset-bottom, 0px))
@@ -769,8 +763,7 @@ body {
   border: 1px solid var(--line);
   border-radius: 20px;
   width: min(460px, 100%);
-  /* 100% of the safe-area-padded overlay cell, so the panel scrolls internally
-     rather than spilling under the status bar or home indicator. */
+  /* Fill the padded overlay cell and scroll inside it. */
   max-height: 100%;
   overflow: auto;
   padding: clamp(20px, 3vmin, 32px);
@@ -873,8 +866,7 @@ body {
   border-radius: 12px;
   padding: 12px 14px;
 }
-/* Direct child only: the title. A <strong> inside the description span must
-   stay inline (highlighted words, the (X)/(!) markers, example codes). */
+/* Direct child only (the title); a <strong> in the description stays inline. */
 .toggle .t-text > strong {
   display: block;
   font-size: 14px;
@@ -963,8 +955,7 @@ body {
   flex: 1 1 0;
   min-width: 0;
 }
-/* Date inputs render their own text dark by default in some engines; force the
-   app's light-on-dark scheme so they match the other fields. */
+/* Some engines render date inputs dark-on-light; match the other fields. */
 .field input[type='date'] {
   color-scheme: dark;
 }
@@ -973,10 +964,8 @@ body {
   font-size: 13px;
   font-weight: 600;
 }
-/* The signature block preview. The block itself is sized in points and drawn at
-   1pt = 1px (components/export/SignatureBlockPreview), so it appears at its
-   printed size; the frame around it just gives it the white page it will be
-   printed on and lets a wide block scroll rather than overflow the panel. */
+/* Signature block preview (components/export/SignatureBlockPreview), drawn
+   at 1pt = 1px on a white page. A wide block scrolls. */
 .sig-preview-frame {
   overflow-x: auto;
   border: 1px solid var(--line, #333);
@@ -987,9 +976,8 @@ body {
 .sig-preview {
   box-sizing: border-box;
   background: #fff;
-  /* The exported stamp is set in IBM Plex Sans, like the report it lands in.
-     Preferred here so the preview matches on a machine that has it; nothing is
-     downloaded for a preview, so elsewhere the system sans stands in. */
+  /* The exported stamp uses IBM Plex Sans. Used here if installed; the font
+     is not downloaded for the preview. */
   font-family: 'IBM Plex Sans', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
 }
 .sig-row {
@@ -1051,11 +1039,8 @@ body {
   .navbtn.details-btn {
     display: inline-flex;
   }
-  /* Where Details joins the row the labels stop fitting — five labelled buttons
-     (Details, Tracker, Workspace, Timesheet, Settings, in standalone mode) run
-     past the viewport and get clipped by body{overflow:hidden}. The workspace
-     name is the one to drop: the title above already names the workspace, and
-     the menu spells it out on open. */
+  /* With Details added, the labelled buttons overflow the row. Drop the
+     workspace name; the title already shows it. */
   .ws-switch-name {
     display: none;
   }
@@ -1066,8 +1051,7 @@ body {
     display: none;
   }
 }
-/* Icon-only buttons on the narrowest phones: tighten the row so a topbar with
-   the workspace switcher AND the tracker link still leaves the title room. */
+/* Narrowest phones: tighten the icon row so the title keeps room. */
 @media (max-width: 400px) {
   .topbar-actions {
     gap: 6px;
@@ -1075,12 +1059,10 @@ body {
 }
 
 /* ---------- Topbar: workspace quick switcher ---------- */
-/* The menu is anchored under the button on wide screens; below 560px the topbar
-   buttons are icon-only, so it becomes a bottom sheet instead (see the media
-   query at the end of this block) — comfortably reachable and thumb-sized. */
-/* Shrinkable, unlike the other topbar buttons: its label is the one piece of
-   variable-width text in the row, so it gives way (ellipsis) before a long
-   workspace name can push the row past the viewport. */
+/* A dropdown on wide screens; a bottom sheet below 560px (media query at the
+   end of this block). */
+/* Unlike the other topbar buttons this one shrinks, so a long workspace name
+   ellipsizes instead of overflowing the row. */
 .ws-switch {
   position: relative;
   flex: 0 1 auto;
@@ -1112,8 +1094,8 @@ body {
   line-height: 1;
 }
 
-/* Invisible on wide screens — it exists to catch the click that closes the
-   popover; on narrow ones it dims the page behind the sheet. */
+/* Catches the closing click. Invisible on wide screens; dims the page on
+   narrow ones. */
 .ws-switch-backdrop {
   position: fixed;
   inset: 0;
@@ -1243,8 +1225,7 @@ body {
 }
 
 /* ---------- Missing-billing-tag warning ---------- */
-/* On the dashboard timeline it's a quiet, *non-amber* nudge: visible but not
-   alarming. On the timesheet the same idea turns amber to demand a fix. */
+/* Quiet on the dashboard, amber on the timesheet. */
 .tag-warn {
   flex: 0 0 auto;
   color: var(--accent-soft);
@@ -1270,8 +1251,7 @@ body {
     calc(clamp(14px, 2.4vmin, 28px) + env(safe-area-inset-left, 0px));
   gap: clamp(12px, 2vmin, 20px);
 }
-/* The timesheet, unlike the single-screen dashboard, may exceed the viewport —
-   allow the page (and the table) to scroll. */
+/* Unlike the dashboard, the timesheet page scrolls. */
 body:has(.ts-page) {
   overflow: auto;
 }
@@ -1352,8 +1332,7 @@ body:has(.ts-page) {
   white-space: pre-wrap;
   word-break: break-word;
 }
-/* Marker on a description shortened by the max-length setting; the tooltip
-   carries the full text. */
+/* Marks a description shortened by the length limit; tooltip has the full text. */
 .ts-desc-cut {
   color: var(--amber);
   font-weight: 700;
@@ -1368,7 +1347,7 @@ body:has(.ts-page) {
 .ts-row-warn .ts-tag {
   background: rgba(245, 158, 11, 0.12);
 }
-/* Overtime (tracked but not billed) — muted, de-emphasised against billed rows. */
+/* Overtime (tracked, not billed): muted. */
 .ts-row-overtime td,
 .ts-row-overtime th {
   color: var(--muted);
@@ -1439,8 +1418,7 @@ body:has(.ts-page) {
 }
 
 /* ---------- Individual timesheet ---------- */
-/* The individual view is a list of day sections rather than one grid, so it
-   scrolls as a flex column of cards instead of a single table. */
+/* A scrolling column of per-day cards rather than one table. */
 .ind-scroll {
   display: flex;
   flex-direction: column;
@@ -1526,8 +1504,7 @@ body:has(.ts-page) {
 
 /* ---- Multi-project support ---- */
 
-/* The smallest project identifier on screen: tiny initials chips. Deliberately
-   low-key — least significant info, used only when several projects are tracked. */
+/* Initials chips, shown only when several projects are tracked. */
 .proj-chips {
   display: inline-flex;
   gap: 3px;
@@ -1551,8 +1528,7 @@ body:has(.ts-page) {
   line-height: 1.5;
 }
 
-/* Project-name prefix in the timesheet rows: muted so the billing tag still reads
-   as the primary key. */
+/* Project-name prefix in timesheet rows, muted so the billing tag leads. */
 .ts-proj {
   color: var(--muted);
   font-weight: 500;
@@ -1598,9 +1574,7 @@ body:has(.ts-page) {
 .proj-check-name {
   color: var(--text);
 }
-/* A selected project that's been archived at the source: kept in the list so it
-   can be unchecked, but muted — and once unchecked its box disables (re-adding
-   goes through the live project list only). */
+/* An archived selected project: muted, kept so it can be unchecked. */
 .proj-check-archived .proj-check-name {
   color: var(--muted, rgba(255, 255, 255, 0.55));
   font-style: italic;
@@ -1613,9 +1587,8 @@ body:has(.ts-page) {
 }
 
 /* ---------- Timesheet: history bar + week picker ---------- */
-/* The history bar sits under the topbar when a past week is shown: back to the
-   week list on the left, the snapshot status in the middle, manual refresh on
-   the right (past weeks never auto-refresh — they're a frozen snapshot). */
+/* Under the topbar for a past week: back link, snapshot status, manual
+   refresh. Past weeks never auto-refresh. */
 .ts-histbar {
   display: flex;
   align-items: center;
@@ -1679,7 +1652,7 @@ body:has(.ts-page) {
 }
 
 /* ---------- Workspaces (stored settings) ---------- */
-/* Settings-panel "Workspaces" block: reuses the .advanced collapsible shell. */
+/* Reuses the .advanced collapsible shell. */
 .ws-list {
   list-style: none;
   margin: 8px 0 12px;
@@ -1790,8 +1763,7 @@ body:has(.ts-page) {
 }
 
 /* ---------- Settings: linked billing codes ---------- */
-/* One card per linked project; the inputs wrap into a compact grid so the card
-   stays usable at the panel's narrow width. */
+/* One card per linked project; inputs wrap to fit the narrow panel. */
 .map-list {
   display: flex;
   flex-direction: column;
@@ -1834,7 +1806,7 @@ body:has(.ts-page) {
   flex: 0 0 auto;
   align-self: flex-end;
 }
-/* The linked project's own no-overtime contract: checkbox + weekly-cap hours. */
+/* The linked project's no-overtime checkbox and weekly cap. */
 .map-ot {
   display: flex;
   align-items: center;
@@ -1865,8 +1837,7 @@ body:has(.ts-page) {
   min-height: 100dvh;
   display: flex;
   flex-direction: column;
-  /* Full-width like .app and .ts-page — all three pages share the same shell,
-     so switching between them never reflows into a centered column. */
+  /* Full-width like .app and .ts-page, so switching pages doesn't reflow. */
   /* Safe-area insets for standalone PWA use (viewport-fit=cover). */
   padding: calc(clamp(14px, 2.4vmin, 28px) + env(safe-area-inset-top, 0px))
     calc(clamp(14px, 2.4vmin, 28px) + env(safe-area-inset-right, 0px))
@@ -2145,8 +2116,8 @@ body:has(.tracker-page) {
   border-color: var(--line);
   color: var(--muted);
 }
-/* A support-ticket code derived from the "[ticket] …" description — no stored
-   tag, so the chip reads as implicit (dashed) rather than missing. */
+/* Support-ticket code taken from a "[ticket] …" description. Dashed: implied,
+   not missing. */
 .tr-tag.derived {
   background: rgba(59, 130, 246, 0.06);
   border-style: dashed;
@@ -2269,11 +2240,8 @@ body:has(.tracker-page) {
   border-color: var(--red);
 }
 
-/* Post-deploy refresh hint (see components/UpdateHint.tsx). Persistent until
-   refreshed or dismissed, so it gets real controls instead of click-anywhere.
-   Sits above the MutationToast slot (bottom: 24px, ~2 lines tall at most) —
-   both are fixed bottom-center .toasts, and a persistent hint in the same
-   slot would paint over a transient mutation error and hide it. */
+/* Post-deploy refresh hint (components/UpdateHint.tsx). It persists, so it
+   sits above the MutationToast slot instead of covering mutation errors. */
 .toast.update {
   display: flex;
   align-items: center;
@@ -2481,16 +2449,14 @@ body:has(.imp-page) {
   }
 }
 
-/* The "a scan is in use" note sits directly under the file row it corrects, so
-   it reads as part of that control rather than as another paragraph of help. */
+/* Tucked under the file row it belongs to. */
 .sig-in-use {
   margin-top: 4px;
 }
 
-/* ----- Settings: "Install as an app" + the manual-install walkthrough
+/* ----- Settings: "Install as an app" and its walkthrough sheet
    (components/InstallAppBlock.tsx, InstallGuideSheet.tsx). The sheet reuses
-   the .overlay/.panel shell one layer above the settings overlay it was
-   opened from. ----- */
+   .overlay/.panel, one layer above Settings. ----- */
 .overlay.install-guide {
   z-index: 55;
 }
@@ -2557,7 +2523,7 @@ body:has(.imp-page) {
   line-height: 1.4;
   margin-top: 2px;
 }
-/* A system menu row as the person will see it on the share sheet. */
+/* A system menu row, as on the share sheet. */
 .menu-chip {
   display: inline-flex;
   align-items: center;
@@ -2572,7 +2538,7 @@ body:has(.imp-page) {
   background: var(--card2);
   border: 1px solid var(--line);
 }
-/* The confirming "Add" button, blue like the real one. */
+/* The blue "Add" confirm button. */
 .menu-chip.accent {
   color: #3d95ff;
   background: rgba(10, 122, 255, 0.14);

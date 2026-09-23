@@ -1,15 +1,8 @@
-// Content checks for the PWA install rules (lib/pwa.ts). Run with:
-//   npm run check:pwa
+// Checks for the PWA install rules in lib/pwa.ts. Run with `pnpm check:pwa`.
 //
-// The Settings "Install as an app" button has two behaviours — replay the
-// browser's own install prompt, or walk the person through the platform's
-// manual route — and the walkthrough has three variants. Which one applies is
-// decided from the user-agent string, and user-agent strings are exactly the
-// kind of input that looks right until a real device shows up: iPadOS Safari
-// claims to be a Mac, in-app browsers drop the Safari token, Safari on the
-// Mac never says which macOS it runs on. Each branch is pinned here against
-// a real string so a "small" regex tweak can't silently send iPhones to the
-// Dock instructions.
+// Each branch of manualInstallGuide is tested against a real user-agent
+// string. The traps: iPadOS Safari claims to be a Mac, in-app browsers drop
+// the Safari token, and Mac Safari never reports the macOS version.
 
 import assert from 'node:assert/strict';
 import { installResolveHooks } from './resolve-hooks.mjs';
@@ -63,11 +56,10 @@ const eq = (actual: unknown, expected: unknown, label: string) => {
 eq(guide(IPHONE_SAFARI, 5), 'ios', 'iPhone Safari');
 eq(guide(IPHONE_SAFARI_OLD, 5), 'ios', 'iPhone Safari, old iOS');
 
-// Third-party iOS browsers are trusted from 16.4, where the share sheet gained
-// the action…
+// Third-party iOS browsers get the share-sheet action from 16.4…
 eq(guide(IPHONE_CHROME, 5), 'ios', 'iPhone Chrome');
 eq(guide(IPHONE_CHROME_16_4, 5), 'ios', 'iPhone Chrome on 16.4 exactly');
-// …and sent to Safari first before that.
+// …and are sent to Safari before that.
 eq(guide(IPHONE_CHROME_16_3, 5), 'ios-safari-needed', 'iPhone Chrome on 16.3');
 eq(guide(IPHONE_FIREFOX_OLD, 5), 'ios-safari-needed', 'iPhone Firefox on 15.7');
 
@@ -79,15 +71,14 @@ eq(guide(MAC_SAFARI_17, 5), 'ios', 'iPad as Mac UA + touch');
 eq(guide(IPAD_OLD, 5), 'ios', 'old iPad');
 
 // A desktop-mode third-party browser on iPad hides the iPadOS version, so
-// the safe answer is Safari first.
+// send it to Safari.
 eq(guide(IPAD_DESKTOP_CHROME, 5), 'ios-safari-needed', 'iPad desktop-mode Chrome');
 
 // "Add to Dock" in Safari 17+ on a real Mac (the macOS version is not in the UA).
 eq(guide(MAC_SAFARI_17), 'mac-safari', 'Mac Safari 17');
 eq(guide(MAC_SAFARI_16), null, 'Mac Safari 16 has no install');
 
-// Where the browser fires beforeinstallprompt itself, the guide stays out of
-// the way and the button replays the native prompt instead.
+// Browsers that fire beforeinstallprompt get the native prompt, no guide.
 eq(guide(MAC_CHROME), null, 'Mac Chrome');
 eq(guide(ANDROID_CHROME, 5), null, 'Android Chrome');
 eq(guide(WINDOWS_EDGE), null, 'Windows Edge');
@@ -99,12 +90,10 @@ eq(guide(MAC_FIREFOX), null, 'Mac Firefox');
 eq(guide(IPHONE_SAFARI, 5, true), null, 'installed on iPhone');
 eq(guide(MAC_SAFARI_17, 0, true), null, 'installed on Mac');
 
-// maxTouchPoints defaults to "not a touch device": a bare Mac Safari 17 UA
-// with no touch information reads as a Mac, not an iPad.
+// maxTouchPoints defaults to 0, so a Mac Safari UA without it reads as a Mac.
 eq(manualInstallGuide({ userAgent: MAC_SAFARI_17, installed: false }), 'mac-safari', 'touch default');
 
-// The installed app's name: previews (beta.track.zicha.dev) install under
-// their own name so they can sit next to the production install.
+// Previews install under their own name.
 eq(appName('production').name, 'Toggl Quick View', 'prod name');
 eq(appName('production').shortName, 'Toggl QV', 'prod short name');
 eq(appName('preview').name, 'Toggl Quick View (beta)', 'preview name');

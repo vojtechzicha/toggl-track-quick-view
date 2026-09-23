@@ -1,38 +1,27 @@
 /**
- * PWA install rules: where the "Install as an app" entry in Settings can
- * trigger the browser's own install dialog, and where it has to walk the
- * person through the platform's manual route instead.
+ * Which install route the Settings "Install as an app" button offers.
  *
- * Chromium (Chrome, Edge, Android) fires `beforeinstallprompt`, and the
- * button replays it as the native dialog. WebKit never fires it — on iPhone
- * and iPad every browser is WebKit, and Safari on the Mac is too — so there
- * the same button opens a short walkthrough:
+ * Chromium fires `beforeinstallprompt` and the button replays it. WebKit
+ * (every browser on iPhone/iPad, Safari on the Mac) never fires it, so the
+ * button opens a walkthrough instead:
  *
- * - `ios`: Share button → "Add to Home Screen" from the browser the person
- *   is in. Safari has always had it; other browsers got it as a system
- *   share-sheet action in iOS 16.4. iPadOS Safari reports a Mac user agent,
- *   so a touch-capable "Macintosh" counts as iPadOS.
- * - `ios-safari-needed`: the same walkthrough, prefixed with "open this page
- *   in Safari" — for a third-party browser on iOS before 16.4 (or one whose
- *   iOS version the UA hides, the iPad desktop-mode case), and for in-app
- *   browsers (no `Safari/` token: Slack, Teams, mail apps), whose share
- *   menus never offer it on any version.
- * - `mac-safari`: File → "Add to Dock", available since Safari 17. Older
- *   Safari has no install at all, and Chromium-based Mac browsers take the
- *   native path, so both yield null. The command also needs macOS Sonoma,
- *   which the UA cannot tell: Safari freezes its platform string at
- *   "Mac OS X 10_15_7" on every macOS since Catalina, so Ventura and Sonoma
- *   look identical here. The sheet states the requirement instead of
- *   pretending to know.
+ * - `ios`: Share → "Add to Home Screen". Safari always had it; other iOS
+ *   browsers since 16.4. iPadOS Safari reports a Mac user agent, so a
+ *   touch-capable "Macintosh" counts as iPadOS.
+ * - `ios-safari-needed`: the same, after "open this page in Safari". For
+ *   third-party browsers before iOS 16.4 (or with the version hidden, as in
+ *   iPad desktop mode) and for in-app browsers (no `Safari/` token), which
+ *   never offer it.
+ * - `mac-safari`: File → "Add to Dock", Safari 17+. It also needs macOS
+ *   Sonoma, which the UA cannot show (Safari reports "Mac OS X 10_15_7" on
+ *   every macOS since Catalina), so the sheet states the requirement.
+ *   Older Safari has no install; Chromium on the Mac takes the native path.
  *
- * Inside the installed app there is nothing left to install, so the guide
- * never shows there. That state is `installed` here on purpose: the web
- * platform calls it "standalone display mode", but in this app "standalone"
- * already means the no-Toggl store mode (lib/source), and the two must not
- * be confused.
+ * Returns null inside the installed app. The platform calls that "standalone
+ * display mode"; here it is `installed`, because "standalone" already means
+ * the no-Toggl store mode (lib/source).
  *
- * Pure and browser-free, so `pnpm check:pwa` can pin every branch against
- * real user-agent strings.
+ * Pure, so `pnpm check:pwa` can test it against real user-agent strings.
  */
 
 export type ManualInstallGuide = 'ios' | 'ios-safari-needed' | 'mac-safari';
@@ -63,7 +52,7 @@ function shareSheetInstallAvailable(userAgent: string): boolean {
 }
 
 function iosGuide(userAgent: string): ManualInstallGuide {
-  // An in-app browser announces itself by leaving out the Safari token
+  // In-app browsers leave out the Safari token
   if (!/Safari\//.test(userAgent)) return 'ios-safari-needed';
   if (!NON_SAFARI_BROWSERS.test(userAgent)) return 'ios';
   return shareSheetInstallAvailable(userAgent) ? 'ios' : 'ios-safari-needed';
@@ -84,10 +73,8 @@ export function manualInstallGuide({
 }
 
 /**
- * The name the installed app carries. Previews live on a stable host of
- * their own (beta.track.zicha.dev, see README → Getting started), so a
- * preview install is a real thing that sits next to the production one on
- * the same home screen — it needs its own name to be told apart.
+ * Preview installs (beta.track.zicha.dev) get their own name so they can sit
+ * next to the production install on one home screen.
  */
 export function appName(vercelEnv: string | undefined | null): { name: string; shortName: string } {
   return vercelEnv === 'preview'

@@ -1,12 +1,9 @@
 'use client';
 
-// The one place SettingsPanel is wired to the track source. All three pages
-// (dashboard, timesheet, tracker) render the same settings surface; this
-// wrapper owns the mapping so they can't drift — most importantly the
-// standalone branch, where the panel's "Workspaces" section manages server
-// documents (create/recapture/rename/recolor/delete) instead of the
-// localStorage preset list, and stored workspaces double as the selectable
-// "projects".
+// Wires SettingsPanel to the track source, shared by every page so the
+// mapping can't drift. In standalone mode the "Workspaces" section manages
+// server documents instead of localStorage presets, and stored workspaces
+// double as the selectable "projects".
 
 import { useEffect, useState } from 'react';
 import SettingsPanel, { type SettingsPreset } from '@/components/SettingsPanel';
@@ -19,22 +16,19 @@ export default function AppSettings({
 }: {
   t: UseTrackSource;
   canClose: boolean;
-  // Opened from the topbar switcher's "Manage workspaces…": land on that
-  // section rather than at the top of the form.
+  // Opened from the topbar's "Manage workspaces…": scroll to that section.
   openWorkspaces?: boolean;
 }) {
   const { settings, persist, projects, mode } = t;
   const standalone = mode === 'standalone';
 
-  // The panel's form snapshots `settings` once on mount. When something
-  // replaces the settings underneath it, the form must re-seed or its next
-  // Save would clobber what was just applied — remounting on a changed key is
-  // what re-seeds it, and the notice tells the user why the fields moved.
+  // The form snapshots `settings` on mount. If settings are replaced
+  // underneath it, the next Save would overwrite them, so the panel remounts
+  // (changed key) and a notice explains why the fields changed.
   //
-  // Two sources: a settings-file import (formEpoch, bumped by the wiring
-  // below) and a document adopted from another device — a background pull or a
-  // conflict resolved in its favour — which the hook counts for us. The pull
-  // arrives with no user action at all, so nothing else would catch it.
+  // Two triggers: a settings-file import (formEpoch) and a document adopted
+  // from another device by a background pull or conflict resolution
+  // (sync.appliedEpoch).
   const [formEpoch, setFormEpoch] = useState(0);
   const [syncNotice, setSyncNotice] = useState<string | null>(null);
   const appliedEpoch = t.sync.appliedEpoch;
@@ -42,11 +36,10 @@ export default function AppSettings({
   useEffect(() => {
     if (appliedEpoch === seenAppliedEpoch) return;
     setSeenAppliedEpoch(appliedEpoch);
-    setSyncNotice('Settings from another device arrived — the fields below now show them.');
+    setSyncNotice('Settings updated from another device.');
   }, [appliedEpoch, seenAppliedEpoch]);
 
-  // In standalone mode the panel lists the server's workspaces where Toggl mode
-  // shows localStorage presets — same shape, different storage.
+  // Standalone mode lists server workspaces in place of localStorage presets.
   const presets: SettingsPreset[] = standalone
     ? t.workspaces.map((w) => ({
         id: String(w.id),
@@ -56,10 +49,9 @@ export default function AppSettings({
       }))
     : settings.presets;
 
-  // The workspace the current settings mirror (the "active" row in the panel's
-  // list) — excluded from the linked-codes picker: a workspace can't bill onto
-  // its own timesheet as a linked code. The hook resolves it by the recalled
-  // id, so twins that differ only in their export details stay distinct.
+  // The active workspace is excluded from the linked-codes picker: a workspace
+  // can't be a linked code on its own timesheet. Resolved by id, so twins that
+  // differ only in export details stay distinct.
   const activePresetId = t.activeWorkspace?.id ?? null;
   const activeWorkspaceId = standalone && activePresetId !== null ? Number(activePresetId) : null;
 
@@ -86,8 +78,7 @@ export default function AppSettings({
         refreshSec: settings.refreshSec,
         timesheetMode: settings.timesheetMode,
         exportName: settings.exportName,
-        // Edited in the export dialog, not in the panel — passed through so a
-        // Save (or storing a new workspace) carries the active set along.
+        // Edited in the export dialog; passed through so Save keeps them.
         exportFields: settings.exportFields,
       }}
       projects={projects}
@@ -99,9 +90,8 @@ export default function AppSettings({
       connecting={t.connecting}
       presets={presets}
       onPresetsChange={(next) => {
-        // Storing a workspace switches to it, and deleting the active one
-        // leaves nothing active — keep the recalled-id pointer honest either
-        // way, so export-detail writes land on the workspace on screen.
+        // Storing a workspace switches to it; deleting the active one clears
+        // the pointer. Export-detail writes go to the workspace on screen.
         const added = next.find((p) => !settings.presets.some((q) => q.id === p.id));
         const stillThere = next.some((p) => p.id === settings.activePresetId);
         persist({
@@ -120,8 +110,7 @@ export default function AppSettings({
       canClose={canClose}
       sync={t.sync}
       syncNotice={syncNotice}
-      // Choosing "remote" applies the other device's document, which bumps
-      // appliedEpoch — the effect above remounts the form and says so.
+      // "remote" bumps appliedEpoch, which remounts the form (see above).
       onSyncResolve={(choice) => t.sync.resolveConflict(choice)}
       onSyncPassword={(pw) => t.submitPassword(pw)}
       syncPwBusy={t.pwBusy}
@@ -130,7 +119,7 @@ export default function AppSettings({
       onImportFile={async (file) => {
         const err = await t.sync.importFile(file);
         if (!err) {
-          setSyncNotice('Settings file imported — everything below is now the imported setup.');
+          setSyncNotice('Settings file imported.');
           setFormEpoch((n) => n + 1);
         }
         return err;
@@ -149,8 +138,7 @@ export default function AppSettings({
                 color: ws.color,
                 value: ws.settings,
               };
-              // Creating a workspace switches to it — that's what makes the
-              // first-run flow land somewhere usable.
+              // Switch to the new workspace so first run lands somewhere usable
               persist(applyPreset(t.settings, preset, projects));
               return preset;
             }
@@ -172,10 +160,9 @@ export default function AppSettings({
           ? async (id) => {
               const wsId = Number(id);
               const ws = t.workspaces.find((w) => w.id === wsId);
-              // Cross-workspace integrity warning: other workspaces may still
-              // point at this one (a linked billing code, or a tracked
-              // selection). The server strips those references on delete —
-              // but only after the user knowingly agrees to break the links.
+              // Other workspaces may reference this one (linked billing code
+              // or tracked selection). The server strips those references on
+              // delete, so ask first.
               const referencing = t.workspaces.filter(
                 (w) =>
                   w.id !== wsId &&
@@ -185,9 +172,9 @@ export default function AppSettings({
               if (referencing.length > 0) {
                 const names = referencing.map((w) => `“${w.name}”`).join(', ');
                 const sure = window.confirm(
-                  `“${ws?.name ?? 'This workspace'}” is used by ${names} — as a linked ` +
-                    'billing code or a tracked workspace. Deleting it removes those links ' +
-                    'from their settings. Continue?'
+                  `“${ws?.name ?? 'This workspace'}” is used by ${names} as a linked ` +
+                    'billing code or tracked workspace. Deleting it removes those links. ' +
+                    'Continue?'
                 );
                 if (!sure) return false;
               }
@@ -195,7 +182,7 @@ export default function AppSettings({
               if (res === 'has-entries') {
                 const sure = window.confirm(
                   `“${ws?.name ?? 'This workspace'}” still has tracked time entries. ` +
-                    'Delete the workspace AND all its entries? This cannot be undone.'
+                    'Delete the workspace and all its entries? This cannot be undone.'
                 );
                 if (!sure) return false;
                 return (await t.deleteWorkspace(wsId, true)) === 'ok';

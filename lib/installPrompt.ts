@@ -1,17 +1,12 @@
 /**
- * Holds the browser's deferred install prompt for the Settings "Install as an
- * app" button.
+ * Holds Chromium's deferred `beforeinstallprompt` event for the Settings
+ * "Install as an app" button.
  *
- * Chromium fires `beforeinstallprompt` once, early in the page's life, long
- * before anyone opens Settings — a listener mounted with the settings panel
- * would miss it every time. So the event is caught by a component that lives
- * in the root layout (components/ServiceWorkerRegister.tsx) and parked here,
- * and the button reads it through `useSyncExternalStore`.
+ * The event fires once, early, long before Settings opens, so the root layout
+ * catches it (components/ServiceWorkerRegister.tsx) and parks it here.
  *
- * The event is kept, not cancelled: no `preventDefault()`, so the browser's
- * own install affordances (Chrome's omnibox icon, Android's banner) stay
- * exactly as they were. The Settings button is an extra way in, not the only
- * one — it sits behind a gear, so it should not be the sole entry either.
+ * It is not `preventDefault()`ed, so the browser's own install affordances
+ * (omnibox icon, Android banner) stay available.
  */
 
 export interface BeforeInstallPromptEvent extends Event {
@@ -45,12 +40,10 @@ export function getInstallPrompt(): BeforeInstallPromptEvent | null {
 }
 
 /**
- * Take the event out of the store to prompt with it. A
- * BeforeInstallPromptEvent can be prompted ONCE: after that `prompt()`
- * rejects, and a dismissed dialog fires no `appinstalled`, so keeping the
- * event would leave a button that looks live and does nothing. Consuming it
- * hides the button until the browser hands out a fresh event (Chromium does,
- * after a while, when the person dismissed rather than installed).
+ * Take the event out of the store to prompt with it. An event can be prompted
+ * once; after that `prompt()` rejects, and a dismissed dialog fires no
+ * `appinstalled`. Removing it hides the button until Chromium issues a new
+ * event.
  */
 export function consumeInstallPrompt(): BeforeInstallPromptEvent | null {
   const event = deferred;

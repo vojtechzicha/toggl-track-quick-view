@@ -4,14 +4,11 @@ import { useEffect } from 'react';
 import { captureInstallPrompt } from '@/lib/installPrompt';
 
 /**
- * Registers the pass-through service worker so the app can be installed as a
- * PWA. Renders nothing. The worker itself caches nothing (see public/sw.js),
- * so this does not add offline support — it only unlocks installability.
+ * Registers the pass-through service worker (public/sw.js), which makes the
+ * app installable. No offline support.
  *
- * It also parks the browser's `beforeinstallprompt` event for the Settings
- * "Install as an app" button (lib/installPrompt.ts): the event fires once,
- * early, so the listener has to live here in the root layout rather than in
- * the panel that gets opened later.
+ * Also starts capturing `beforeinstallprompt` (lib/installPrompt.ts). The
+ * event fires once, early, so the listener must live in the root layout.
  */
 export default function ServiceWorkerRegister() {
   useEffect(() => {
@@ -20,8 +17,7 @@ export default function ServiceWorkerRegister() {
 
     const register = () => {
       navigator.serviceWorker.register('/sw.js').catch((err) => {
-        // Non-fatal: the app works fine without the worker, it just may not
-        // show the install prompt on some browsers.
+        // Non-fatal: without the worker some browsers won't offer install
         console.error('Service worker registration failed:', err);
       });
     };
