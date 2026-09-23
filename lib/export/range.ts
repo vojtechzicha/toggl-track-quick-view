@@ -4,8 +4,7 @@
 // (Saturday-start), so a month export is rendered as the Saturday-weeks it spans —
 // `weeksInRange` enumerates them.
 
-import { startOfDay, startOfWeek } from '@/lib/calc';
-import { DAY_MS } from '@/lib/timesheet/constants';
+import { addDays, startOfDay, startOfWeek } from '@/lib/calc';
 
 export type ExportPreset =
   | 'current-week'
@@ -29,8 +28,6 @@ export interface DateRange {
   fromMs: number;
   toMs: number;
 }
-
-const WEEK_MS = 7 * DAY_MS;
 
 /** First instant (local midnight) of the month containing `d`. */
 export function startOfMonth(d: Date): Date {
@@ -57,11 +54,11 @@ export function resolvePreset(
   switch (preset) {
     case 'current-week': {
       const ws = startOfWeek(now).getTime();
-      return { fromMs: ws, toMs: ws + WEEK_MS };
+      return { fromMs: ws, toMs: addDays(ws, 7) };
     }
     case 'selected-week': {
       const ws = selectedWeekStart ?? startOfWeek(now).getTime();
-      return { fromMs: ws, toMs: ws + WEEK_MS };
+      return { fromMs: ws, toMs: addDays(ws, 7) };
     }
     case 'last-month': {
       const from = new Date(now.getFullYear(), now.getMonth() - 1, 1);
@@ -84,7 +81,7 @@ export function weeksInRange(fromMs: number, toMs: number): number[] {
   if (!(toMs > fromMs)) return [];
   const first = startOfWeek(new Date(fromMs)).getTime();
   const weeks: number[] = [];
-  for (let ws = first; ws < toMs; ws += WEEK_MS) weeks.push(ws);
+  for (let ws = first; ws < toMs; ws = addDays(ws, 7)) weeks.push(ws);
   return weeks;
 }
 
@@ -133,7 +130,7 @@ export function rangeFromInputs(fromStr: string, toStr: string): DateRange | nul
   const fromMs = fromDateInput(fromStr);
   const toDay = fromDateInput(toStr);
   if (fromMs == null || toDay == null) return null;
-  const toMs = toDay + DAY_MS; // make the end exclusive (include the whole `to` day)
+  const toMs = addDays(toDay, 1); // make the end exclusive (include the whole `to` day)
   if (!(toMs > fromMs)) return null;
   return { fromMs, toMs };
 }

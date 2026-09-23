@@ -21,7 +21,7 @@ import EntryRow from '@/components/tracker/EntryRow';
 import { billsByProject, durationSec, isRunning, prefixFor } from '@/components/tracker/util';
 import { useTrackSource, pollWindow } from '@/lib/useTrackSource';
 import { fetchStoreEntries } from '@/lib/source/standalone';
-import { startOfDay, startOfWeek, fmtHM, type TimeEntry } from '@/lib/calc';
+import { addDays, startOfDay, startOfWeek, fmtHM, type TimeEntry } from '@/lib/calc';
 
 const DAY_MS = 24 * 3600 * 1000;
 const CHUNK_MS = 14 * DAY_MS; // how much further back each scroll-load reaches
@@ -157,7 +157,7 @@ export default function TrackerPage() {
     const dayLabel = (dayStart: number) =>
       dayStart === todayStart
         ? 'Today'
-        : dayStart === todayStart - DAY_MS
+        : dayStart === addDays(todayStart, -1)
         ? 'Yesterday'
         : new Date(dayStart).toLocaleDateString(undefined, {
             weekday: 'short',
@@ -169,9 +169,9 @@ export default function TrackerPage() {
     const weekLabel = (ws: number) =>
       ws === thisWeek
         ? 'This week'
-        : ws === thisWeek - 7 * DAY_MS
+        : ws === addDays(thisWeek, -7)
         ? 'Last week'
-        : `${fmtDay(ws)} – ${fmtDay(ws + 6 * DAY_MS)}`;
+        : `${fmtDay(ws)} – ${fmtDay(addDays(ws, 6))}`;
 
     // Newest first; the running entry pins to the top of its (today's) group.
     const sorted = [...merged].sort((a, b) => {

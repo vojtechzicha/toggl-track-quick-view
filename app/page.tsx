@@ -19,8 +19,10 @@ import {
   projectSecondsInRange,
   scheduledLaterSeconds,
   coveringEntry,
+  addDays,
   dailyTargetSeconds,
   plannedTargetSeconds,
+  futureDaysShowPlan,
   continuousWorkSeconds,
   unreportedGaps,
   mergeIntervals,
@@ -131,7 +133,7 @@ export default function Page() {
     const inSel = (id: number | null) => id != null && projectIds.has(id);
     const now = new Date(nowMs);
     const dayStart = startOfDay(now).getTime();
-    const dayEnd = dayStart + 24 * 3600 * 1000;
+    const dayEnd = addDays(dayStart, 1);
 
     const trackedToday = projectSecondsInRange(norm, projectIds, dayStart, nowMs);
     const target = dailyTargetSeconds(
@@ -237,11 +239,10 @@ export default function Page() {
     const empty = { today: [] as TLItem[], yesterday: [] as TLItem[] };
     if (!nowMs) return empty;
     const norm = normalize(entries, nowMs, settings.timeOffTag);
-    const dayMs = 24 * 3600 * 1000;
     const maxBillSec = effectiveMaxBillableHours(settings) * 3600;
 
     const build = (dayStart: number, isToday: boolean): TLItem[] => {
-      const dayEnd = dayStart + dayMs;
+      const dayEnd = addDays(dayStart, 1);
       const liveCap = isToday ? Math.min(nowMs, dayEnd) : dayEnd;
       const dayEntries = entries
         // Time-off markers flag a holiday; they're not tracked work, so they
@@ -343,7 +344,7 @@ export default function Page() {
     };
 
     const todayStart = startOfDay(new Date(nowMs)).getTime();
-    const yesterdayStart = todayStart - dayMs;
+    const yesterdayStart = addDays(todayStart, -1);
     return {
       today: build(todayStart, true),
       yesterday: build(yesterdayStart, false),
@@ -366,10 +367,9 @@ export default function Page() {
     if (projectIds.size === 0 || !nowMs) return null;
     const norm = normalize(entries, nowMs, settings.timeOffTag);
     const repId = [...projectIds][0]; // a representative project for the projection
-    const dayMs = 24 * 3600 * 1000;
     const weekStart = startOfWeek(new Date(nowMs)).getTime();
     const todayStart = startOfDay(new Date(nowMs)).getTime();
-    const beforeThursday = new Date(nowMs).getDay() < 4; // Mon–Wed (Sun=0 counts as before)
+    const beforeThursday = futureDaysShowPlan(new Date(nowMs));
 
     const todayTarget = dailyTargetSeconds(
       new Date(todayStart),
@@ -384,7 +384,7 @@ export default function Page() {
     // and the running tail). The synthetic fill below must only make up whatever
     // those leave short of target, or today would be double-counted and future
     // days' targets would wrongly collapse to the floor.
-    const todayCovered = projectSecondsInRange(norm, projectIds, nowMs, todayStart + dayMs);
+    const todayCovered = projectSecondsInRange(norm, projectIds, nowMs, addDays(todayStart, 1));
     const shortfall = Math.max(0, todayTarget - todayLogged - todayCovered);
     const projected: NormEntry[] =
       shortfall > 0
@@ -411,8 +411,9 @@ export default function Page() {
       holiday: boolean;
     }[] = [];
     for (let i = 0; i < 7; i++) {
-      const dayStart = weekStart + i * dayMs;
-      const dayEnd = dayStart + dayMs;
+      // Calendar days, not 24h blocks: a week with a clock change has a 23h or 25h Sunday.
+      const dayStart = addDays(weekStart, i);
+      const dayEnd = addDays(weekStart, i + 1);
       const date = new Date(dayStart);
       const isWeekend = date.getDay() === 6 || date.getDay() === 0; // Sat/Sun
       const holiday = weekHolidays.has(i);
@@ -463,7 +464,7 @@ export default function Page() {
     if (!nowMs) return null;
     const norm = normalize(entries, nowMs, settings.timeOffTag);
     const todayStart = startOfDay(new Date(nowMs)).getTime();
-    const yesterdayStart = todayStart - 24 * 3600 * 1000;
+    const yesterdayStart = addDays(todayStart, -1);
     const today = unreportedGaps(norm, todayStart, nowMs);
     const yesterday = unreportedGaps(norm, yesterdayStart, todayStart);
     const sum = (gs: Gap[]) => gs.reduce((s, g) => s + g.seconds, 0);

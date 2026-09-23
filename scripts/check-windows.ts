@@ -29,8 +29,11 @@ registerHooks({
   },
 });
 
-const { startWindowUnitSeconds } = await import('../lib/calc.ts');
+const { startWindowUnitSeconds, addDays, startOfWeek, holidayDaysOfWeek, futureDaysShowPlan } =
+  await import('../lib/calc.ts');
 const { buildIndividualWeek } = await import('../lib/timesheet/individual.ts');
+const { buildSummaryGrid } = await import('../lib/timesheet/summary.ts');
+const { weeksInRange, rangeFromInputs } = await import('../lib/export/range.ts');
 
 let checks = 0;
 const eq = (a: unknown, b: unknown, msg: string) => {
@@ -214,4 +217,135 @@ for (const [tz, offsetMin] of TIMEZONES) {
   scenarios(tz);
 }
 
-console.log(`\u2713 ${checks} start-window checks passed`);
+// ---- clock changes: days are calendar days, not 24h blocks ----
+//
+// A week holding a clock change is 167h or 169h long. Stepping it in fixed 24h
+// blocks moved every entry within an hour of midnight onto the neighbouring day
+// (Sunday 23:30 billed on Monday in autumn, Monday 00:30 on Sunday in spring),
+// dropped Friday's last hour in autumn, and — through the week stepping — made
+// every later week of an export or the week picker start at Fri 23:00 or Sat 01:00.
+// Replayed in zones whose changes fall on different Sundays (and one with a
+// half-hour offset), with UTC as the no-change control.
+
+const DST_ZONES = ['UTC', 'Europe/Prague', 'America/New_York', 'Australia/Adelaide'];
+
+function dstScenarios(tz: string) {
+  const where = ` (TZ=${tz})`;
+  const offsetAt = (ms: number) => new Date(ms).getTimezoneOffset();
+  const isLocalMidnight = (ms: number) => {
+    const d = new Date(ms);
+    return d.getHours() === 0 && d.getMinutes() === 0;
+  };
+
+  // Every Saturday-week of 2026 by calendar, and the ones a clock change falls in.
+  const year = weeksInRange(new Date(2026, 0, 1).getTime(), new Date(2027, 0, 1).getTime());
+  ok(
+    year.every((ws) => new Date(ws).getDay() === 6 && isLocalMidnight(ws)),
+    'every week an export spans starts on a Saturday midnight' + where
+  );
+  const changeWeeks = year.filter((ws) => offsetAt(ws) !== offsetAt(addDays(ws, 7)));
+  eq(changeWeeks.length, tz === 'UTC' ? 0 : 2, 'the zone really has two clock changes' + where);
+
+  // The week picker steps back from the current week the same way.
+  const nov = startOfWeek(new Date(2026, 10, 20)).getTime();
+  for (let i = 1; i <= 52; i++) {
+    const ws = addDays(nov, -7 * i);
+    ok(new Date(ws).getDay() === 6 && isLocalMidnight(ws), `picker week -${i} starts on Saturday midnight` + where);
+  }
+
+  for (const ws of changeWeeks) {
+    const label = `week of ${new Date(ws).toDateString()}`;
+    for (let d = 0; d <= 7; d++) {
+      const day = addDays(ws, d);
+      ok(isLocalMidnight(day), `day ${d} of the ${label} starts at local midnight` + where);
+      eq(new Date(day).getDay(), (d + 6) % 7, `day ${d} of the ${label} is the right weekday` + where);
+    }
+
+    // Two entries a day — 00:30 and 23:30 — each tagged with the day it was
+    // tracked on, so any entry bucketed onto a neighbouring day shows up.
+    const entries = Array.from({ length: 7 }, (_, d) =>
+      [0, 23].map((h) => {
+        const start = new Date(addDays(ws, d));
+        start.setHours(h, 30, 0, 0);
+        return {
+          id: d * 2 + (h ? 1 : 0),
+          start: start.toISOString(),
+          stop: new Date(start.getTime() + 15 * 60e3).toISOString(),
+          duration: 900,
+          project_id: 1,
+          workspace_id: 1,
+          description: `d${d}`,
+          tags: [`D${d}`],
+        };
+      })
+    ).flat();
+    const common = {
+      entries,
+      weekStart: ws,
+      nowMs: addDays(ws, 8),
+      projects: [{ id: 1, name: 'Proj' }],
+      billingTagPrefix: 'D',
+      roundingSeconds: 900,
+      noOvertime: false,
+      weeklyHours: 40,
+    };
+
+    const grid = buildSummaryGrid(common)!;
+    const billed = [...grid.rounded.entries()].filter(([, v]) => v > 0);
+    eq(billed.length, 7, `the summary bills one cell per day in the ${label}` + where);
+    for (const [key, v] of billed) {
+      const [day, , tag] = key.split('|');
+      eq(tag, `D${day}`, `summary: ${tag}'s entries stay on their own day in the ${label}` + where);
+      eq(v, 1800, `summary: both of ${tag}'s entries are counted in the ${label}` + where);
+    }
+
+    const week = buildIndividualWeek({ ...common, maxBillableHours: 4, startWindowSeconds: null })!;
+    eq(week.days.map((d) => d.dayIdx), [0, 1, 2, 3, 4, 5, 6], `individual: all seven days in the ${label}` + where);
+    for (const d of week.days) {
+      eq(d.dateMs, addDays(ws, d.dayIdx), `individual: day ${d.dayIdx} is dated its own midnight` + where);
+      eq(
+        d.rows.map((r) => r.code),
+        [`D${d.dayIdx}`, `D${d.dayIdx}`],
+        `individual: day ${d.dayIdx} holds exactly its own two entries in the ${label}` + where
+      );
+    }
+
+    // A time-off marker late on the change day, or late on Friday, stays put.
+    const marker = (d: number) => {
+      const start = new Date(addDays(ws, d));
+      start.setHours(23, 30, 0, 0);
+      return { ...entries[0], start: start.toISOString(), tags: ['holiday'] };
+    };
+    eq(
+      [...holidayDaysOfWeek([marker(1), marker(6)], new Set([1]), ws, 'holiday')].sort(),
+      [1, 6],
+      `late time-off markers stay on their own day in the ${label}` + where
+    );
+
+    // The inclusive "to" day of a hand-picked range ends at the next midnight.
+    const sunday = new Date(addDays(ws, 1));
+    const iso = `${sunday.getFullYear()}-${String(sunday.getMonth() + 1).padStart(2, '0')}-${String(sunday.getDate()).padStart(2, '0')}`;
+    eq(rangeFromInputs(iso, iso)!.toMs, addDays(ws, 2), `a one-day range over the change Sunday` + where);
+  }
+}
+
+for (const tz of DST_ZONES) {
+  process.env.TZ = tz;
+  dstScenarios(tz);
+}
+
+// ---- the week summary's plan-vs-adaptive switch follows the Saturday week ----
+//
+// Saturday opens the week, so its future days show the plain plan like Sun–Wed.
+// Read off getDay() it counted as past Thursday (6 >= 4) and projected the
+// weekend's fallback target as worked time, inflating Thursday and Friday.
+{
+  const ws = new Date(2026, 8, 19, 10).getTime(); // Saturday
+  eq(
+    Array.from({ length: 7 }, (_, d) => futureDaysShowPlan(new Date(addDays(ws, d)))),
+    [true, true, true, true, true, false, false],
+    'the plan shows Sat–Wed, the adaptive targets Thu–Fri'
+  );
+}
+
+console.log(`✓ ${checks} start-window checks passed`);
