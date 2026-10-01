@@ -13,6 +13,7 @@ import {
   PRESET_LABELS,
   resolvePreset,
   clipRangeToStart,
+  wholeWeeksRange,
   rangeFromInputs,
   toDateInput,
 } from '@/lib/export/range';
@@ -157,6 +158,8 @@ export interface ExportDialogProps {
   noOvertime: boolean;
   /** Weekly cap (hours) the overtime trim reduces the billed total to. */
   weeklyHours: number;
+  /** When true, billed time moves between working weekdays so each reaches `weeklyHours / 5`. */
+  balanceWeekdays: boolean;
   /** Tag marking a time-off entry (its day is a holiday; the entry never exports). */
   timeOffTag: string;
   /** Linked billing codes (see lib/timesheet/mapping); empty = none. */
@@ -197,6 +200,7 @@ export default function ExportDialog({
   maxDescriptionLength,
   noOvertime,
   weeklyHours,
+  balanceWeekdays,
   timeOffTag,
   codeMappings,
   stripCodeParens,
@@ -515,15 +519,18 @@ export default function ExportDialog({
     setError(null);
     setDone(null);
     try {
-      // Reuse the on-screen week's entries when they cover the range; otherwise
-      // fetch it (through the server cache when one is configured).
+      // Load every week the range touches in full, so each week is built as on
+      // screen before the export keeps the range's days (wholeWeeksRange).
+      // Reuse the on-screen week's entries when they cover it; otherwise fetch
+      // (through the server cache when one is configured).
+      const load = wholeWeeksRange(range);
       const covered =
         prefetched != null &&
-        range.fromMs >= prefetched.fromMs &&
-        range.toMs <= prefetched.toMs;
+        load.fromMs >= prefetched.fromMs &&
+        load.toMs <= prefetched.toMs;
       const entries = covered
         ? (prefetched as NonNullable<typeof prefetched>).entries
-        : (await loadRange(new Date(range.fromMs).toISOString(), new Date(range.toMs).toISOString()))
+        : (await loadRange(new Date(load.fromMs).toISOString(), new Date(load.toMs).toISOString()))
             .entries;
       const doc = buildExportDoc({
         view,
@@ -540,6 +547,7 @@ export default function ExportDialog({
           format === 'pdf' && pdfDescs === 'full' ? null : maxDescriptionLength,
         noOvertime,
         weeklyHours,
+        balanceWeekdays,
         timeOffTag,
         codeMappings,
         stripCodeParens,

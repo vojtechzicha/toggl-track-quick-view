@@ -74,6 +74,7 @@ export default function AppSettings({
         startWindowHours: settings.startWindowHours,
         maxDescriptionLength: settings.maxDescriptionLength,
         noOvertime: settings.noOvertime,
+        balanceWeekdays: settings.balanceWeekdays,
         codeMappings: settings.codeMappings,
         refreshSec: settings.refreshSec,
         timesheetMode: settings.timesheetMode,

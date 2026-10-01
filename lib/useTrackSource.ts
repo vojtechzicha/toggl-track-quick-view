@@ -109,6 +109,7 @@ export const DEFAULTS: StoredSettings = {
   startWindowHours: null,
   maxDescriptionLength: null,
   noOvertime: false,
+  balanceWeekdays: false,
   codeMappings: [],
   refreshSec: DEFAULT_REFRESH_SEC,
   timesheetMode: 'summary',
@@ -140,6 +141,7 @@ export function applyPreset(
     timeOffTag: preset.value.timeOffTag ?? DEFAULT_TIME_OFF_TAG,
     stripCodeParens: preset.value.stripCodeParens ?? false,
     billByProject: preset.value.billByProject ?? false,
+    balanceWeekdays: preset.value.balanceWeekdays ?? false,
     // Export fields are per workspace, so one client's details never carry
     // over to another. A workspace saved before they were scoped has none and
     // inherits the current ones. One that has them keeps them, even if empty.

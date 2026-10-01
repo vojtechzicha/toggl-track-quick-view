@@ -64,6 +64,9 @@ export interface SettingsValue {
   // Cap each week's billed total at weeklyHours; the excess goes on an
   // "Overtime" line. "(X)" codes are trimmed first.
   noOvertime: boolean;
+  // Move billed time between working weekdays so each shows weeklyHours / 5
+  // (see lib/timesheet/balance). Weekends and time off keep their own hours.
+  balanceWeekdays: boolean;
   // Projects that carry another client's billing tags (own prefix and grid)
   // and bill here as one fixed code per day (see lib/timesheet/mapping).
   codeMappings: CodeMapping[];
@@ -106,6 +109,7 @@ export function toPresetValue(s: SettingsValue): PresetValue {
     startWindowHours: s.startWindowHours,
     maxDescriptionLength: s.maxDescriptionLength,
     noOvertime: s.noOvertime,
+    balanceWeekdays: s.balanceWeekdays,
     codeMappings: s.codeMappings,
     timesheetMode: s.timesheetMode,
     exportName: s.exportName,
@@ -151,6 +155,7 @@ export function presetMatches(value: PresetValue, s: SettingsValue): boolean {
     (value.startWindowHours ?? null) === (s.startWindowHours ?? null) &&
     (value.maxDescriptionLength ?? null) === (s.maxDescriptionLength ?? null) &&
     value.noOvertime === s.noOvertime &&
+    (value.balanceWeekdays ?? false) === (s.balanceWeekdays ?? false) &&
     maps(value.codeMappings) === maps(s.codeMappings) &&
     value.timesheetMode === s.timesheetMode &&
     value.exportName === s.exportName
@@ -351,6 +356,7 @@ export default function SettingsPanel({
     initial.maxDescriptionLength == null ? '' : String(initial.maxDescriptionLength)
   );
   const [noOvertime, setNoOvertime] = useState(initial.noOvertime);
+  const [balanceWeekdays, setBalanceWeekdays] = useState(!!initial.balanceWeekdays);
   const [codeMappings, setCodeMappings] = useState<CodeMapping[]>(initial.codeMappings ?? []);
   const [showAdvanced, setShowAdvanced] = useState(
     initial.maxBillableHours !== null ||
@@ -363,6 +369,7 @@ export default function SettingsPanel({
       initial.startWindowHours != null ||
       initial.maxDescriptionLength != null ||
       initial.noOvertime ||
+      !!initial.balanceWeekdays ||
       (initial.codeMappings?.length ?? 0) > 0 ||
       initial.exportName.trim() !== ''
   );
@@ -482,6 +489,7 @@ export default function SettingsPanel({
       startWindowHours: finalStartWindow,
       maxDescriptionLength: parseMaxDescLen(maxDescLenStr),
       noOvertime,
+      balanceWeekdays,
       codeMappings: cleanedMappings,
       refreshSec,
       timesheetMode,
@@ -599,6 +607,7 @@ export default function SettingsPanel({
     setStartWindowHours(v.startWindowHours ?? null);
     setMaxDescLenStr(v.maxDescriptionLength == null ? '' : String(v.maxDescriptionLength));
     setNoOvertime(v.noOvertime);
+    setBalanceWeekdays(!!v.balanceWeekdays);
     setCodeMappings(v.codeMappings ?? []);
     if (
       v.maxBillableHours !== null ||
@@ -611,6 +620,7 @@ export default function SettingsPanel({
       v.startWindowHours != null ||
       v.maxDescriptionLength != null ||
       v.noOvertime ||
+      !!v.balanceWeekdays ||
       (v.codeMappings?.length ?? 0) > 0 ||
       v.exportName.trim() !== ''
     ) {
@@ -1257,6 +1267,26 @@ export default function SettingsPanel({
                 type="checkbox"
                 checked={noOvertime}
                 onChange={(e) => setNoOvertime(e.target.checked)}
+              />
+              <span className="slider" />
+            </label>
+          </div>
+
+          <div className="toggle">
+            <div className="t-text">
+              <strong>Balance working days</strong>
+              <span>
+                Move billed time between Monday and Friday so each day shows{' '}
+                {fmtHoursLabel(previewWeekly / 5)} on the timesheet and exports. Long days give their
+                surplus to short days; the week&apos;s total doesn&apos;t change. Weekend and time-off
+                days keep their own hours, and time never crosses the 1st of a month.
+              </span>
+            </div>
+            <label className="switch">
+              <input
+                type="checkbox"
+                checked={balanceWeekdays}
+                onChange={(e) => setBalanceWeekdays(e.target.checked)}
               />
               <span className="slider" />
             </label>

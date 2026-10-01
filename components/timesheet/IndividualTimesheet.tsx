@@ -25,6 +25,7 @@ export default function IndividualTimesheet({
   maxDescriptionLength,
   noOvertime,
   weeklyHours,
+  balanceWeekdays,
   timeOffTag,
   codeMappings,
   stripCodeParens,
@@ -44,6 +45,7 @@ export default function IndividualTimesheet({
         maxDescriptionLength,
         noOvertime,
         weeklyHours,
+        balanceWeekdays,
         timeOffTag,
         codeMappings,
         stripCodeParens,
@@ -61,6 +63,7 @@ export default function IndividualTimesheet({
       maxDescriptionLength,
       noOvertime,
       weeklyHours,
+      balanceWeekdays,
       timeOffTag,
       codeMappings,
       stripCodeParens,
@@ -174,6 +177,22 @@ export default function IndividualTimesheet({
                     <td className="ind-code" colSpan={3}>
                       <span className="ts-overtime" title="Tracked but not billed: over the weekly cap">
                         Overtime (not billed)
+                      </span>
+                    </td>
+                  </tr>
+                )}
+                {day.balanced !== 0 && (
+                  <tr className="ts-row-overtime">
+                    <td className="ind-time ind-empty">—</td>
+                    <td className="ind-hours">
+                      {day.balanced > 0 ? `+${fmtHours(day.balanced)}` : `−${fmtHours(-day.balanced)}`}
+                    </td>
+                    <td className="ind-code" colSpan={3}>
+                      <span
+                        className="ts-overtime"
+                        title="Billed time moved between working days so each reaches the daily target. Already in the lines above."
+                      >
+                        Balanced ({day.balanced > 0 ? 'moved here from other days' : 'moved to other days'})
                       </span>
                     </td>
                   </tr>

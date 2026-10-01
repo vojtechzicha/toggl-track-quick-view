@@ -34,6 +34,9 @@ export interface TimesheetViewProps {
   // "Overtime" line (see lib/timesheet/overtime).
   noOvertime: boolean;
   weeklyHours: number;
+  // Move billed time between working weekdays so each reaches weeklyHours / 5
+  // (see lib/timesheet/balance).
+  balanceWeekdays: boolean;
   // Tag marking a time-off entry (see isTimeOffEntry in lib/calc).
   timeOffTag: string;
   // Projects billed as one fixed code per day (see lib/timesheet/mapping).

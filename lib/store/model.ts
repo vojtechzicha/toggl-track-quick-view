@@ -142,6 +142,7 @@ export function defaultWorkspaceSettings(): PresetValue {
     startWindowHours: null,
     maxDescriptionLength: null,
     noOvertime: false,
+    balanceWeekdays: false,
     codeMappings: [],
     timesheetMode: 'summary',
     exportName: '',

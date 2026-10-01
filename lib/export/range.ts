@@ -79,6 +79,19 @@ export function weeksInRange(fromMs: number, toMs: number): number[] {
   return weeks;
 }
 
+/**
+ * What an export loads for `range`: every week it touches, in full. The
+ * timesheet is built week by week (the overtime cap, balancing working days),
+ * so days outside the range still shape the days inside it. With the whole
+ * weeks loaded, buildExportDoc builds each week as the screen does and then
+ * keeps only the range's days, so the exported figures match the screen.
+ */
+export function wholeWeeksRange(range: DateRange): DateRange {
+  const weeks = weeksInRange(range.fromMs, range.toMs);
+  if (weeks.length === 0) return range;
+  return { fromMs: weeks[0], toMs: addDays(weeks[weeks.length - 1], 7) };
+}
+
 // ---- yyyy-mm-dd <-> ms helpers for the date inputs (parsed in local time) ----
 
 /** Format a local ms timestamp as a `yyyy-mm-dd` string for an <input type=date>. */

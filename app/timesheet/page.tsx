@@ -310,6 +310,7 @@ export default function TimesheetPage() {
             maxDescriptionLength={settings.maxDescriptionLength}
             noOvertime={settings.noOvertime}
             weeklyHours={settings.weeklyHours}
+            balanceWeekdays={settings.balanceWeekdays}
             timeOffTag={settings.timeOffTag}
             codeMappings={settings.codeMappings}
             stripCodeParens={settings.stripCodeParens}
@@ -357,6 +358,7 @@ export default function TimesheetPage() {
           maxDescriptionLength={settings.maxDescriptionLength}
           noOvertime={settings.noOvertime}
           weeklyHours={settings.weeklyHours}
+          balanceWeekdays={settings.balanceWeekdays}
           timeOffTag={settings.timeOffTag}
           codeMappings={settings.codeMappings}
           stripCodeParens={settings.stripCodeParens}

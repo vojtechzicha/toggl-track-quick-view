@@ -23,6 +23,7 @@ export default function SummaryTimesheet({
   maxDescriptionLength,
   noOvertime,
   weeklyHours,
+  balanceWeekdays,
   timeOffTag,
   codeMappings,
   stripCodeParens,
@@ -40,12 +41,13 @@ export default function SummaryTimesheet({
         maxDescriptionLength,
         noOvertime,
         weeklyHours,
+        balanceWeekdays,
         timeOffTag,
         codeMappings,
         stripCodeParens,
         billByProject,
       }),
-    [entries, weekStart, nowMs, projects, billingTagPrefix, roundingSeconds, maxDescriptionLength, noOvertime, weeklyHours, timeOffTag, codeMappings, stripCodeParens, billByProject]
+    [entries, weekStart, nowMs, projects, billingTagPrefix, roundingSeconds, maxDescriptionLength, noOvertime, weeklyHours, balanceWeekdays, timeOffTag, codeMappings, stripCodeParens, billByProject]
   );
 
   if (!grid || grid.rows.length === 0) {
@@ -162,6 +164,27 @@ export default function SummaryTimesheet({
                 );
               })}
               <td className="ts-cell ts-overtime-cell">−{fmtHours(grid.overtimeTotal)}</td>
+            </tr>
+          )}
+          {grid.balancedByDay.some((v) => v !== 0) && (
+            <tr className="ts-row-overtime">
+              <th className="ts-tag" scope="row">
+                <span
+                  className="ts-overtime"
+                  title="Billed time moved between working days so each reaches the daily target. Already in the rows above."
+                >
+                  Balanced
+                </span>
+              </th>
+              {grid.dayCols.map((d) => {
+                const secs = grid.balancedByDay[d] ?? 0;
+                return (
+                  <td key={d} className="ts-cell ts-overtime-cell">
+                    {secs > 0 ? `+${fmtHours(secs)}` : secs < 0 ? `−${fmtHours(-secs)}` : '—'}
+                  </td>
+                );
+              })}
+              <td className="ts-cell ts-overtime-cell">—</td>
             </tr>
           )}
           <tr>
