@@ -157,6 +157,8 @@ export interface ExportDialogProps {
   noOvertime: boolean;
   /** Weekly cap (hours) the overtime trim reduces the billed total to. */
   weeklyHours: number;
+  /** When true, billed time moves between working weekdays so each reaches `weeklyHours / 5`. */
+  balanceWeekdays: boolean;
   /** Tag marking a time-off entry (its day is a holiday; the entry never exports). */
   timeOffTag: string;
   /** Linked billing codes (see lib/timesheet/mapping); empty = none. */
@@ -197,6 +199,7 @@ export default function ExportDialog({
   maxDescriptionLength,
   noOvertime,
   weeklyHours,
+  balanceWeekdays,
   timeOffTag,
   codeMappings,
   stripCodeParens,
@@ -540,6 +543,7 @@ export default function ExportDialog({
           format === 'pdf' && pdfDescs === 'full' ? null : maxDescriptionLength,
         noOvertime,
         weeklyHours,
+        balanceWeekdays,
         timeOffTag,
         codeMappings,
         stripCodeParens,

@@ -409,6 +409,35 @@ way.
 The trimmed time appears in the views on a muted **Overtime (not billed)** line.
 Exports contain only the billed figures.
 
+### Balance working days
+
+For engagements that want every working day on the timesheet at the daily
+target. With **Balance working days** on (under Advanced, off by default), billed
+time moves between Monday and Friday so each day shows **Hours worked per
+week** ÷ 5 (8h at 40h), as little as needed:
+
+- Days above the target give their surplus to days below it. If the surplus
+  covers the shortfall, every short day reaches the target and the longest days
+  give first. Otherwise all the surplus moves and the shortest days are raised
+  first.
+- The week's billed total never changes. Turn on [Don't bill
+  overtime](#dont-bill-overtime) as well to also cap it, and a full week bills
+  exactly 8h a day: the trim runs first, then the balancing.
+- Weekend days and holidays take no part and keep their own hours. A week split
+  by the 1st of a month balances each part on its own, so no time crosses the
+  1st. When the weekly hours don't divide into whole rounding units, the spare
+  units go to the earliest days.
+- Moved time keeps its billing line and description. In the Summary view a day
+  gives from its largest rows; in the Individual view from its latest lines,
+  and the time becomes a new line on the receiving day at the same time of day,
+  or after that day's last line if that is later.
+- Linked-code lines never move (they must match the sub-client's sheet) but
+  count toward their day.
+
+The views show what moved on a muted **Balanced** line (`+1.00h` / `−1.00h`).
+Exports contain only the balanced figures. The logic is in
+`lib/timesheet/balance.ts`.
+
 ### Max description length
 
 For client systems that reject long descriptions. Set **Maximum description

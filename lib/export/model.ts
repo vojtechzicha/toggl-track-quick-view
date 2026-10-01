@@ -42,6 +42,8 @@ export interface ExportOptions {
   noOvertime: boolean;
   /** Weekly cap (hours) the overtime trim reduces the billed total to. */
   weeklyHours: number;
+  /** Move billed time between working weekdays so each reaches `weeklyHours / 5`. */
+  balanceWeekdays?: boolean;
   /** Tag marking a time-off entry (its day is a holiday; the entry never exports). */
   timeOffTag?: string;
   /** Linked billing codes (see lib/timesheet/mapping); empty/omitted = none. */
@@ -197,7 +199,7 @@ function codeLabel(
 }
 
 function buildSummaryDoc(o: ExportOptions): SummaryDoc {
-  const { range, entries, nowMs, projects, multi, billingTagPrefix, roundingSeconds, maxDescriptionLength, noOvertime, weeklyHours, timeOffTag, codeMappings, stripCodeParens, billByProject } = o;
+  const { range, entries, nowMs, projects, multi, billingTagPrefix, roundingSeconds, maxDescriptionLength, noOvertime, weeklyHours, balanceWeekdays, timeOffTag, codeMappings, stripCodeParens, billByProject } = o;
   const weeks: SummaryWeekBlock[] = [];
   // Billing by project, the code is the project name, so skip the prefix.
   const prefixProject = multi && !billByProject;
@@ -213,6 +215,7 @@ function buildSummaryDoc(o: ExportOptions): SummaryDoc {
       maxDescriptionLength,
       noOvertime,
       weeklyHours,
+      balanceWeekdays,
       timeOffTag,
       codeMappings,
       stripCodeParens,
@@ -311,7 +314,7 @@ function buildSummaryDoc(o: ExportOptions): SummaryDoc {
 }
 
 function buildIndividualDoc(o: ExportOptions): IndividualDoc {
-  const { range, entries, nowMs, projects, multi, maxBillableHours, billingTagPrefix, roundingSeconds, startWindowSeconds, maxDescriptionLength, noOvertime, weeklyHours, timeOffTag, codeMappings, stripCodeParens, billByProject } = o;
+  const { range, entries, nowMs, projects, multi, maxBillableHours, billingTagPrefix, roundingSeconds, startWindowSeconds, maxDescriptionLength, noOvertime, weeklyHours, balanceWeekdays, timeOffTag, codeMappings, stripCodeParens, billByProject } = o;
   const nameById = new Map(projects.map((p) => [p.id, p.name]));
   const days: IndividualDayBlock[] = [];
   // Billing by project, the code is the project name, so skip the prefix.
@@ -330,6 +333,7 @@ function buildIndividualDoc(o: ExportOptions): IndividualDoc {
       maxDescriptionLength,
       noOvertime,
       weeklyHours,
+      balanceWeekdays,
       timeOffTag,
       codeMappings,
       stripCodeParens,

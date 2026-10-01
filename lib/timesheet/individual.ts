@@ -14,6 +14,7 @@ import {
 } from '@/lib/calc';
 import type { SelectedProject } from '@/components/SettingsPanel';
 import { allocateOvertimeTrim, weekSegments } from './overtime';
+import { planBalance, segmentTargets, type BalanceCell } from './balance';
 import {
   addToMappedAgg,
   entryBilling,
@@ -76,6 +77,9 @@ export interface IndividualDay {
   overlaps: string[];
   // Seconds trimmed from this day by the overtime cap. Not part of `total`.
   overtime: number;
+  // Billed seconds this day gained (positive) or gave (negative) when
+  // balancing working days. Already part of `total`.
+  balanced: number;
   // True when the day has a time-off entry.
   holiday: boolean;
 }
@@ -104,6 +108,9 @@ export interface IndividualInput {
   // time is shown as an "Overtime" line. When false, `weeklyHours` is unused.
   noOvertime: boolean;
   weeklyHours: number;
+  // Move billed time between working weekdays so each reaches weeklyHours / 5
+  // (see lib/timesheet/balance). Absent means off.
+  balanceWeekdays?: boolean;
   // Tag marking a time-off entry (see isTimeOffEntry). Empty or absent means
   // the default.
   timeOffTag?: string;
@@ -345,7 +352,8 @@ function classifyDay(
  * coarser than the rounding unit this leaves a gap instead of an off-grid start.
  *
  * `total` excludes warning rows, matching the export, which omits them.
- * `overtimeStripped` is the time trimmed from this day, in seconds.
+ * `overtimeStripped` is the time trimmed from this day, and `balanced` the time
+ * it gained or gave when balancing, in seconds.
  */
 function finalizeDay(
   dayIdx: number,
@@ -353,6 +361,7 @@ function finalizeDay(
   { bill, warnRows, overlaps }: ClassifiedDay,
   windowMs: number,
   overtimeStripped: number,
+  balanced: number,
   maxDescLen: number | null | undefined,
   holiday: boolean
 ): IndividualDay {
@@ -387,7 +396,7 @@ function finalizeDay(
 
   const rows = [...billKept, ...warnRows];
   const total = billKept.reduce((s, r) => s + r.rounded, 0);
-  return { dayIdx, dateMs, rows, total, overlaps, overtime: overtimeStripped, holiday };
+  return { dayIdx, dateMs, rows, total, overlaps, overtime: overtimeStripped, balanced, holiday };
 }
 
 /**
@@ -407,6 +416,7 @@ export function buildIndividualWeek({
   maxDescriptionLength,
   noOvertime,
   weeklyHours,
+  balanceWeekdays,
   timeOffTag,
   codeMappings,
   stripCodeParens,
@@ -533,6 +543,53 @@ export function buildIndividualWeek({
     }
   }
 
+  // Balance the working days (see lib/timesheet/balance). A day gives from its
+  // latest lines first. The time becomes a new line on the receiving day, with
+  // the same code and description, at the same time of day or after that day's
+  // last line, whichever is later. Linked blocks count toward their day but
+  // never move.
+  const balancedByDay = new Array<number>(7).fill(0);
+  if (balanceWeekdays && weeklyHours > 0) {
+    for (const seg of weekSegments(weekStart, weeklyHours, roundingSeconds, holidays)) {
+      const targets = segmentTargets(seg, holidays);
+      const lines: { row: Row; day: number }[] = [];
+      const balCells: BalanceCell[] = [];
+      for (const day of targets.keys()) {
+        for (const row of [...classified[day].bill].reverse()) {
+          const units = Math.round(row.rounded / roundingSeconds);
+          if (units <= 0) continue;
+          lines.push({ row, day });
+          balCells.push({ day, units, fixed: row.fixed });
+        }
+      }
+      for (const m of planBalance(balCells, targets)) {
+        const { row, day } = lines[m.cell];
+        const secs = m.units * roundingSeconds;
+        row.rounded -= secs;
+        balancedByDay[day] -= secs;
+        balancedByDay[m.toDay] += secs;
+        // Appended, so finalizeDay packs it after the day's existing lines.
+        const at = new Date(addDays(weekStart, m.toDay));
+        const src = new Date(row.groupStartMs);
+        at.setHours(src.getHours(), src.getMinutes(), src.getSeconds(), src.getMilliseconds());
+        classified[m.toDay].bill.push({
+          key: `${row.key}>${m.toDay}`,
+          kind: 'bill',
+          code: row.code,
+          projId: row.projId,
+          seconds: secs,
+          trimmableSeconds: 0,
+          noTrimSeconds: 0,
+          rounded: secs,
+          descs: [...row.descs],
+          desc: '',
+          descTruncated: false,
+          groupStartMs: at.getTime(),
+        });
+      }
+    }
+  }
+
   const days = classified
     .map((c, dayIdx) =>
       finalizeDay(
@@ -541,6 +598,7 @@ export function buildIndividualWeek({
         c,
         windowMs,
         overtimeByDay[dayIdx],
+        balancedByDay[dayIdx],
         maxDescriptionLength,
         holidays.has(dayIdx)
       )

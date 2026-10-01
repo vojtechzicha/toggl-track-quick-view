@@ -12,6 +12,7 @@ import {
 } from '@/lib/calc';
 import type { SelectedProject } from '@/components/SettingsPanel';
 import { allocateOvertimeTrimPerDay, weekSegments } from './overtime';
+import { planBalance, segmentTargets, type BalanceCell } from './balance';
 import {
   addToMappedAgg,
   entryBilling,
@@ -66,6 +67,11 @@ export interface SummaryGrid {
   overtimeByDay: number[];
   /** Seconds trimmed by the overtime cap this week. */
   overtimeTotal: number;
+  /**
+   * Billed seconds each day index gained (positive) or gave (negative) when
+   * balancing working days. All zero when balancing is off.
+   */
+  balancedByDay: number[];
   /** Holiday day indices (0=Sat … 6=Fri) this week. */
   holidays: Set<number>;
 }
@@ -85,6 +91,9 @@ export interface SummaryInput {
   // time is reported separately. When false, `weeklyHours` is unused.
   noOvertime: boolean;
   weeklyHours: number;
+  // Move billed time between working weekdays so each reaches weeklyHours / 5
+  // (see lib/timesheet/balance). Absent means off.
+  balanceWeekdays?: boolean;
   // Tag marking a time-off entry (see isTimeOffEntry). Empty or absent means
   // the default.
   timeOffTag?: string;
@@ -117,6 +126,7 @@ export function buildSummaryGrid({
   maxDescriptionLength,
   noOvertime,
   weeklyHours,
+  balanceWeekdays,
   timeOffTag,
   codeMappings,
   stripCodeParens,
@@ -329,6 +339,47 @@ export function buildSummaryGrid({
     }
   }
 
+  // Balance the working days (see lib/timesheet/balance). A day gives from its
+  // largest lines first; the time moves to the same row on the receiving day,
+  // with its descriptions. Linked rows count toward their day but never move.
+  const balancedByDay = new Array<number>(7).fill(0);
+  if (balanceWeekdays && weeklyHours > 0) {
+    for (const seg of weekSegments(weekStart, weeklyHours, roundingSeconds, holidays)) {
+      const targets = segmentTargets(seg, holidays);
+      const keys: { day: number; row: string }[] = [];
+      const balCells: BalanceCell[] = [];
+      for (const d of targets.keys()) {
+        const dayCells = tagRows
+          .map((r) => ({
+            row: r,
+            units: Math.round((rounded.get(`${d}|${r}`) ?? 0) / roundingSeconds),
+          }))
+          .filter((c) => c.units > 0)
+          .sort((a, b) => b.units - a.units);
+        for (const c of dayCells) {
+          keys.push({ day: d, row: c.row });
+          balCells.push({ day: d, units: c.units, fixed: mappedRows.has(c.row) });
+        }
+      }
+      for (const m of planBalance(balCells, targets)) {
+        const { day, row } = keys[m.cell];
+        const secs = m.units * roundingSeconds;
+        const fromKey = `${day}|${row}`;
+        const toKey = `${m.toDay}|${row}`;
+        rounded.set(fromKey, (rounded.get(fromKey) ?? 0) - secs);
+        rounded.set(toKey, (rounded.get(toKey) ?? 0) + secs);
+        balancedByDay[day] -= secs;
+        balancedByDay[m.toDay] += secs;
+        let to = cells.get(toKey);
+        if (!to) {
+          to = { descs: [], desc: '', descTruncated: false, seconds: 0, trimmableSeconds: 0, noTrimSeconds: 0 };
+          cells.set(toKey, to);
+        }
+        for (const desc of cells.get(fromKey)?.descs ?? []) addDesc(to, desc);
+      }
+    }
+  }
+
   // Day and grand totals exclude warning rows, matching the export, which omits
   // them. Row totals include every row so the view can show warning hours.
   const dayTotals = dayCols.map((d) =>
@@ -361,6 +412,7 @@ export function buildSummaryGrid({
     grandTotal,
     overtimeByDay,
     overtimeTotal,
+    balancedByDay,
     holidays,
   };
 }

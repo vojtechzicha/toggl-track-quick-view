@@ -27,6 +27,7 @@ pnpm db / db:stop     # Start / stop only MongoDB
 pnpm check            # All checks below. No network, no database.
 pnpm check:money      # Money/allocation arithmetic
 pnpm check:codes      # Billing codes
+pnpm check:balance    # Balance working days
 pnpm check:windows    # Start windows and DST boundaries (reassigns process.env.TZ)
 pnpm check:export     # Export scope
 pnpm check:templates  # PDF template registry (app + pack)
