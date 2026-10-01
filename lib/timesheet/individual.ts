@@ -14,7 +14,7 @@ import {
 } from '@/lib/calc';
 import type { SelectedProject } from '@/components/SettingsPanel';
 import { allocateOvertimeTrim, weekSegments } from './overtime';
-import { planBalance, segmentTargets, type BalanceCell } from './balance';
+import { planBalance, segmentTargets, type BalanceCell, type BalanceRange } from './balance';
 import {
   addToMappedAgg,
   entryBilling,
@@ -111,6 +111,9 @@ export interface IndividualInput {
   // Move billed time between working weekdays so each reaches weeklyHours / 5
   // (see lib/timesheet/balance). Absent means off.
   balanceWeekdays?: boolean;
+  // Only days starting inside this range are balanced (an export's range, whose
+  // entries were loaded for it alone). Absent means the whole week.
+  balanceRange?: BalanceRange;
   // Tag marking a time-off entry (see isTimeOffEntry). Empty or absent means
   // the default.
   timeOffTag?: string;
@@ -417,6 +420,7 @@ export function buildIndividualWeek({
   noOvertime,
   weeklyHours,
   balanceWeekdays,
+  balanceRange,
   timeOffTag,
   codeMappings,
   stripCodeParens,
@@ -551,7 +555,10 @@ export function buildIndividualWeek({
   const balancedByDay = new Array<number>(7).fill(0);
   if (balanceWeekdays && weeklyHours > 0) {
     for (const seg of weekSegments(weekStart, weeklyHours, roundingSeconds, holidays)) {
-      const targets = segmentTargets(seg, holidays);
+      const targets = segmentTargets(seg, holidays, (d) => {
+        const dayMs = addDays(weekStart, d);
+        return !balanceRange || (dayMs >= balanceRange.fromMs && dayMs < balanceRange.toMs);
+      });
       const lines: { row: Row; day: number }[] = [];
       const balCells: BalanceCell[] = [];
       for (const day of targets.keys()) {

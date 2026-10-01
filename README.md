@@ -425,8 +425,10 @@ week** ÷ 5 (8h at 40h), as little as needed:
   exactly 8h a day: the trim runs first, then the balancing.
 - Weekend days and holidays take no part and keep their own hours. A week split
   by the 1st of a month balances each part on its own, so no time crosses the
-  1st. When the weekly hours don't divide into whole rounding units, the spare
-  units go to the earliest days.
+  1st. An export of a range that starts or ends mid-week (a custom range, or one
+  clipped to the start date) balances only the days inside it. Week and month
+  presets match the screen. When the weekly hours don't divide into whole
+  rounding units, the spare units go to the earliest days.
 - Moved time keeps its billing line and description. In the Summary view a day
   gives from its largest rows; in the Individual view from its latest lines,
   and the time becomes a new line on the receiving day at the same time of day,

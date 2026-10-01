@@ -223,6 +223,38 @@ const week = [
   );
 }
 
+// An export of a mid-week range loads only that range's entries. Days outside it
+// must not soak up time the export then drops.
+{
+  const midweek = [
+    entry(WEEK, 2, 8, 8, 'D1', 'a'), // Mon, outside the range
+    entry(WEEK, 4, 8, 4, 'D1', 'a'),
+    entry(WEEK, 4, 13, 4, 'D1', 'a'),
+    entry(WEEK, 4, 17, 2, 'D1', 'a'), // Wed 10h
+    entry(WEEK, 5, 8, 4, 'D1', 'a'),
+    entry(WEEK, 5, 13, 2, 'D1', 'a'), // Thu 6h
+    entry(WEEK, 6, 8, 4, 'D1', 'a'),
+    entry(WEEK, 6, 13, 4, 'D1', 'a'), // Fri 8h
+  ];
+  const range = { fromMs: dayAt(WEEK, 4, 0), toMs: dayAt(WEEK, 7, 0) }; // Wed–Fri
+  const loaded = midweek.filter((e) => new Date(e.start).getTime() >= range.fromMs);
+  const common = { ...base, entries: loaded, balanceWeekdays: true, range, multi: false, title: 'T', personName: '' };
+  const summary = buildExportDoc({ ...common, view: 'summary' });
+  eq(
+    summary.view === 'summary' && summary.weeks[0].dayTotals,
+    [8 * H, 8 * H, 8 * H],
+    'a Wed–Fri summary export balances among its own days'
+  );
+  eq(summary.grandTotal, 24 * H, 'and keeps every tracked hour');
+  const individual = buildExportDoc({ ...common, view: 'individual' });
+  eq(
+    individual.view === 'individual' && individual.days.map((d) => d.total / H),
+    [8, 8, 8],
+    'so does the individual export'
+  );
+  eq(individual.grandTotal, 24 * H, 'with every tracked hour');
+}
+
 // With "Don't bill overtime": trimmed to the cap first, then balanced.
 {
   const over = [

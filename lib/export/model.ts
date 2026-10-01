@@ -216,6 +216,9 @@ function buildSummaryDoc(o: ExportOptions): SummaryDoc {
       noOvertime,
       weeklyHours,
       balanceWeekdays,
+      // Entries were loaded for the range only, so days outside it would read
+      // as empty and soak up time that the export then drops.
+      balanceRange: range,
       timeOffTag,
       codeMappings,
       stripCodeParens,
@@ -334,6 +337,9 @@ function buildIndividualDoc(o: ExportOptions): IndividualDoc {
       noOvertime,
       weeklyHours,
       balanceWeekdays,
+      // Entries were loaded for the range only, so days outside it would read
+      // as empty and soak up time that the export then drops.
+      balanceRange: range,
       timeOffTag,
       codeMappings,
       stripCodeParens,
