@@ -425,10 +425,11 @@ week** ÷ 5 (8h at 40h), as little as needed:
   exactly 8h a day: the trim runs first, then the balancing.
 - Weekend days and holidays take no part and keep their own hours. A week split
   by the 1st of a month balances each part on its own, so no time crosses the
-  1st. An export of a range that starts or ends mid-week (a custom range, or one
-  clipped to the start date) balances only the days inside it. Week and month
-  presets match the screen. When the weekly hours don't divide into whole
-  rounding units, the spare units go to the earliest days.
+  1st. When the weekly hours don't divide into whole rounding units, the spare
+  units go to the earliest days.
+- An export of part of a week shows its days exactly as the screen does (see
+  [Exports](#exports)), even when time moved to or from a day outside the
+  range.
 - Moved time keeps its billing line and description. In the Summary view a day
   gives from its largest rows; in the Individual view from its latest lines,
   and the time becomes a new line on the receiving day at the same time of day,
@@ -500,6 +501,12 @@ Toggl project. The logic is in `lib/timesheet/mapping.ts`.
 
 The timesheet exports to CSV, XLSX and PDF. Exports use the same figures as the
 view.
+
+An export loads every week its range touches in full, builds each week as the
+screen does, and then keeps only the range's days. A range that starts or ends
+mid-week (a custom range, or a preset clipped to the start date) therefore shows
+each day exactly as the screen does, including the overtime cap and balanced
+days; the range only decides which days are listed.
 
 ### PDF templates
 

@@ -23,6 +23,11 @@ export type RateBasis = 'hourly' | 'md';
 export interface ExportOptions {
   view: ExportView;
   range: DateRange;
+  /**
+   * Entries for every week the range touches, in full (wholeWeeksRange). Each
+   * week is built from all of them, as on screen, before the range's days are
+   * kept; with only the range's own entries, a mid-week range would differ.
+   */
   entries: TimeEntry[];
   nowMs: number;
   projects: SelectedProject[];
@@ -216,9 +221,6 @@ function buildSummaryDoc(o: ExportOptions): SummaryDoc {
       noOvertime,
       weeklyHours,
       balanceWeekdays,
-      // Entries were loaded for the range only, so days outside it would read
-      // as empty and soak up time that the export then drops.
-      balanceRange: range,
       timeOffTag,
       codeMappings,
       stripCodeParens,
@@ -337,9 +339,6 @@ function buildIndividualDoc(o: ExportOptions): IndividualDoc {
       noOvertime,
       weeklyHours,
       balanceWeekdays,
-      // Entries were loaded for the range only, so days outside it would read
-      // as empty and soak up time that the export then drops.
-      balanceRange: range,
       timeOffTag,
       codeMappings,
       stripCodeParens,

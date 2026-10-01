@@ -31,6 +31,7 @@ const { planBalance, segmentTargets } = await import('../lib/timesheet/balance.t
 const { buildSummaryGrid } = await import('../lib/timesheet/summary.ts');
 const { buildIndividualWeek } = await import('../lib/timesheet/individual.ts');
 const { buildExportDoc } = await import('../lib/export/model.ts');
+const { wholeWeeksRange } = await import('../lib/export/range.ts');
 
 let checks = 0;
 const eq = (a: unknown, b: unknown, msg: string) => {
@@ -223,36 +224,84 @@ const week = [
   );
 }
 
-// An export of a mid-week range loads only that range's entries. Days outside it
-// must not soak up time the export then drops.
+// An export of a range that starts or ends mid-week shows exactly the screen's
+// figures for its days. The dialog loads the whole weeks (wholeWeeksRange) and
+// the export keeps only the range's days.
 {
+  const NEXT = dayAt(WEEK, 7, 0);
   const midweek = [
-    entry(WEEK, 2, 8, 8, 'D1', 'a'), // Mon, outside the range
+    entry(WEEK, 2, 8, 8, 'D1', 'a'), // Mon 8h
+    entry(WEEK, 3, 8, 4, 'D2', 'b'),
+    entry(WEEK, 3, 13, 2, 'D2', 'b'), // Tue 6h
     entry(WEEK, 4, 8, 4, 'D1', 'a'),
-    entry(WEEK, 4, 13, 4, 'D1', 'a'),
-    entry(WEEK, 4, 17, 2, 'D1', 'a'), // Wed 10h
+    entry(WEEK, 4, 13, 4, 'D3', 'c'),
+    entry(WEEK, 4, 17, 2, 'D3', 'c'), // Wed 10h
     entry(WEEK, 5, 8, 4, 'D1', 'a'),
-    entry(WEEK, 5, 13, 2, 'D1', 'a'), // Thu 6h
+    entry(WEEK, 5, 13, 4, 'D1', 'a'), // Thu 8h
     entry(WEEK, 6, 8, 4, 'D1', 'a'),
-    entry(WEEK, 6, 13, 4, 'D1', 'a'), // Fri 8h
+    entry(WEEK, 6, 13, 3, 'D1', 'a'), // Fri 7h
+    entry(NEXT, 2, 8, 4, 'D1', 'a'), // the next Monday
+    entry(NEXT, 3, 8, 4, 'D1', 'a'),
+    entry(NEXT, 3, 13, 4, 'D1', 'a'),
+    entry(NEXT, 3, 17, 2, 'D1', 'a'), // the next Tuesday, 10h
   ];
-  const range = { fromMs: dayAt(WEEK, 4, 0), toMs: dayAt(WEEK, 7, 0) }; // Wed–Fri
-  const loaded = midweek.filter((e) => new Date(e.start).getTime() >= range.fromMs);
-  const common = { ...base, entries: loaded, balanceWeekdays: true, range, multi: false, title: 'T', personName: '' };
-  const summary = buildExportDoc({ ...common, view: 'summary' });
   eq(
-    summary.view === 'summary' && summary.weeks[0].dayTotals,
-    [8 * H, 8 * H, 8 * H],
-    'a Wed–Fri summary export balances among its own days'
+    wholeWeeksRange({ fromMs: dayAt(WEEK, 4, 0), toMs: dayAt(NEXT, 4, 0) }),
+    { fromMs: WEEK, toMs: dayAt(NEXT, 7, 0) },
+    'a Wed–Tue range loads both weeks in full'
   );
-  eq(summary.grandTotal, 24 * H, 'and keeps every tracked hour');
-  const individual = buildExportDoc({ ...common, view: 'individual' });
-  eq(
-    individual.view === 'individual' && individual.days.map((d) => d.total / H),
-    [8, 8, 8],
-    'so does the individual export'
-  );
-  eq(individual.grandTotal, 24 * H, 'with every tracked hour');
+  const r = (fromDay: number, toDay: number) => ({ fromMs: dayAt(WEEK, fromDay, 0), toMs: dayAt(WEEK, toDay, 0) });
+  for (const noOvertime of [false, true]) {
+    const screen = (weekStart: number) => {
+      const opts = { ...base, entries: midweek, weekStart, nowMs: dayAt(NEXT, 7, 0), noOvertime, balanceWeekdays: true };
+      const grid = buildSummaryGrid(opts)!;
+      const ind = buildIndividualWeek(opts)!;
+      const byDate = new Map<number, { total: number; lines: string[] }>();
+      grid.dayCols.forEach((d, i) =>
+        byDate.set(dayAt(weekStart, d, 0), {
+          total: grid.dayTotals[i],
+          lines: ind.days.find((x) => x.dayIdx === d)?.rows.filter((x) => x.kind === 'bill').map((x) => `${x.code} ${x.rounded}`) ?? [],
+        })
+      );
+      return byDate;
+    };
+    const onScreen = new Map([...screen(WEEK), ...screen(NEXT)]);
+    // Wed–Fri, Tue–Wed, Wed to the next Tuesday.
+    for (const range of [r(4, 7), r(3, 5), r(4, 11)]) {
+      const load = wholeWeeksRange(range);
+      const loaded = midweek.filter((e) => {
+        const t = new Date(e.start).getTime();
+        return t >= load.fromMs && t < load.toMs;
+      });
+      const common = {
+        ...base,
+        entries: loaded,
+        nowMs: dayAt(NEXT, 7, 0),
+        noOvertime,
+        balanceWeekdays: true,
+        range,
+        multi: false,
+        title: 'T',
+        personName: '',
+      };
+      const where = ` (${new Date(range.fromMs).toDateString()} – ${new Date(range.toMs - 1).toDateString()}${noOvertime ? ', no overtime' : ''})`;
+      const summary = buildExportDoc({ ...common, view: 'summary' });
+      const sumDays = summary.view === 'summary' ? summary.weeks.flatMap((w) => w.dayDates.map((d, i) => [d, w.dayTotals[i]])) : [];
+      eq(
+        sumDays,
+        sumDays.map(([d]) => [d, onScreen.get(d)!.total]),
+        'the summary export shows the screen\u2019s day totals' + where
+      );
+      ok(sumDays.length > 0 && sumDays.every(([d]) => d >= range.fromMs && d < range.toMs), 'and only the range\u2019s days' + where);
+      const individual = buildExportDoc({ ...common, view: 'individual' });
+      const indDays = individual.view === 'individual' ? individual.days.map((d) => [d.dateMs, d.rows.map((x) => `${x.billingCode} ${x.hours}`)]) : [];
+      eq(
+        indDays,
+        indDays.map(([d]) => [d, onScreen.get(d as number)!.lines]),
+        'the individual export shows the screen\u2019s lines' + where
+      );
+    }
+  }
 }
 
 // A 1h week on the 1-hour unit: Monday's target is 1h, the rest 0h. Tuesday

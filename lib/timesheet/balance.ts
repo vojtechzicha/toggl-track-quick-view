@@ -10,9 +10,7 @@
 //   - Otherwise all the surplus moves, and the shortest days are raised first.
 //
 // The week's billed total never changes. It runs after the overtime trim, per
-// week segment (weekSegments), so time never crosses the 1st of a month. An
-// export of a range that starts or ends mid-week balances only the days inside
-// it, since days outside were not loaded and would read as empty.
+// week segment (weekSegments), so time never crosses the 1st of a month.
 // Weekend days and holidays take no part: they keep what they have. Linked-code
 // lines never move, since they must match the sub-client's sheet, but they
 // count toward their day.
@@ -38,23 +36,12 @@ export interface BalanceMove {
   units: number;
 }
 
-/** A half-open time range (ms). Only days starting inside it are balanced. */
-export interface BalanceRange {
-  fromMs: number;
-  toMs: number;
-}
-
 /**
  * The working weekdays of a segment and each one's target in units. The
  * segment's cap (weeklyHours / 5 per working weekday) is spread evenly, with any
  * remainder unit going to the earliest days, so the targets add up to the cap.
- * With `inRange`, days for which it returns false are left out.
  */
-export function segmentTargets(
-  seg: WeekSegment,
-  holidays: HolidaySet,
-  inRange?: (day: number) => boolean
-): Map<number, number> {
+export function segmentTargets(seg: WeekSegment, holidays: HolidaySet): Map<number, number> {
   const workdays: number[] = [];
   for (let d = Math.max(2, seg.startDay); d <= seg.endDay; d++) {
     if (!holidays.has(d)) workdays.push(d);
@@ -63,9 +50,7 @@ export function segmentTargets(
   if (workdays.length === 0) return targets;
   const base = Math.floor(seg.capUnits / workdays.length);
   const extra = seg.capUnits - base * workdays.length;
-  workdays.forEach((d, i) => {
-    if (!inRange || inRange(d)) targets.set(d, base + (i < extra ? 1 : 0));
-  });
+  workdays.forEach((d, i) => targets.set(d, base + (i < extra ? 1 : 0)));
   return targets;
 }
 
