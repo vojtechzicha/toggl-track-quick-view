@@ -611,10 +611,16 @@ export function buildIndividualWeek({
       )
     )
     // Show a weekday holiday even with no entries, since it explains the lower
-    // cap. A weekend marker changes nothing and is not shown.
+    // cap. A weekend marker changes nothing and is not shown. A day that gave
+    // all its time away when balancing (possible when a target is 0) still
+    // shows, so the move is visible on both ends.
     .filter(
       (d) =>
-        d.rows.length > 0 || d.overlaps.length > 0 || d.overtime > 0 || (d.holiday && d.dayIdx >= 2)
+        d.rows.length > 0 ||
+        d.overlaps.length > 0 ||
+        d.overtime > 0 ||
+        d.balanced !== 0 ||
+        (d.holiday && d.dayIdx >= 2)
     );
 
   const grandTotal = days.reduce((s, d) => s + d.total, 0);

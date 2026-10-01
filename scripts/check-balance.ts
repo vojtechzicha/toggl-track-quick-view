@@ -255,6 +255,23 @@ const week = [
   eq(individual.grandTotal, 24 * H, 'with every tracked hour');
 }
 
+// A 1h week on the 1-hour unit: Monday's target is 1h, the rest 0h. Tuesday
+// gives its whole hour away and must still show, with what it gave.
+{
+  const tiny = buildIndividualWeek({
+    ...base,
+    entries: [entry(WEEK, 3, 9, 1, 'D1', 'a')],
+    roundingSeconds: 3600,
+    weeklyHours: 1,
+    balanceWeekdays: true,
+  })!;
+  eq(
+    tiny.days.map((d) => [d.dayIdx, d.total / H, d.balanced / H]),
+    [[2, 1, 1], [3, 0, -1]],
+    'a day emptied by balancing still shows what it gave'
+  );
+}
+
 // With "Don't bill overtime": trimmed to the cap first, then balanced.
 {
   const over = [
