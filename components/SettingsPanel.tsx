@@ -50,7 +50,8 @@ export interface SettingsValue {
   // "(X)"/"(!)" markers are read before the strip, so they keep working.
   stripCodeParens: boolean;
   // Tag that marks a day as time off (default ".Time Off"). The day counts
-  // like a weekend and the marker entry is never billed, counted or exported.
+  // like a weekend and the marker entry is never counted. It bills only with a
+  // billing tag as well (lib/timesheet/timeOff).
   timeOffTag: string;
   // Rounding unit in hours: 0.25 (default), 0.2, 0.5 or 1.
   roundingHours: number;
@@ -1041,6 +1042,13 @@ export default function SettingsPanel({
               billed or exported; other work that day counts in full. Default:{' '}
               <strong>{DEFAULT_TIME_OFF_TAG}</strong>.
             </p>
+            {!billByProject && (
+              <p className="hint">
+                Add a billing tag as well (e.g. <code>{billingPrefix.trim() || 'D'}-HOL</code>) to bill the
+                time off: the day stays off on the dashboard, but the entry is a timesheet line as
+                logged, the cap stays whole, and that line is never trimmed. Not on linked projects.
+              </p>
+            )}
           </div>
 
           <div className="field">

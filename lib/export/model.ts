@@ -49,7 +49,10 @@ export interface ExportOptions {
   weeklyHours: number;
   /** Move billed time between working weekdays so each reaches `weeklyHours / 5`. */
   balanceWeekdays?: boolean;
-  /** Tag marking a time-off entry (its day is a holiday; the entry never exports). */
+  /**
+   * Tag marking a time-off entry (its day is a holiday). The entry exports only
+   * with a billing tag (lib/timesheet/timeOff).
+   */
   timeOffTag?: string;
   /** Linked billing codes (see lib/timesheet/mapping); empty/omitted = none. */
   codeMappings?: CodeMapping[];
