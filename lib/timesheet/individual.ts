@@ -23,7 +23,7 @@ import {
   type CodeMapping,
   type MappedAgg,
 } from './mapping';
-import { billsTimeOff, sheetHolidays, timeOffBillingTags, type TimeOffRules } from './timeOff';
+import { sheetHolidays, timeOffBilling, timeOffBillingTags, type TimeOffRules } from './timeOff';
 import { fitDescs } from './desc';
 import { UNTAGGED, MULTIPLE, TOOLONG, projectBillingCode } from './constants';
 
@@ -38,7 +38,8 @@ interface DayEntry {
   projId: number | null;
   tags?: string[];
   desc: string;
-  // Billed time off (see lib/timesheet/timeOff).
+  // Time off with billing tags (see lib/timesheet/timeOff): with one it bills
+  // as its own line, with several it is a warning.
   timeOff: boolean;
 }
 
@@ -508,8 +509,9 @@ export function buildIndividualWeek({
     if (!Number.isFinite(startMs) || startMs < weekStart || startMs >= weekEnd) continue;
     const dayIdx = weekDayIndex(new Date(startMs));
     // A time-off marker only marks the day. With a billing tag it also bills,
-    // as its own line.
-    const timeOff = billsTimeOff(e.tags, e.project_id, timeOffRules);
+    // as its own line. With several it lands on the warning row and bills
+    // nothing.
+    const timeOff = timeOffBilling(e.tags, e.project_id, timeOffRules) !== 'none';
     if (!timeOff && isTimeOffEntry(e.tags, timeOffTag)) continue;
 
     const running = e.duration < 0 || !e.stop;

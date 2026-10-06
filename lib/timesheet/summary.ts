@@ -22,7 +22,7 @@ import {
   type CodeMapping,
   type MappedAgg,
 } from './mapping';
-import { billsTimeOff, sheetHolidays, timeOffBillingTags } from './timeOff';
+import { sheetHolidays, timeOffBilling, timeOffBillingTags } from './timeOff';
 import { fitDescs } from './desc';
 import { UNTAGGED, MULTIPLE, projectBillingCode } from './constants';
 
@@ -183,8 +183,9 @@ export function buildSummaryGrid({
     if (!Number.isFinite(startMs) || startMs < weekStart || startMs >= weekEnd) continue;
     const dayIdx = weekDayIndex(new Date(startMs));
     // A time-off marker only marks the day. With a billing tag it also bills,
-    // on its own row.
-    const timeOff = billsTimeOff(e.tags, e.project_id, timeOffRules);
+    // on its own row. With several it lands on the warning row and bills
+    // nothing.
+    const timeOff = timeOffBilling(e.tags, e.project_id, timeOffRules) !== 'none';
     if (!timeOff && isTimeOffEntry(e.tags, timeOffTag)) continue;
 
     const running = e.duration < 0 || !e.stop;
@@ -339,7 +340,8 @@ export function buildSummaryGrid({
 
   // Overtime cap, per segment (see lib/timesheet/overtime). Warning rows are not
   // billed and are ignored. Mapped and time-off rows count toward the cap but
-  // are never cut.
+  // are never cut. Time-off rows join the per-day evening-out as all-"(!)"
+  // cells, so their hours count toward their own day's ceiling.
   const overtimeByDay = new Array<number>(7).fill(0);
   if (noOvertime && weeklyHours > 0) {
     for (const seg of weekSegments(weekStart, weeklyHours, roundingSeconds, billingHolidays)) {
@@ -350,14 +352,18 @@ export function buildSummaryGrid({
         trimmableUnits: number;
         noTrimUnits: number;
       }[] = [];
-      let fixedUnits = 0;
+      let mappedUnits = 0;
       for (const d of dayCols) {
         if (d < seg.startDay || d > seg.endDay) continue;
         for (const r of tagRows) {
           const units = Math.round((rounded.get(`${d}|${r}`) ?? 0) / roundingSeconds);
           if (units <= 0) continue;
-          if (fixedRows.has(r)) {
-            fixedUnits += units;
+          if (mappedRows.has(r)) {
+            mappedUnits += units;
+            continue;
+          }
+          if (timeOffRows.has(r)) {
+            billCells.push({ key: `${d}|${r}`, day: d, units, trimmableUnits: 0, noTrimUnits: units });
             continue;
           }
           const cell = cells.get(`${d}|${r}`);
@@ -376,7 +382,7 @@ export function buildSummaryGrid({
           noTrimUnits: c.noTrimUnits,
           day: c.day,
         })),
-        Math.max(0, seg.capUnits - fixedUnits),
+        Math.max(0, seg.capUnits - mappedUnits),
         billingHolidays
       );
       billCells.forEach((c, i) => {
