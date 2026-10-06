@@ -7,6 +7,10 @@ import { DAY_LABELS } from '@/lib/timesheet/constants';
 import type { TimesheetViewProps } from './types';
 import CopyButton from './CopyButton';
 
+const HOLIDAY_TITLE = 'Time off: no work expected. The weekly cap is one day lower.';
+const HOLIDAY_BILLED_TITLE =
+  'Billed time off: no work expected. The time-off line bills, so the weekly cap stays whole.';
+
 /**
  * Individual view: per day, one row per billable line with start–end time,
  * rounded hours and description, plus warning rows for tag, length and overlap
@@ -94,7 +98,7 @@ export default function IndividualTimesheet({
                 {day.holiday && (
                   <span
                     className="ts-holiday"
-                    title="Time off: no work expected. The weekly cap is one day lower."
+                    title={day.holidayBilled ? HOLIDAY_BILLED_TITLE : HOLIDAY_TITLE}
                   >
                     holiday
                   </span>

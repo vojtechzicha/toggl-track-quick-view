@@ -227,9 +227,10 @@ export function supportTicketCode(description?: string): string | null {
 // ---- Time off (public holidays etc.) ----
 // An entry with the time-off tag makes its day a holiday, treated like a
 // weekend day: 0h expected, and the weekly goal and the no-overtime cap drop by
-// weeklyHours / 5. The marker entry is never billed, counted or exported, and
-// its duration is ignored. Other entries on that day count normally and are
-// billed in full on top of the reduced cap, like weekend work.
+// weeklyHours / 5. The marker entry is never counted and its duration is
+// ignored. Other entries on that day count normally and are billed in full on
+// top of the reduced cap, like weekend work. A marker that also carries a
+// billing tag bills on the timesheet (lib/timesheet/timeOff).
 export const DEFAULT_TIME_OFF_TAG = '.Time Off';
 
 /** The time-off tag, lower-cased, or the default when missing or empty. */

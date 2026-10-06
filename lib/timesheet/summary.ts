@@ -3,7 +3,6 @@
 
 import {
   addDays,
-  holidayDaysOfWeek,
   isTimeOffEntry,
   parseBillingCode,
   roundQuartersPreservingTotal,
@@ -23,6 +22,7 @@ import {
   type CodeMapping,
   type MappedAgg,
 } from './mapping';
+import { billsTimeOff, sheetHolidays, timeOffBillingTags } from './timeOff';
 import { fitDescs } from './desc';
 import { UNTAGGED, MULTIPLE, projectBillingCode } from './constants';
 
@@ -44,6 +44,10 @@ export interface RowMeta {
   projectId: number;
   projectName: string;
   tag: string; // displayed billing code, markers stripped
+  // A billed time-off row (see lib/timesheet/timeOff): rounded on its own,
+  // counts toward the cap but is never trimmed or moved. It never shares a row
+  // with work on the same code.
+  timeOff?: boolean;
 }
 
 export interface SummaryGrid {
@@ -74,6 +78,11 @@ export interface SummaryGrid {
   balancedByDay: number[];
   /** Holiday day indices (0=Sat … 6=Fri) this week. */
   holidays: Set<number>;
+  /**
+   * The holidays with billed time off (see lib/timesheet/timeOff). They keep
+   * their share of the weekly cap.
+   */
+  billedHolidays: Set<number>;
 }
 
 export interface SummaryInput {
@@ -137,7 +146,14 @@ export function buildSummaryGrid({
   const nameById = new Map(projects.map((p) => [p.id, p.name]));
   const weekEnd = addDays(weekStart, 7);
 
-  const holidays = holidayDaysOfWeek(entries, ids, weekStart, timeOffTag);
+  // `holidays` marks the columns; `billingHolidays` drives the cap and the
+  // balancing, and leaves out days with billed time off.
+  const timeOffRules = { timeOffTag, billingTagPrefix, codeMappings, billByProject };
+  const {
+    holidays,
+    billed: billedHolidays,
+    billing: billingHolidays,
+  } = sheetHolidays(entries, ids, weekStart, timeOffRules);
 
   const cells = new Map<string, Cell>(); // key: `${dayIdx}|${rowKey}`
   const rowMeta = new Map<string, RowMeta>(); // rowKey -> meta (normal rows only)
@@ -150,6 +166,9 @@ export function buildSummaryGrid({
   const mappedAggs = new Map<string, Map<number, MappedAgg>>(); // rowKey -> day -> agg
   const mappingByRow = new Map<string, CodeMapping>(); // rowKey -> its mapping
   const mappedRows = new Set<string>();
+  // Billed time-off rows. Like mapped rows they are fixed for the cap and the
+  // balancing, but they are rounded here.
+  const timeOffRows = new Set<string>();
 
   const addDesc = (cell: Cell, desc: string) => {
     const text = desc.trim();
@@ -163,8 +182,10 @@ export function buildSummaryGrid({
     const startMs = new Date(e.start).getTime();
     if (!Number.isFinite(startMs) || startMs < weekStart || startMs >= weekEnd) continue;
     const dayIdx = weekDayIndex(new Date(startMs));
-    // Time-off markers only mark the day; they are never billed or shown.
-    if (isTimeOffEntry(e.tags, timeOffTag)) continue;
+    // A time-off marker only marks the day. With a billing tag it also bills,
+    // on its own row.
+    const timeOff = billsTimeOff(e.tags, e.project_id, timeOffRules);
+    if (!timeOff && isTimeOffEntry(e.tags, timeOffTag)) continue;
 
     const running = e.duration < 0 || !e.stop;
     const stopMs = running ? nowMs : new Date(e.stop as string).getTime();
@@ -174,7 +195,9 @@ export function buildSummaryGrid({
     // A mapped project's tags use the mapping's prefix. With billByProject the
     // project name is the only "tag" and the description is used as is.
     const mapping = billByProject ? undefined : mappingFor(codeMappings, e.project_id);
-    const { tags, description } = billByProject
+    const { tags, description } = timeOff
+      ? { tags: timeOffBillingTags(e.tags, timeOffRules), description: e.description ?? '' }
+      : billByProject
       ? {
           tags: [projectBillingCode(nameById.get(e.project_id), e.project_id)],
           description: e.description ?? '',
@@ -187,6 +210,19 @@ export function buildSummaryGrid({
     } else if (tags.length > 1) {
       rowKey = MULTIPLE;
       multiplePresent = true;
+    } else if (timeOff) {
+      // Markers mean nothing here: time off is never trimmed.
+      const base = parseBillingCode(tags[0], stripCodeParens).base;
+      rowKey = `t${e.project_id}|${base}`;
+      timeOffRows.add(rowKey);
+      if (!rowMeta.has(rowKey)) {
+        rowMeta.set(rowKey, {
+          projectId: e.project_id,
+          projectName: nameById.get(e.project_id) ?? '',
+          tag: base,
+          timeOff: true,
+        });
+      }
     } else if (mapping) {
       // Linked code: one row for the project, rounded after the loop.
       rowKey = mappedRowKey(e.project_id);
@@ -234,7 +270,7 @@ export function buildSummaryGrid({
       cells.set(key, cell);
     }
     cell.seconds += seconds;
-    if (!billByProject && rowKey !== UNTAGGED && rowKey !== MULTIPLE) {
+    if (!billByProject && !timeOff && rowKey !== UNTAGGED && rowKey !== MULTIPLE) {
       const { trimmable, neverTrim } = parseBillingCode(tags[0]);
       if (trimmable) cell.trimmableSeconds += seconds;
       if (neverTrim) cell.noTrimSeconds += seconds;
@@ -252,7 +288,7 @@ export function buildSummaryGrid({
   // sheet's billed day total.
   const mappedFixed = new Map<string, number>(); // key: `${dayIdx}|${rowKey}`
   for (const [rowKey, byDay] of mappedAggs) {
-    const values = finalizeMappedWeek(byDay, mappingByRow.get(rowKey)!, weekStart, holidays);
+    const values = finalizeMappedWeek(byDay, mappingByRow.get(rowKey)!, weekStart, billingHolidays);
     for (const [day, value] of values) {
       mappedFixed.set(`${day}|${rowKey}`, value.seconds);
       cells.set(`${day}|${rowKey}`, {
@@ -266,11 +302,16 @@ export function buildSummaryGrid({
     }
   }
 
-  // Rows: by project name, then code, then the warning rows.
+  // Rows: by project name, then code (time off after work on the same code),
+  // then the warning rows.
   const tagRows = [...rowMeta.keys()].sort((a, b) => {
     const ma = rowMeta.get(a)!;
     const mb = rowMeta.get(b)!;
-    return ma.projectName.localeCompare(mb.projectName) || ma.tag.localeCompare(mb.tag);
+    return (
+      ma.projectName.localeCompare(mb.projectName) ||
+      ma.tag.localeCompare(mb.tag) ||
+      Number(!!ma.timeOff) - Number(!!mb.timeOff)
+    );
   });
   const rows = [...tagRows];
   if (multiplePresent) rows.push(MULTIPLE);
@@ -278,21 +319,30 @@ export function buildSummaryGrid({
 
   // Round each day's cells so they add up to the day's rounded total; totals are
   // summed from rounded cells. Mapped rows keep their fixed value: re-rounding
-  // would break equality with the sub-client's sheet.
-  const roundableRows = rows.filter((r) => !mappedRows.has(r));
+  // would break equality with the sub-client's sheet. Time-off rows are rounded
+  // apart from the work, so the work's rounding never shifts a holiday line.
+  const fixedRows = new Set([...mappedRows, ...timeOffRows]);
+  const roundableRows = rows.filter((r) => !fixedRows.has(r));
+  const timeOffList = [...timeOffRows];
   const rounded = new Map<string, number>(); // key: `${dayIdx}|${rowKey}`
   for (const d of dayCols) {
     const raw = roundableRows.map((r) => cells.get(`${d}|${r}`)?.seconds ?? 0);
     const adj = roundQuartersPreservingTotal(raw, { unitSeconds: roundingSeconds });
     roundableRows.forEach((r, ri) => rounded.set(`${d}|${r}`, adj[ri]));
+    const off = roundQuartersPreservingTotal(
+      timeOffList.map((r) => cells.get(`${d}|${r}`)?.seconds ?? 0),
+      { unitSeconds: roundingSeconds }
+    );
+    timeOffList.forEach((r, ri) => rounded.set(`${d}|${r}`, off[ri]));
     for (const r of mappedRows) rounded.set(`${d}|${r}`, mappedFixed.get(`${d}|${r}`) ?? 0);
   }
 
   // Overtime cap, per segment (see lib/timesheet/overtime). Warning rows are not
-  // billed and are ignored. Mapped rows count toward the cap but are never cut.
+  // billed and are ignored. Mapped and time-off rows count toward the cap but
+  // are never cut.
   const overtimeByDay = new Array<number>(7).fill(0);
   if (noOvertime && weeklyHours > 0) {
-    for (const seg of weekSegments(weekStart, weeklyHours, roundingSeconds, holidays)) {
+    for (const seg of weekSegments(weekStart, weeklyHours, roundingSeconds, billingHolidays)) {
       const billCells: {
         key: string;
         day: number;
@@ -300,14 +350,14 @@ export function buildSummaryGrid({
         trimmableUnits: number;
         noTrimUnits: number;
       }[] = [];
-      let mappedUnits = 0;
+      let fixedUnits = 0;
       for (const d of dayCols) {
         if (d < seg.startDay || d > seg.endDay) continue;
         for (const r of tagRows) {
           const units = Math.round((rounded.get(`${d}|${r}`) ?? 0) / roundingSeconds);
           if (units <= 0) continue;
-          if (mappedRows.has(r)) {
-            mappedUnits += units;
+          if (fixedRows.has(r)) {
+            fixedUnits += units;
             continue;
           }
           const cell = cells.get(`${d}|${r}`);
@@ -326,8 +376,8 @@ export function buildSummaryGrid({
           noTrimUnits: c.noTrimUnits,
           day: c.day,
         })),
-        Math.max(0, seg.capUnits - mappedUnits),
-        holidays
+        Math.max(0, seg.capUnits - fixedUnits),
+        billingHolidays
       );
       billCells.forEach((c, i) => {
         if (removed[i] > 0) {
@@ -341,11 +391,12 @@ export function buildSummaryGrid({
 
   // Balance the working days (see lib/timesheet/balance). A day gives from its
   // largest lines first; the time moves to the same row on the receiving day,
-  // with its descriptions. Linked rows count toward their day but never move.
+  // with its descriptions. Linked and time-off rows count toward their day but
+  // never move.
   const balancedByDay = new Array<number>(7).fill(0);
   if (balanceWeekdays && weeklyHours > 0) {
-    for (const seg of weekSegments(weekStart, weeklyHours, roundingSeconds, holidays)) {
-      const targets = segmentTargets(seg, holidays);
+    for (const seg of weekSegments(weekStart, weeklyHours, roundingSeconds, billingHolidays)) {
+      const targets = segmentTargets(seg, billingHolidays);
       const keys: { day: number; row: string }[] = [];
       const balCells: BalanceCell[] = [];
       for (const d of targets.keys()) {
@@ -358,7 +409,7 @@ export function buildSummaryGrid({
           .sort((a, b) => b.units - a.units);
         for (const c of dayCells) {
           keys.push({ day: d, row: c.row });
-          balCells.push({ day: d, units: c.units, fixed: mappedRows.has(c.row) });
+          balCells.push({ day: d, units: c.units, fixed: fixedRows.has(c.row) });
         }
       }
       for (const m of planBalance(balCells, targets)) {
@@ -414,5 +465,6 @@ export function buildSummaryGrid({
     overtimeTotal,
     balancedByDay,
     holidays,
+    billedHolidays,
   };
 }

@@ -7,6 +7,10 @@ import { DAY_LABELS, UNTAGGED, MULTIPLE } from '@/lib/timesheet/constants';
 import type { TimesheetViewProps } from './types';
 import CopyButton from './CopyButton';
 
+const HOLIDAY_TITLE = 'Time off: no work expected. The weekly cap is one day lower.';
+const HOLIDAY_BILLED_TITLE =
+  'Billed time off: no work expected. The time-off line bills, so the weekly cap stays whole.';
+
 /**
  * Summary view: the week as days (columns) × (project, billing code) rows, one
  * merged and rounded cell per row and day. Built by buildSummaryGrid, which the
@@ -70,7 +74,7 @@ export default function SummaryTimesheet({
                 {grid.holidays.has(d) && (
                   <span
                     className="ts-holiday"
-                    title="Time off: no work expected. The weekly cap is one day lower."
+                    title={grid.billedHolidays.has(d) ? HOLIDAY_BILLED_TITLE : HOLIDAY_TITLE}
                   >
                     holiday
                   </span>

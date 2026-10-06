@@ -5,7 +5,6 @@ import {
   addDays,
   fmtHoursLabel,
   fmtTimeOfDay,
-  holidayDaysOfWeek,
   isTimeOffEntry,
   parseBillingCode,
   roundQuartersPreservingTotal,
@@ -24,6 +23,7 @@ import {
   type CodeMapping,
   type MappedAgg,
 } from './mapping';
+import { billsTimeOff, sheetHolidays, timeOffBillingTags, type TimeOffRules } from './timeOff';
 import { fitDescs } from './desc';
 import { UNTAGGED, MULTIPLE, TOOLONG, projectBillingCode } from './constants';
 
@@ -38,6 +38,8 @@ interface DayEntry {
   projId: number | null;
   tags?: string[];
   desc: string;
+  // Billed time off (see lib/timesheet/timeOff).
+  timeOff: boolean;
 }
 
 export type WarnKind = typeof UNTAGGED | typeof MULTIPLE | typeof TOOLONG;
@@ -67,6 +69,9 @@ export interface Row {
   // lib/timesheet/mapping); it is never re-rounded, trimmed or checked against
   // the length cap here.
   fixed?: boolean;
+  // A billed time-off line (see lib/timesheet/timeOff). Also `fixed`: it is
+  // rounded on its own, then never trimmed, moved or checked against the cap.
+  timeOff?: boolean;
 }
 
 export interface IndividualDay {
@@ -82,6 +87,8 @@ export interface IndividualDay {
   balanced: number;
   // True when the day has a time-off entry.
   holiday: boolean;
+  // True when one of them bills, so the day keeps its share of the cap.
+  holidayBilled: boolean;
 }
 
 export interface IndividualWeek {
@@ -206,7 +213,8 @@ function classifyDay(
   stripCodeParens?: boolean,
   // Projects-only billing: the project name (from `nameById`) is the code.
   billByProject?: boolean,
-  nameById?: Map<number, string>
+  nameById?: Map<number, string>,
+  timeOffRules?: TimeOffRules
 ): ClassifiedDay {
   const sorted = [...dayEntries].sort((a, b) => a.startMs - b.startMs);
 
@@ -249,8 +257,39 @@ function classifyDay(
 
   // Linked-code aggregates, one per mapped project this day.
   const mappedByProj = new Map<number, MappedAgg>();
+  // Billed time-off lines, rounded apart from the work below.
+  const timeOff: Row[] = [];
 
   for (const e of sorted) {
+    if (e.timeOff) {
+      // Never combined with anything and exempt from the billable-length cap.
+      // Markers mean nothing here: time off is never trimmed.
+      flush();
+      const tags = timeOffBillingTags(e.tags, timeOffRules as TimeOffRules);
+      if (tags.length > 1) {
+        addWarn(MULTIPLE, e);
+        continue;
+      }
+      const row: Row = {
+        key: `t${e.startMs}`,
+        kind: 'bill',
+        code: parseBillingCode(tags[0], stripCodeParens).base,
+        projId: e.projId,
+        seconds: e.seconds,
+        trimmableSeconds: 0,
+        noTrimSeconds: 0,
+        rounded: 0,
+        descs: [],
+        desc: '',
+        descTruncated: false,
+        groupStartMs: e.startMs,
+        fixed: true,
+        timeOff: true,
+      };
+      mergeDesc(row.descs, e.desc);
+      timeOff.push(row);
+      continue;
+    }
     // A mapped project's tags use the mapping's prefix. With billByProject the
     // project name is the only "tag" and the description is used as is.
     const mapping = billByProject ? undefined : mappingFor(codeMappings, e.projId);
@@ -338,6 +377,15 @@ function classifyDay(
     { biasZero: true, unitSeconds: roundingSeconds }
   );
   allRows.forEach((r, i) => (r.rounded = rounded[i]));
+  const offRounded = roundQuartersPreservingTotal(
+    timeOff.map((r) => r.seconds),
+    { unitSeconds: roundingSeconds }
+  );
+  timeOff.forEach((r, i) => (r.rounded = offRounded[i]));
+  if (timeOff.length > 0) {
+    bill.push(...timeOff);
+    bill.sort((a, b) => a.groupStartMs - b.groupStartMs);
+  }
 
   return { bill, warnRows, overlaps, mapped: mappedByProj };
 }
@@ -363,7 +411,8 @@ function finalizeDay(
   overtimeStripped: number,
   balanced: number,
   maxDescLen: number | null | undefined,
-  holiday: boolean
+  holiday: boolean,
+  holidayBilled: boolean
 ): IndividualDay {
   const billKept = bill.filter((r) => r.rounded > 0);
 
@@ -396,7 +445,17 @@ function finalizeDay(
 
   const rows = [...billKept, ...warnRows];
   const total = billKept.reduce((s, r) => s + r.rounded, 0);
-  return { dayIdx, dateMs, rows, total, overlaps, overtime: overtimeStripped, balanced, holiday };
+  return {
+    dayIdx,
+    dateMs,
+    rows,
+    total,
+    overlaps,
+    overtime: overtimeStripped,
+    balanced,
+    holiday,
+    holidayBilled,
+  };
 }
 
 /**
@@ -433,7 +492,14 @@ export function buildIndividualWeek({
     1000;
   const weekEnd = addDays(weekStart, 7);
 
-  const holidays = holidayDaysOfWeek(entries, ids, weekStart, timeOffTag);
+  // `holidays` marks the days; `billingHolidays` drives the cap and the
+  // balancing, and leaves out days with billed time off.
+  const timeOffRules = { timeOffTag, billingTagPrefix, codeMappings, billByProject };
+  const {
+    holidays,
+    billed: billedHolidays,
+    billing: billingHolidays,
+  } = sheetHolidays(entries, ids, weekStart, timeOffRules);
 
   const byDay: DayEntry[][] = Array.from({ length: 7 }, () => []);
   for (const e of entries) {
@@ -441,8 +507,10 @@ export function buildIndividualWeek({
     const startMs = new Date(e.start).getTime();
     if (!Number.isFinite(startMs) || startMs < weekStart || startMs >= weekEnd) continue;
     const dayIdx = weekDayIndex(new Date(startMs));
-    // Time-off markers only mark the day; they are never billed or shown.
-    if (isTimeOffEntry(e.tags, timeOffTag)) continue;
+    // A time-off marker only marks the day. With a billing tag it also bills,
+    // as its own line.
+    const timeOff = billsTimeOff(e.tags, e.project_id, timeOffRules);
+    if (!timeOff && isTimeOffEntry(e.tags, timeOffTag)) continue;
 
     const running = e.duration < 0 || !e.stop;
     const stopMs = running ? nowMs : new Date(e.stop as string).getTime();
@@ -453,6 +521,7 @@ export function buildIndividualWeek({
       projId: e.project_id,
       tags: e.tags,
       desc: e.description ?? '',
+      timeOff,
     });
   }
 
@@ -465,7 +534,8 @@ export function buildIndividualWeek({
       codeMappings,
       stripCodeParens,
       billByProject,
-      nameById
+      nameById,
+      timeOffRules
     )
   );
 
@@ -484,7 +554,7 @@ export function buildIndividualWeek({
   });
   for (const [projId, byDayAgg] of mappedWeeks) {
     const mapping = mappingFor(codeMappings, projId)!;
-    const values = finalizeMappedWeek(byDayAgg, mapping, weekStart, holidays);
+    const values = finalizeMappedWeek(byDayAgg, mapping, weekStart, billingHolidays);
     for (const [day, value] of values) {
       const agg = byDayAgg.get(day)!;
       classified[day].bill.push({
@@ -519,8 +589,9 @@ export function buildIndividualWeek({
       const noTrimUnits = Math.min(units - trimmableUnits, Math.round(units * fracKeep));
       return { units, trimmableUnits, noTrimUnits };
     };
-    for (const seg of weekSegments(weekStart, weeklyHours, roundingSeconds, holidays)) {
-      // Linked-code blocks count toward the cap but are never cut.
+    for (const seg of weekSegments(weekStart, weeklyHours, roundingSeconds, billingHolidays)) {
+      // Linked-code blocks and time-off lines count toward the cap but are
+      // never cut.
       const flat: { row: Row; day: number }[] = [];
       let fixedUnits = 0;
       for (let day = seg.startDay; day <= seg.endDay; day++) {
@@ -546,12 +617,12 @@ export function buildIndividualWeek({
   // Balance the working days (see lib/timesheet/balance). A day gives from its
   // latest lines first. The time becomes a new line on the receiving day, with
   // the same code and description, at the same time of day or after that day's
-  // last line, whichever is later. Linked blocks count toward their day but
-  // never move.
+  // last line, whichever is later. Linked blocks and time-off lines count
+  // toward their day but never move.
   const balancedByDay = new Array<number>(7).fill(0);
   if (balanceWeekdays && weeklyHours > 0) {
-    for (const seg of weekSegments(weekStart, weeklyHours, roundingSeconds, holidays)) {
-      const targets = segmentTargets(seg, holidays);
+    for (const seg of weekSegments(weekStart, weeklyHours, roundingSeconds, billingHolidays)) {
+      const targets = segmentTargets(seg, billingHolidays);
       const lines: { row: Row; day: number }[] = [];
       const balCells: BalanceCell[] = [];
       for (const day of targets.keys()) {
@@ -600,7 +671,8 @@ export function buildIndividualWeek({
         overtimeByDay[dayIdx],
         balancedByDay[dayIdx],
         maxDescriptionLength,
-        holidays.has(dayIdx)
+        holidays.has(dayIdx),
+        billedHolidays.has(dayIdx)
       )
     )
     // Show a weekday holiday even with no entries, since it explains the lower

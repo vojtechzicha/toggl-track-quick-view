@@ -236,13 +236,40 @@ matter.
 
 - The day's target is 0h and the week's budget drops by a day (a 40h week with
   one holiday becomes 32h). The "Don't bill overtime" cap shrinks the same way.
-- The marker entry is never billed, counted or exported, and never triggers a
-  missing-tag warning.
+- The marker entry is never counted and never triggers a missing-tag warning.
+  It is not billed or exported unless it also carries a billing tag (see
+  [Billed time off](#billed-time-off)).
 - Other work tracked that day counts in full and is billed whole.
 
 Only entries on the tracked projects count, so a day can be off in one workspace
 and a working day in another. Such days show a **holiday** pill in the timesheet
 and an **off** pill in the dashboard's week summary.
+
+#### Billed time off
+
+For engagements that pay for holidays: give the time-off entry a billing tag as
+well (`.Time Off` + `D-HOL`, 8h). The dashboard treats the day exactly as above
+(0h target, the weekly goal drops by a day, the entry never counts as worked).
+On the timesheet it bills instead of disappearing:
+
+- The entry is its own line, with its code, description and logged duration,
+  rounded on its own. It never merges with work, even on the same code, and the
+  billable maximum does not apply to it.
+- The day keeps its share of the [Don't bill overtime](#dont-bill-overtime)
+  cap. The time-off line counts toward the cap but is never trimmed, whatever
+  its marker, so 36h of work plus an 8h billed holiday bills 32h + 8h on a 40h
+  cap. Logging the holiday as a separate `D-HOL` entry instead would cut 8h of
+  work.
+- [Balance working days](#balance-working-days) treats the day as a working
+  day, but never moves the time-off line. A half day off (4h) plus 4h of work
+  reaches the daily target like any other day.
+- The holiday pill stays; its tooltip says the cap is whole.
+
+Only an explicit billing tag does this; a support-ticket bracket does not. With
+[Bill by project](#bill-by-project) or on a [linked
+project](#linked-billing-codes-subcontracting) a time-off entry is always a
+plain marker. Two billing tags show the usual warning. The logic is in
+`lib/timesheet/timeOff.ts`.
 
 ## Breaks and unreported time
 
@@ -404,7 +431,7 @@ ceiling. Only billable lines count toward the cap; warning rows never do.
 
 A week split by the 1st of a month gets a cap per part, 8h (at 40h) per weekday
 it holds. A weekend-only part is capped at zero. Holidays reduce the cap the same
-way.
+way, except [billed time off](#billed-time-off).
 
 The trimmed time appears in the views on a muted **Overtime (not billed)** line.
 Exports contain only the billed figures.
@@ -423,7 +450,8 @@ week** ÷ 5 (8h at 40h), as little as needed:
 - The week's billed total never changes. Turn on [Don't bill
   overtime](#dont-bill-overtime) as well to also cap it, and a full week bills
   exactly 8h a day: the trim runs first, then the balancing.
-- Weekend days and holidays take no part and keep their own hours. A week split
+- Weekend days and holidays take no part and keep their own hours ([billed
+  time off](#billed-time-off) is a working day here). A week split
   by the 1st of a month balances each part on its own, so no time crosses the
   1st. When the weekly hours don't divide into whole rounding units, the spare
   units go to the earliest days.
@@ -435,7 +463,7 @@ week** ÷ 5 (8h at 40h), as little as needed:
   and the time becomes a new line on the receiving day at the same time of day,
   or after that day's last line if that is later.
 - Linked-code lines never move (they must match the sub-client's sheet) but
-  count toward their day.
+  count toward their day. Billed time-off lines behave the same way.
 
 The views show what moved on a muted **Balanced** line (`+1.00h` / `−1.00h`).
 Exports contain only the balanced figures. The logic is in
