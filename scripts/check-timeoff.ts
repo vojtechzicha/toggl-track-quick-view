@@ -91,6 +91,7 @@ const work = (half: number) =>
 {
   const rules = { timeOffTag: OFF, billingTagPrefix: 'D' };
   ok(billsTimeOff([OFF, 'D-HOL'], 1, rules), 'time off with a billing tag bills');
+  ok(!billsTimeOff([OFF, 'D-HOL', 'D2'], 1, rules), 'two billing tags do not');
   ok(!billsTimeOff([OFF], 1, rules), 'a plain marker does not');
   ok(!billsTimeOff(['D-HOL'], 1, rules), 'a billing tag alone is ordinary work, not time off');
   ok(!billsTimeOff([OFF, 'D-HOL'], 1, { ...rules, billByProject: true }), 'never with Bill by project');
@@ -208,6 +209,12 @@ const billed = [...work(4.5), entry(6, 9, 8, [OFF, 'D-HOL'], 'Public holiday')];
   eq(grid.grandTotal, 40 * H, 'half day: the cap stays at 40h');
   eq(grid.rounded.get('6|t1|D-HOL'), 4 * H, 'half day: the time-off line is untouched');
   eq(grid.overtimeTotal, H, 'half day: the hour over 40h comes off the work');
+  eq(
+    grid.dayTotals,
+    [8, 8, 8, 8, 8].map((h) => h * H),
+    'half day: the time off counts toward Friday, so Friday’s work is trimmed, not Mon–Thu'
+  );
+  eq(grid.overtimeByDay[6], H, 'half day: the trimmed hour is Friday’s');
   const bal = buildSummaryGrid({ ...base, entries: half, noOvertime: true, balanceWeekdays: true })!;
   eq(bal.dayTotals, [8, 8, 8, 8, 8].map((h) => h * H), 'half day, balanced: every weekday at 8h');
   eq(bal.rounded.get('6|t1|D-HOL'), 4 * H, 'half day, balanced: the time-off line never moves');
@@ -257,6 +264,16 @@ const billed = [...work(4.5), entry(6, 9, 8, [OFF, 'D-HOL'], 'Public holiday')];
     entries: [entry(6, 9, 8, [OFF, 'D-HOL', 'D2'], 'Public holiday')],
   })!;
   eq(multi.rows, ['multiple'], 'two billing tags: a warning row, nothing billed');
+
+  // A marker that bills nothing must not keep the cap either.
+  const multiCapped = [...work(4.5), entry(6, 9, 8, [OFF, 'D-HOL', 'D2'], 'Public holiday')];
+  const mg = buildSummaryGrid({ ...base, entries: multiCapped, noOvertime: true })!;
+  eq(mg.billedHolidays.size, 0, 'two billing tags: the day is an unbilled holiday');
+  eq(mg.grandTotal, 32 * H, 'two billing tags: the cap drops to 32h');
+  ok(mg.rows.includes('multiple'), 'two billing tags: and the warning shows');
+  const mi = buildIndividualWeek({ ...base, entries: multiCapped, noOvertime: true })!;
+  eq(mi.grandTotal, 32 * H, 'two billing tags: individual caps at 32h too');
+  ok(!mi.days.find((d) => d.dayIdx === 6)!.holidayBilled, 'two billing tags: not a billed holiday');
 
   const ticket = buildSummaryGrid({
     ...base,
