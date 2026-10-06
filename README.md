@@ -258,8 +258,9 @@ On the timesheet it bills instead of disappearing:
 - The day keeps its share of the [Don't bill overtime](#dont-bill-overtime)
   cap. The time-off line counts toward the cap and toward its own day but is
   never trimmed, whatever its marker, so 36h of work plus an 8h billed holiday
-  bills 32h + 8h on a 40h cap, and a 4h half day off plus 5h of work is the
-  day trimmed to 8h. Logging the holiday as a separate `D-HOL` entry instead would cut 8h of
+  bills 32h + 8h on a 40h cap. In the Summary view, which evens out the days, a
+  4h half day off plus 5h of work trims that day's work to 8h; the Individual
+  view spreads the cut over the week's work as usual. Logging the holiday as a separate `D-HOL` entry instead would cut 8h of
   work.
 - [Balance working days](#balance-working-days) treats the day as a working
   day, but never moves the time-off line. A half day off (4h) plus 4h of work
