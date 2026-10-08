@@ -11,6 +11,7 @@ const HOLIDAY_TITLE = 'Time off: no work expected. The weekly cap is one day low
 const HOLIDAY_BILLED_TITLE =
   'Billed time off: no work expected. The time-off line bills, so the weekly cap stays whole.';
 const UNROUNDED_TITLE = 'Under one rounding unit, so shown unrounded. Not billed.';
+const UNROUNDED_TOTAL_TITLE = 'Unrounded, because a cell in this row is. Not billed.';
 
 /**
  * Summary view: the week as days (columns) × (project, billing code) rows, one
@@ -97,6 +98,14 @@ export default function SummaryTimesheet({
             // Warning rows always show.
             if (!warn && grid.rowTotals[ri] === 0) return null;
             const meta = grid.rowMeta.get(row);
+            // A warning cell under one rounding unit still shows, unrounded, so
+            // its entries can be found. Then the row total is unrounded too, so it
+            // adds up to what the cells show.
+            const isRawWarn = (d: number) =>
+              !!warn &&
+              (grid.rounded.get(`${d}|${row}`) ?? 0) === 0 &&
+              (grid.cells.get(`${d}|${row}`)?.seconds ?? 0) > 0;
+            const rawTotal = grid.dayCols.some(isRawWarn);
             return (
               <tr key={row} className={warn ? 'ts-row-warn' : ''}>
                 <th className="ts-tag" scope="row">
@@ -117,9 +126,7 @@ export default function SummaryTimesheet({
                 {grid.dayCols.map((d) => {
                   const secs = grid.rounded.get(`${d}|${row}`) ?? 0;
                   const cell = grid.cells.get(`${d}|${row}`);
-                  // A warning cell under one rounding unit still shows, unrounded,
-                  // so its entries can be found.
-                  const rawWarn = warn && secs === 0 && (cell?.seconds ?? 0) > 0;
+                  const rawWarn = isRawWarn(d);
                   if (secs === 0 && !rawWarn) {
                     return (
                       <td key={d} className="ts-cell ts-empty">
@@ -157,8 +164,8 @@ export default function SummaryTimesheet({
                   );
                 })}
                 <td className="ts-cell ts-rowtotal">
-                  {warn && grid.rowTotals[ri] === 0 ? (
-                    <span title={UNROUNDED_TITLE}>
+                  {rawTotal ? (
+                    <span title={UNROUNDED_TOTAL_TITLE}>
                       {fmtHM(grid.dayCols.reduce((s, d) => s + (grid.cells.get(`${d}|${row}`)?.seconds ?? 0), 0))}
                     </span>
                   ) : (
