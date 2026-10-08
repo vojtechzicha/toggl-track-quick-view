@@ -322,19 +322,24 @@ export function buildSummaryGrid({
   // summed from rounded cells. Mapped rows keep their fixed value: re-rounding
   // would break equality with the sub-client's sheet. Time-off rows are rounded
   // apart from the work, so the work's rounding never shifts a holiday line.
+  // Warning rows are rounded apart too, so unbilled time never moves a billed
+  // cell by a unit.
   const fixedRows = new Set([...mappedRows, ...timeOffRows]);
-  const roundableRows = rows.filter((r) => !fixedRows.has(r));
+  const roundableRows = tagRows.filter((r) => !fixedRows.has(r));
   const timeOffList = [...timeOffRows];
+  const warnList = rows.filter((r) => r === UNTAGGED || r === MULTIPLE);
   const rounded = new Map<string, number>(); // key: `${dayIdx}|${rowKey}`
-  for (const d of dayCols) {
-    const raw = roundableRows.map((r) => cells.get(`${d}|${r}`)?.seconds ?? 0);
-    const adj = roundQuartersPreservingTotal(raw, { unitSeconds: roundingSeconds });
-    roundableRows.forEach((r, ri) => rounded.set(`${d}|${r}`, adj[ri]));
-    const off = roundQuartersPreservingTotal(
-      timeOffList.map((r) => cells.get(`${d}|${r}`)?.seconds ?? 0),
+  const roundApart = (d: number, list: string[]) => {
+    const adj = roundQuartersPreservingTotal(
+      list.map((r) => cells.get(`${d}|${r}`)?.seconds ?? 0),
       { unitSeconds: roundingSeconds }
     );
-    timeOffList.forEach((r, ri) => rounded.set(`${d}|${r}`, off[ri]));
+    list.forEach((r, ri) => rounded.set(`${d}|${r}`, adj[ri]));
+  };
+  for (const d of dayCols) {
+    roundApart(d, roundableRows);
+    roundApart(d, timeOffList);
+    roundApart(d, warnList);
     for (const r of mappedRows) rounded.set(`${d}|${r}`, mappedFixed.get(`${d}|${r}`) ?? 0);
   }
 

@@ -293,4 +293,48 @@ const byProject = { ...base, entries: mixed, billByProject: true };
   eq(grid.overtimeTotal, 2 * 3600, 'and reports what it took off');
 }
 
+// ---- warning rows are rounded apart from the billed lines ----
+
+{
+  // Monday: 7h52m on D1 and a stray 6-minute untagged entry. Rounded together,
+  // the stray minutes would lift D1 to 8h; rounded apart, D1 bills 7.75h and the
+  // warning row rounds to zero but keeps its raw time and description.
+  const at = (h: number, m: number) => new Date(2026, 6, 6, h, m).getTime();
+  const mk = (id: number, start: number, mins: number, tags: string[], description: string) => ({
+    id,
+    start: new Date(start).toISOString(),
+    stop: new Date(start + mins * 60e3).toISOString(),
+    duration: mins * 60,
+    project_id: 1,
+    workspace_id: 1,
+    description,
+    tags,
+  });
+  const stray = {
+    weekStart: WEEK,
+    nowMs: WEEK + 7 * 86400e3,
+    projects: [{ id: 1, name: 'Proj' }],
+    maxBillableHours: 10,
+    billingTagPrefix: 'D',
+    roundingSeconds: 900,
+    startWindowSeconds: null,
+    noOvertime: false,
+    weeklyHours: 40,
+    entries: [mk(1, at(8, 0), 7 * 60 + 52, ['D1'], 'build'), mk(2, at(17, 0), 6, [], 'oops')],
+  };
+
+  const grid = buildSummaryGrid(stray)!;
+  eq(grid.grandTotal, 7.75 * 3600, 'summary: untagged minutes do not lift the billed line');
+  eq(grid.rounded.get('2|untagged'), 0, 'summary: the stray entry rounds to zero on its own');
+  eq(grid.cells.get('2|untagged')?.seconds, 360, 'summary: its raw time is kept for display');
+  eq(grid.cells.get('2|untagged')?.desc, 'oops', 'summary: and its description');
+
+  const ind = buildIndividualWeek(stray)!;
+  const mon = ind.days.find((d) => d.rows.some((r) => r.kind === 'warn'))!;
+  const warnRow = mon.rows.find((r) => r.kind === 'warn')!;
+  eq(mon.total, 7.75 * 3600, 'individual: untagged minutes do not lift the billed line');
+  eq(warnRow.rounded, 0, 'individual: the stray entry rounds to zero on its own');
+  eq(warnRow.seconds, 360, 'individual: its raw time is kept for display');
+}
+
 console.log(`✓ ${checks} billing-code checks passed`);

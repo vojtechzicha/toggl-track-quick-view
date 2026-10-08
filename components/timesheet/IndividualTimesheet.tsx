@@ -1,7 +1,7 @@
 'use client';
 
 import { useMemo } from 'react';
-import { fmtHours, fmtTimeOfDay } from '@/lib/calc';
+import { fmtHM, fmtHours, fmtTimeOfDay } from '@/lib/calc';
 import { buildIndividualWeek, warnLabel, type WarnKind } from '@/lib/timesheet/individual';
 import { DAY_LABELS } from '@/lib/timesheet/constants';
 import type { TimesheetViewProps } from './types';
@@ -123,7 +123,16 @@ export default function IndividualTimesheet({
                     return (
                       <tr key={row.key} className="ts-row-warn">
                         <td className="ind-time ind-empty">—</td>
-                        <td className="ind-hours">{fmtHours(row.rounded)}</td>
+                        <td className="ind-hours">
+                          {/* Under one rounding unit: unrounded, so the entries can be found. */}
+                          {row.rounded === 0 && row.seconds > 0 ? (
+                            <span title="Under one rounding unit, so shown unrounded. Not billed.">
+                              {fmtHM(row.seconds)}
+                            </span>
+                          ) : (
+                            fmtHours(row.rounded)
+                          )}
+                        </td>
                         <td className="ind-code" colSpan={2}>
                           <span className="tag-warn amber" title="Fix these entries">
                             ⚠ {warnLabel(row.warn as WarnKind, maxBillableHours)}

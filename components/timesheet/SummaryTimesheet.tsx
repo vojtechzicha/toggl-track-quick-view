@@ -1,7 +1,7 @@
 'use client';
 
 import { useMemo } from 'react';
-import { fmtHours } from '@/lib/calc';
+import { fmtHM, fmtHours } from '@/lib/calc';
 import { buildSummaryGrid } from '@/lib/timesheet/summary';
 import { DAY_LABELS, UNTAGGED, MULTIPLE } from '@/lib/timesheet/constants';
 import type { TimesheetViewProps } from './types';
@@ -10,6 +10,7 @@ import CopyButton from './CopyButton';
 const HOLIDAY_TITLE = 'Time off: no work expected. The weekly cap is one day lower.';
 const HOLIDAY_BILLED_TITLE =
   'Billed time off: no work expected. The time-off line bills, so the weekly cap stays whole.';
+const UNROUNDED_TITLE = 'Under one rounding unit, so shown unrounded. Not billed.';
 
 /**
  * Summary view: the week as days (columns) × (project, billing code) rows, one
@@ -115,19 +116,28 @@ export default function SummaryTimesheet({
                 </th>
                 {grid.dayCols.map((d) => {
                   const secs = grid.rounded.get(`${d}|${row}`) ?? 0;
-                  if (secs === 0) {
+                  const cell = grid.cells.get(`${d}|${row}`);
+                  // A warning cell under one rounding unit still shows, unrounded,
+                  // so its entries can be found.
+                  const rawWarn = warn && secs === 0 && (cell?.seconds ?? 0) > 0;
+                  if (secs === 0 && !rawWarn) {
                     return (
                       <td key={d} className="ts-cell ts-empty">
                         —
                       </td>
                     );
                   }
-                  const cell = grid.cells.get(`${d}|${row}`);
                   const combined = cell?.desc ?? '';
                   return (
                     <td key={d} className="ts-cell">
                       <div className="ts-cell-head">
-                        <span className="ts-dur">{fmtHours(secs)}</span>
+                        {rawWarn ? (
+                          <span className="ts-dur" title={UNROUNDED_TITLE}>
+                            {fmtHM(cell!.seconds)}
+                          </span>
+                        ) : (
+                          <span className="ts-dur">{fmtHours(secs)}</span>
+                        )}
                         {combined && <CopyButton text={combined} />}
                       </div>
                       {combined && (
@@ -146,7 +156,15 @@ export default function SummaryTimesheet({
                     </td>
                   );
                 })}
-                <td className="ts-cell ts-rowtotal">{fmtHours(grid.rowTotals[ri])}</td>
+                <td className="ts-cell ts-rowtotal">
+                  {warn && grid.rowTotals[ri] === 0 ? (
+                    <span title={UNROUNDED_TITLE}>
+                      {fmtHM(grid.dayCols.reduce((s, d) => s + (grid.cells.get(`${d}|${row}`)?.seconds ?? 0), 0))}
+                    </span>
+                  ) : (
+                    fmtHours(grid.rowTotals[ri])
+                  )}
+                </td>
               </tr>
             );
           })}

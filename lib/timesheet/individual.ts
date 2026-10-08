@@ -367,17 +367,19 @@ function classifyDay(
     lastStopMs = e.stopMs;
   }
 
-  // Round billable lines and warning rows together, biased toward would-be
-  // zeros. Linked-code aggregates are rounded on their own grid later.
+  // Round billable lines, biased toward would-be zeros. Warning rows are rounded
+  // apart, so unbilled time never moves a billed line by a unit. Linked-code
+  // aggregates are rounded on their own grid later.
   const warnRows = ([UNTAGGED, MULTIPLE, TOOLONG] as WarnKind[])
     .map((k) => warnBuckets[k])
     .filter((r): r is Row => r !== null);
-  const allRows = [...bill, ...warnRows];
-  const rounded = roundQuartersPreservingTotal(
-    allRows.map((r) => r.seconds),
-    { biasZero: true, unitSeconds: roundingSeconds }
-  );
-  allRows.forEach((r, i) => (r.rounded = rounded[i]));
+  for (const rows of [bill, warnRows]) {
+    const rounded = roundQuartersPreservingTotal(
+      rows.map((r) => r.seconds),
+      { biasZero: true, unitSeconds: roundingSeconds }
+    );
+    rows.forEach((r, i) => (r.rounded = rounded[i]));
+  }
   const offRounded = roundQuartersPreservingTotal(
     timeOff.map((r) => r.seconds),
     { unitSeconds: roundingSeconds }

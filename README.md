@@ -416,7 +416,9 @@ Both views flag, in amber: **No billing tag**, **Multiple billing tags**, and in
 Individual also **Too long to bill individually** (over the billable maximum)
 and **Overlapping entries**. Warning rows are on-screen only: they do not count
 toward totals and never appear in exports, so the view and the export always
-agree.
+agree. They are rounded apart from the billed lines, so they never shift a billed
+figure. A warning under one rounding unit shows its unrounded time (`0h 04m`) and
+its description, so a stray short entry can still be found.
 
 ### Don't bill overtime
 
