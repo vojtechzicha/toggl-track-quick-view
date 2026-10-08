@@ -322,12 +322,11 @@ export function buildSummaryGrid({
   // summed from rounded cells. Mapped rows keep their fixed value: re-rounding
   // would break equality with the sub-client's sheet. Time-off rows are rounded
   // apart from the work, so the work's rounding never shifts a holiday line.
-  // Warning rows are rounded apart too, so unbilled time never moves a billed
-  // cell by a unit.
+  // Warning rows are not rounded: they are not billed, so their time never
+  // moves a billed cell by a unit, and the view shows it unrounded.
   const fixedRows = new Set([...mappedRows, ...timeOffRows]);
   const roundableRows = tagRows.filter((r) => !fixedRows.has(r));
   const timeOffList = [...timeOffRows];
-  const warnList = rows.filter((r) => r === UNTAGGED || r === MULTIPLE);
   const rounded = new Map<string, number>(); // key: `${dayIdx}|${rowKey}`
   const roundApart = (d: number, list: string[]) => {
     const adj = roundQuartersPreservingTotal(
@@ -339,7 +338,6 @@ export function buildSummaryGrid({
   for (const d of dayCols) {
     roundApart(d, roundableRows);
     roundApart(d, timeOffList);
-    roundApart(d, warnList);
     for (const r of mappedRows) rounded.set(`${d}|${r}`, mappedFixed.get(`${d}|${r}`) ?? 0);
   }
 
@@ -443,7 +441,8 @@ export function buildSummaryGrid({
   }
 
   // Day and grand totals exclude warning rows, matching the export, which omits
-  // them. Row totals include every row so the view can show warning hours.
+  // them. Warning rows are not rounded, so their row totals are zero; the view
+  // sums their raw cell time instead.
   const dayTotals = dayCols.map((d) =>
     tagRows.reduce((s, r) => s + (rounded.get(`${d}|${r}`) ?? 0), 0)
   );

@@ -3,15 +3,14 @@
 import { useMemo } from 'react';
 import { fmtHM, fmtHours } from '@/lib/calc';
 import { buildSummaryGrid } from '@/lib/timesheet/summary';
-import { DAY_LABELS, UNTAGGED, MULTIPLE } from '@/lib/timesheet/constants';
+import { DAY_LABELS, UNTAGGED, MULTIPLE, warnDisplaySeconds } from '@/lib/timesheet/constants';
 import type { TimesheetViewProps } from './types';
 import CopyButton from './CopyButton';
 
 const HOLIDAY_TITLE = 'Time off: no work expected. The weekly cap is one day lower.';
 const HOLIDAY_BILLED_TITLE =
   'Billed time off: no work expected. The time-off line bills, so the weekly cap stays whole.';
-const UNROUNDED_TITLE = 'Under one rounding unit, so shown unrounded. Not billed.';
-const UNROUNDED_TOTAL_TITLE = 'Unrounded, because a cell in this row is. Not billed.';
+const UNROUNDED_TITLE = 'Not billed, so shown unrounded.';
 
 /**
  * Summary view: the week as days (columns) × (project, billing code) rows, one
@@ -98,14 +97,9 @@ export default function SummaryTimesheet({
             // Warning rows always show.
             if (!warn && grid.rowTotals[ri] === 0) return null;
             const meta = grid.rowMeta.get(row);
-            // A warning cell under one rounding unit still shows, unrounded, so
-            // its entries can be found. Then the row total is unrounded too, so it
-            // adds up to what the cells show.
-            const isRawWarn = (d: number) => {
-              const raw = grid.cells.get(`${d}|${row}`)?.seconds ?? 0;
-              return !!warn && raw > 0 && raw < roundingSeconds;
-            };
-            const rawTotal = grid.dayCols.some(isRawWarn);
+            // Warning rows are not billed, so they show unrounded time (to the
+            // minute), and their total is the sum of the cells as shown.
+            const warnSecs = (d: number) => warnDisplaySeconds(grid.cells.get(`${d}|${row}`)?.seconds ?? 0);
             return (
               <tr key={row} className={warn ? 'ts-row-warn' : ''}>
                 <th className="ts-tag" scope="row">
@@ -124,10 +118,9 @@ export default function SummaryTimesheet({
                   )}
                 </th>
                 {grid.dayCols.map((d) => {
-                  const secs = grid.rounded.get(`${d}|${row}`) ?? 0;
+                  const secs = warn ? warnSecs(d) : grid.rounded.get(`${d}|${row}`) ?? 0;
                   const cell = grid.cells.get(`${d}|${row}`);
-                  const rawWarn = isRawWarn(d);
-                  if (secs === 0 && !rawWarn) {
+                  if (secs === 0) {
                     return (
                       <td key={d} className="ts-cell ts-empty">
                         —
@@ -138,9 +131,9 @@ export default function SummaryTimesheet({
                   return (
                     <td key={d} className="ts-cell">
                       <div className="ts-cell-head">
-                        {rawWarn ? (
+                        {warn ? (
                           <span className="ts-dur" title={UNROUNDED_TITLE}>
-                            {fmtHM(cell!.seconds)}
+                            {fmtHM(secs)}
                           </span>
                         ) : (
                           <span className="ts-dur">{fmtHours(secs)}</span>
@@ -164,9 +157,9 @@ export default function SummaryTimesheet({
                   );
                 })}
                 <td className="ts-cell ts-rowtotal">
-                  {rawTotal ? (
-                    <span title={UNROUNDED_TOTAL_TITLE}>
-                      {fmtHM(grid.dayCols.reduce((s, d) => s + (grid.cells.get(`${d}|${row}`)?.seconds ?? 0), 0))}
+                  {warn ? (
+                    <span title={UNROUNDED_TITLE}>
+                      {fmtHM(grid.dayCols.reduce((s, d) => s + warnSecs(d), 0))}
                     </span>
                   ) : (
                     fmtHours(grid.rowTotals[ri])

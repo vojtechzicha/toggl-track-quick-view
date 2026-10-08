@@ -35,6 +35,7 @@ const { parseBillingCode, stripCodeParens } = await import('../lib/calc.ts');
 const { buildSummaryGrid } = await import('../lib/timesheet/summary.ts');
 const { buildIndividualWeek } = await import('../lib/timesheet/individual.ts');
 const { buildExportDoc } = await import('../lib/export/model.ts');
+const { warnDisplaySeconds } = await import('../lib/timesheet/constants.ts');
 
 let checks = 0;
 const eq = (a: unknown, b: unknown, msg: string) => {
@@ -297,8 +298,8 @@ const byProject = { ...base, entries: mixed, billByProject: true };
 
 {
   // Monday: 7h52m on D1 and a stray 6-minute untagged entry. Rounded together,
-  // the stray minutes would lift D1 to 8h; rounded apart, D1 bills 7.75h and the
-  // warning row rounds to zero but keeps its raw time and description.
+  // the stray minutes would lift D1 to 8h. Warning rows are not rounded, so D1
+  // bills 7.75h and the warning keeps its raw time and description.
   const at = (h: number, m: number) => new Date(2026, 6, 6, h, m).getTime();
   const mk = (id: number, start: number, mins: number, tags: string[], description: string) => ({
     id,
@@ -325,7 +326,7 @@ const byProject = { ...base, entries: mixed, billByProject: true };
 
   const grid = buildSummaryGrid(stray)!;
   eq(grid.grandTotal, 7.75 * 3600, 'summary: untagged minutes do not lift the billed line');
-  eq(grid.rounded.get('2|untagged'), 0, 'summary: the stray entry rounds to zero on its own');
+  eq(grid.rounded.get('2|untagged') ?? 0, 0, 'summary: the warning row is not rounded or billed');
   eq(grid.cells.get('2|untagged')?.seconds, 360, 'summary: its raw time is kept for display');
   eq(grid.cells.get('2|untagged')?.desc, 'oops', 'summary: and its description');
 
@@ -333,8 +334,13 @@ const byProject = { ...base, entries: mixed, billByProject: true };
   const mon = ind.days.find((d) => d.rows.some((r) => r.kind === 'warn'))!;
   const warnRow = mon.rows.find((r) => r.kind === 'warn')!;
   eq(mon.total, 7.75 * 3600, 'individual: untagged minutes do not lift the billed line');
-  eq(warnRow.rounded, 0, 'individual: the stray entry rounds to zero on its own');
+  eq(warnRow.rounded, 0, 'individual: the warning row is not rounded or billed');
   eq(warnRow.seconds, 360, 'individual: its raw time is kept for display');
+
+  // Shown to the minute, never below one, so row totals add up to their cells.
+  eq(warnDisplaySeconds(0), 0, 'no time shows as nothing');
+  eq(warnDisplaySeconds(20), 60, 'a few stray seconds still show as a minute');
+  eq(warnDisplaySeconds(6 * 60 + 20), 6 * 60, 'otherwise to the nearest minute');
 }
 
 console.log(`✓ ${checks} billing-code checks passed`);

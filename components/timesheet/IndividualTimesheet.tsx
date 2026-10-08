@@ -3,7 +3,7 @@
 import { useMemo } from 'react';
 import { fmtHM, fmtHours, fmtTimeOfDay } from '@/lib/calc';
 import { buildIndividualWeek, warnLabel, type WarnKind } from '@/lib/timesheet/individual';
-import { DAY_LABELS } from '@/lib/timesheet/constants';
+import { DAY_LABELS, warnDisplaySeconds } from '@/lib/timesheet/constants';
 import type { TimesheetViewProps } from './types';
 import CopyButton from './CopyButton';
 
@@ -124,14 +124,10 @@ export default function IndividualTimesheet({
                       <tr key={row.key} className="ts-row-warn">
                         <td className="ind-time ind-empty">—</td>
                         <td className="ind-hours">
-                          {/* Under one rounding unit: unrounded, so the entries can be found. */}
-                          {row.seconds > 0 && row.seconds < roundingSeconds ? (
-                            <span title="Under one rounding unit, so shown unrounded. Not billed.">
-                              {fmtHM(row.seconds)}
-                            </span>
-                          ) : (
-                            fmtHours(row.rounded)
-                          )}
+                          {/* Not billed, so unrounded: a stray short entry can still be found. */}
+                          <span title="Not billed, so shown unrounded.">
+                            {fmtHM(warnDisplaySeconds(row.seconds))}
+                          </span>
                         </td>
                         <td className="ind-code" colSpan={2}>
                           <span className="tag-warn amber" title="Fix these entries">

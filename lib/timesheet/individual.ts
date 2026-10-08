@@ -185,7 +185,7 @@ function floorToUnit(ms: number, unitMs: number, anchor: number): number {
   return anchor + Math.floor((ms - anchor) / unitMs) * unitMs;
 }
 
-/** A day split into billable lines and warning aggregates, rounded. */
+/** A day split into billable lines (rounded) and warning aggregates (not rounded). */
 interface ClassifiedDay {
   bill: Row[];
   warnRows: Row[];
@@ -197,7 +197,7 @@ interface ClassifiedDay {
 
 /**
  * Split one day's entries into billable lines and warning aggregates, and round
- * them.
+ * the billable lines.
  *
  * Consecutive same-code entries on the same project combine while the gap is at
  * most an hour and the total stays within the billable cap. Rounding preserves
@@ -367,19 +367,18 @@ function classifyDay(
     lastStopMs = e.stopMs;
   }
 
-  // Round billable lines, biased toward would-be zeros. Warning rows are rounded
-  // apart, so unbilled time never moves a billed line by a unit. Linked-code
-  // aggregates are rounded on their own grid later.
+  // Round billable lines, biased toward would-be zeros. Warning rows are not
+  // rounded: they are not billed, so their time never moves a billed line by a
+  // unit, and the view shows it unrounded. Linked-code aggregates are rounded on
+  // their own grid later.
   const warnRows = ([UNTAGGED, MULTIPLE, TOOLONG] as WarnKind[])
     .map((k) => warnBuckets[k])
     .filter((r): r is Row => r !== null);
-  for (const rows of [bill, warnRows]) {
-    const rounded = roundQuartersPreservingTotal(
-      rows.map((r) => r.seconds),
-      { biasZero: true, unitSeconds: roundingSeconds }
-    );
-    rows.forEach((r, i) => (r.rounded = rounded[i]));
-  }
+  const rounded = roundQuartersPreservingTotal(
+    bill.map((r) => r.seconds),
+    { biasZero: true, unitSeconds: roundingSeconds }
+  );
+  bill.forEach((r, i) => (r.rounded = rounded[i]));
   const offRounded = roundQuartersPreservingTotal(
     timeOff.map((r) => r.seconds),
     { unitSeconds: roundingSeconds }
