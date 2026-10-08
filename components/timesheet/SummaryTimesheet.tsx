@@ -101,10 +101,10 @@ export default function SummaryTimesheet({
             // A warning cell under one rounding unit still shows, unrounded, so
             // its entries can be found. Then the row total is unrounded too, so it
             // adds up to what the cells show.
-            const isRawWarn = (d: number) =>
-              !!warn &&
-              (grid.rounded.get(`${d}|${row}`) ?? 0) === 0 &&
-              (grid.cells.get(`${d}|${row}`)?.seconds ?? 0) > 0;
+            const isRawWarn = (d: number) => {
+              const raw = grid.cells.get(`${d}|${row}`)?.seconds ?? 0;
+              return !!warn && raw > 0 && raw < roundingSeconds;
+            };
             const rawTotal = grid.dayCols.some(isRawWarn);
             return (
               <tr key={row} className={warn ? 'ts-row-warn' : ''}>

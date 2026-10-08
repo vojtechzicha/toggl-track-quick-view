@@ -125,7 +125,7 @@ export default function IndividualTimesheet({
                         <td className="ind-time ind-empty">—</td>
                         <td className="ind-hours">
                           {/* Under one rounding unit: unrounded, so the entries can be found. */}
-                          {row.rounded === 0 && row.seconds > 0 ? (
+                          {row.seconds > 0 && row.seconds < roundingSeconds ? (
                             <span title="Under one rounding unit, so shown unrounded. Not billed.">
                               {fmtHM(row.seconds)}
                             </span>
