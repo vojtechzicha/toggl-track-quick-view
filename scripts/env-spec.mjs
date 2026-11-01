@@ -129,6 +129,38 @@ export const ENV_SPEC = [
         : 'should be at least 8 characters',
   },
 
+  // -- Claude connector (MCP) ------------------------------------------------
+  {
+    name: 'APP_TIME_ZONE',
+    scope: 'server',
+    description:
+      'IANA time zone for the Claude connector: local times in its tools, and the day and week boundaries of the timesheets it computes. Defaults to Europe/Prague. The dashboard itself uses the browser\'s zone.',
+    check: (value) => {
+      try {
+        new Intl.DateTimeFormat('en', { timeZone: value });
+        return null;
+      } catch {
+        return 'must be an IANA time zone such as Europe/Prague';
+      }
+    },
+  },
+  {
+    name: 'MCP_PUBLIC_URL',
+    scope: 'server',
+    description:
+      'Public origin of the Claude connector (e.g. https://track.zicha.dev), when a proxy hides the request host. Empty: taken from each request, which is right on Vercel.',
+    check: (value) =>
+      /^https?:\/\/[^/\s]+\/?$/.test(value) ? null : 'must be an origin like https://track.zicha.dev, without a path',
+  },
+  {
+    name: 'MCP_EXTRA_REDIRECT_URIS',
+    scope: 'server',
+    description:
+      'Comma-separated OAuth redirect URIs the connector accepts besides Claude\'s own and loopback addresses, e.g. for the MCP Inspector.',
+    check: (value) =>
+      value.split(',').every((u) => /^https?:\/\/\S+$/.test(u.trim())) ? null : 'must be comma-separated http(s) URLs',
+  },
+
   // -- PDF template pack (build time only) ------------------------------------
   {
     name: 'PDF_TEMPLATE_PACK_REPO',

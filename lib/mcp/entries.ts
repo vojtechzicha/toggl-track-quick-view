@@ -1,0 +1,279 @@
+// Pure helpers behind the time-entry tools: resolving projects and tags,
+// validating a batch before anything is written, and the compact shapes the
+// tools return. No I/O, so scripts/check-mcp.ts can test them.
+
+import type { TimeEntry } from '@/lib/calc';
+import type { EntryWrite, TogglAccount, TogglProject } from '@/lib/toggl/server';
+import { fmtClock, fmtDate, fmtLocal, hours, parseInstant, weekStartOf } from './time';
+
+/** Longest single entry the tools accept. Longer is almost always a typo. */
+export const MAX_ENTRY_SECONDS = 16 * 3600;
+
+// ─── Resolution ─────────────────────────────────────────────────────────────
+
+export type Resolved<T> = { ok: true; value: T } | { ok: false; error: string };
+
+const lc = (s: string) => s.trim().toLowerCase();
+
+/** A project by id or name (exact, then case-insensitive). Archived projects are refused. */
+export function resolveProject(account: TogglAccount, input: string | number): Resolved<TogglProject> {
+  const asId = typeof input === 'number' ? input : /^\d+$/.test(input.trim()) ? Number(input) : null;
+  let match: TogglProject[] = [];
+  if (asId !== null) match = account.projects.filter((p) => p.id === asId);
+  if (match.length === 0 && typeof input === 'string') {
+    match = account.projects.filter((p) => p.name === input.trim());
+    if (match.length === 0) match = account.projects.filter((p) => lc(p.name) === lc(input));
+  }
+  if (match.length === 0) return { ok: false, error: `Unknown project "${input}".` };
+  if (match.length > 1) {
+    return { ok: false, error: `"${input}" matches several projects; use its id (${match.map((p) => p.id).join(', ')}).` };
+  }
+  if (!match[0].active) return { ok: false, error: `Project "${match[0].name}" is archived.` };
+  return { ok: true, value: match[0] };
+}
+
+/**
+ * A tag's canonical name: exact, case-insensitive, or the one tag whose first
+ * word is the input ("D-123" finds "D-123 Phase 2"). Null when unknown.
+ */
+export function resolveTag(account: TogglAccount, input: string): Resolved<string> {
+  const v = input.trim();
+  if (!v) return { ok: false, error: 'Empty tag.' };
+  const exact = account.tags.find((t) => t.name === v);
+  if (exact) return { ok: true, value: exact.name };
+  const ci = account.tags.filter((t) => lc(t.name) === lc(v));
+  if (ci.length === 1) return { ok: true, value: ci[0].name };
+  const word = account.tags.filter((t) => t.name.split(/\s+/)[0] === v);
+  if (word.length === 1) return { ok: true, value: word[0].name };
+  if (word.length > 1) {
+    return { ok: false, error: `Tag "${v}" is ambiguous: ${word.map((t) => `"${t.name}"`).join(', ')}.` };
+  }
+  return { ok: false, error: `Unknown tag "${v}".` };
+}
+
+/** Tags in a list: resolved names, or the new ones passed through when allowed. */
+export function resolveTags(
+  account: TogglAccount,
+  inputs: string[],
+  allowNew: boolean
+): { tags: string[]; created: string[]; errors: string[] } {
+  const tags: string[] = [];
+  const created: string[] = [];
+  const errors: string[] = [];
+  for (const t of inputs) {
+    const r = resolveTag(account, t);
+    if (r.ok) {
+      if (!tags.includes(r.value)) tags.push(r.value);
+    } else if (allowNew && r.error.startsWith('Unknown tag')) {
+      const name = t.trim();
+      if (!tags.includes(name)) tags.push(name);
+      created.push(name);
+    } else {
+      errors.push(r.error);
+    }
+  }
+  return { tags, created, errors };
+}
+
+// ─── Read shapes ────────────────────────────────────────────────────────────
+
+export interface Span {
+  startMs: number;
+  endMs: number;
+  running: boolean;
+}
+
+export function spanOf(e: TimeEntry, nowMs: number): Span {
+  const startMs = Date.parse(e.start);
+  const running = e.duration < 0 || !e.stop;
+  const endMs = running ? nowMs : e.stop ? Date.parse(e.stop) : startMs + e.duration * 1000;
+  return { startMs, endMs: Math.max(startMs, endMs), running };
+}
+
+export interface CompactEntry {
+  id: number;
+  date: string;
+  start: string; // HH:MM local
+  stop: string | null; // HH:MM local; null while running
+  hours: number;
+  project: string | null;
+  project_id: number | null;
+  description: string;
+  tags: string[];
+  running?: true;
+}
+
+export function compactEntry(e: TimeEntry, account: TogglAccount, nowMs: number): CompactEntry {
+  const s = spanOf(e, nowMs);
+  const project = e.project_id ? account.projects.find((p) => p.id === e.project_id) : undefined;
+  return {
+    id: e.id,
+    date: fmtDate(s.startMs),
+    start: fmtClock(s.startMs),
+    stop: s.running ? null : fmtClock(s.endMs),
+    hours: hours((s.endMs - s.startMs) / 1000),
+    project: project?.name ?? (e.project_id ? `#${e.project_id}` : null),
+    project_id: e.project_id ?? null,
+    description: e.description ?? '',
+    tags: e.tags ?? [],
+    ...(s.running ? { running: true as const } : {}),
+  };
+}
+
+/** Hours per day and per Sat–Fri week, as the dashboard counts them. */
+export function totals(entries: TimeEntry[], nowMs: number) {
+  const day = new Map<string, number>();
+  const week = new Map<string, number>();
+  for (const e of entries) {
+    const s = spanOf(e, nowMs);
+    const secs = (s.endMs - s.startMs) / 1000;
+    const d = fmtDate(s.startMs);
+    day.set(d, (day.get(d) ?? 0) + secs);
+    const w = fmtDate(weekStartOf(s.startMs));
+    week.set(w, (week.get(w) ?? 0) + secs);
+  }
+  return {
+    days: [...day].sort(([a], [b]) => a.localeCompare(b)).map(([date, s]) => ({ date, hours: hours(s) })),
+    weeks: [...week]
+      .sort(([a], [b]) => a.localeCompare(b))
+      .map(([saturday, s]) => ({ week_starting_saturday: saturday, hours: hours(s) })),
+  };
+}
+
+// ─── Write planning ─────────────────────────────────────────────────────────
+
+export interface EntryInput {
+  start: string;
+  stop?: string;
+  duration_minutes?: number;
+  description: string;
+  project: string | number;
+  tags?: string[];
+  billable?: boolean;
+}
+
+export interface PlannedEntry {
+  index: number;
+  write: EntryWrite;
+  /** The same entry already in Toggl (same start minute, project and description). */
+  duplicateOf: number | null;
+  /** Existing entries (and earlier batch items, as "#n") it overlaps. */
+  overlaps: string[];
+  newTags: string[];
+  summary: string;
+}
+
+const minuteOf = (ms: number) => Math.floor(ms / 60000);
+const sameText = (a: string | undefined, b: string | undefined) => (a ?? '').trim() === (b ?? '').trim();
+
+/** Start, stop and duration from either `stop` or `duration_minutes`. */
+export function resolveTimes(
+  start: string,
+  stop: string | undefined,
+  durationMinutes: number | undefined
+): Resolved<{ startMs: number; stopMs: number }> {
+  const startMs = parseInstant(start);
+  if (startMs === null) {
+    return { ok: false, error: `start "${start}" is not a time (local "YYYY-MM-DDTHH:MM" or ISO with offset).` };
+  }
+  if ((stop === undefined) === (durationMinutes === undefined)) {
+    return { ok: false, error: 'Give exactly one of stop or duration_minutes.' };
+  }
+  let stopMs: number;
+  if (stop !== undefined) {
+    const parsed = parseInstant(stop);
+    if (parsed === null) return { ok: false, error: `stop "${stop}" is not a time.` };
+    stopMs = parsed;
+  } else {
+    stopMs = startMs + Math.round(durationMinutes! * 60) * 1000;
+  }
+  if (stopMs <= startMs) return { ok: false, error: 'stop must be after start.' };
+  if (stopMs - startMs > MAX_ENTRY_SECONDS * 1000) {
+    return { ok: false, error: `Longer than ${MAX_ENTRY_SECONDS / 3600}h; split it.` };
+  }
+  return { ok: true, value: { startMs, stopMs } };
+}
+
+/**
+ * Validate a batch against the account and the entries already in Toggl.
+ * Nothing is written unless `errors` is empty.
+ */
+export function planEntries(
+  inputs: EntryInput[],
+  account: TogglAccount,
+  existing: TimeEntry[],
+  opts: { allowNewTags: boolean; nowMs: number }
+): { planned: PlannedEntry[]; errors: string[] } {
+  const errors: string[] = [];
+  const planned: PlannedEntry[] = [];
+  const spans = existing.map((e) => ({ e, ...spanOf(e, opts.nowMs) }));
+
+  inputs.forEach((input, index) => {
+    const at = `#${index}`;
+    const times = resolveTimes(input.start, input.stop, input.duration_minutes);
+    const project = resolveProject(account, input.project);
+    const tags = resolveTags(account, input.tags ?? [], opts.allowNewTags);
+    const problems = [
+      ...(times.ok ? [] : [times.error]),
+      ...(project.ok ? [] : [project.error]),
+      ...tags.errors,
+    ];
+    if (!input.description.trim()) problems.push('Empty description.');
+    if (problems.length > 0 || !times.ok || !project.ok) {
+      errors.push(`${at}: ${problems.join(' ')}`);
+      return;
+    }
+    const { startMs, stopMs } = times.value;
+    const write: EntryWrite = {
+      description: input.description.trim(),
+      project_id: project.value.id,
+      tags: tags.tags,
+      start: new Date(startMs).toISOString(),
+      stop: new Date(stopMs).toISOString(),
+      duration: Math.round((stopMs - startMs) / 1000),
+      billable: input.billable ?? false,
+    };
+    const duplicate = spans.find(
+      (s) =>
+        minuteOf(s.startMs) === minuteOf(startMs) &&
+        s.e.project_id === project.value.id &&
+        sameText(s.e.description, write.description)
+    );
+    const overlaps = [
+      ...spans
+        .filter((s) => s.e !== duplicate?.e && s.startMs < stopMs && s.endMs > startMs)
+        .map((s) => String(s.e.id)),
+      // Batch items skipped as duplicates are already counted as existing entries.
+      ...planned
+        .filter((p) => p.duplicateOf === null)
+        .filter((p) => Date.parse(p.write.start) < stopMs && Date.parse(p.write.stop) > startMs)
+        .map((p) => `#${p.index}`),
+    ];
+    planned.push({
+      index,
+      write,
+      duplicateOf: duplicate ? duplicate.e.id : null,
+      overlaps,
+      newTags: tags.created,
+      summary: `${fmtLocal(startMs)}–${fmtClock(stopMs)} ${project.value.name}: ${write.description}${
+        write.tags.length ? ` [${write.tags.join(', ')}]` : ''
+      }`,
+    });
+  });
+
+  return { planned, errors };
+}
+
+/** The local-midnight window that covers every planned entry, padded a day each side. */
+export function coveringWindow(planned: { write: EntryWrite }[]): { startISO: string; endISO: string } | null {
+  if (planned.length === 0) return null;
+  const starts = planned.map((p) => Date.parse(p.write.start));
+  const stops = planned.map((p) => Date.parse(p.write.stop));
+  const a = new Date(Math.min(...starts));
+  a.setHours(0, 0, 0, 0);
+  a.setDate(a.getDate() - 1);
+  const b = new Date(Math.max(...stops));
+  b.setHours(0, 0, 0, 0);
+  b.setDate(b.getDate() + 2);
+  return { startISO: a.toISOString(), endISO: b.toISOString() };
+}

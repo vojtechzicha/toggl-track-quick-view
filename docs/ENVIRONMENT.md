@@ -92,6 +92,19 @@ nothing is fetched and the app offers only its generic Timesheet template.
   never ships without its templates. The exception is a network failure when a
   checkout is already on disk: the script keeps it and carries on.
 
+### Claude connector: `APP_TIME_ZONE`, `MCP_PUBLIC_URL`, `MCP_EXTRA_REDIRECT_URIS`
+
+The connector at `/api/mcp` is on whenever `MONGODB_URI` and `APP_PASSWORD` are
+set ([MCP.md](MCP.md)). Its tools take and return local times, and the
+timesheets it computes have day and week boundaries, so it needs a zone:
+`APP_TIME_ZONE`, default Europe/Prague, set as a literal in both templates.
+The route assigns it to `process.env.TZ`, because Vercel functions run in UTC.
+The dashboard is unaffected; it uses the browser's zone.
+
+`MCP_PUBLIC_URL` pins the public origin when a proxy hides the request host;
+blank is right on Vercel. `MCP_EXTRA_REDIRECT_URIS` adds OAuth callbacks
+besides Claude's and loopback addresses. Both are blank everywhere.
+
 ### Timestamping: `TSA_URL` and `TSA_CREDENTIALS`
 
 `TSA_URL` is an RFC 3161 timestamp authority, proxied by `/api/timestamp`. With
@@ -250,6 +263,7 @@ non-secret values included.
 | `APP_PASSWORD` | secret | Its own value, so a leaked preview password does not open production. |
 | `PDF_TEMPLATE_PACK_REPO` | https remote | Same Vercel variable. |
 | `PDF_TEMPLATE_PACK_TOKEN` | secret | Same Vercel variable; one PAT serves both. |
+| `APP_TIME_ZONE` | `Europe/Prague` | Same Vercel variable. |
 
 Preview and production share one Atlas cluster and one database user. Only
 `MONGODB_DB` keeps a branch deployment from writing to the live settings, so the

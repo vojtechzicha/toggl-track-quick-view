@@ -11,6 +11,7 @@ entries. Next.js App Router, deployed on Vercel at track.zicha.dev.
 - `docs/ENVIRONMENT.md` is the configuration guide: templates, 1Password,
   Vercel, every variable.
 - `docs/pdf-signing-v2.md` covers PDF signing.
+- `docs/MCP.md` covers the Claude connector: tools, OAuth, quota handling.
 
 ## Commands
 
@@ -35,6 +36,7 @@ pnpm check:templates  # PDF template registry (app + pack)
 pnpm check:fonts      # Fonts and pdfmake VFS for the registered templates
 pnpm check:signature  # PDF signing against scripts/fixtures/
 pnpm check:pwa        # Which browsers get the native install prompt vs the guide
+pnpm check:mcp        # Claude connector: OAuth flow, local times, batch planning, timesheet
 pnpm check:pack       # The pack's own checks, if one is checked out
 
 pnpm build            # Sync the pack, next build
@@ -115,6 +117,14 @@ before `dev` and `build`, driven by `PDF_TEMPLATE_PACK_REPO` / `_REF` / `_TOKEN`
 - Old tabs compare their build id against `GET /api/version` and ask to refresh
   (`components/UpdateHint.tsx`). This matters with settings sync: a tab on an
   old build drops settings keys it doesn't know on its next save.
+- The MCP tools spend the same Toggl budget as the dashboard. Every write is
+  one request, so they stop at `QUOTA_RESERVE` (lib/toggl/server.ts) and say
+  what to re-send. Keep any new tool cache-first; never loop over Toggl.
+- The MCP route sets `process.env.TZ` to `APP_TIME_ZONE`: the timesheet
+  builders work in local time and Vercel runs in UTC. Server code must not
+  assume UTC.
+- MCP grants store a fingerprint of `APP_PASSWORD`; rotating it disconnects
+  every Claude connector too.
 - `beta.track.zicha.dev` follows the newest preview
   (`.github/workflows/preview-alias.yml`), so preview sessions and PWA installs
   survive redeploys.

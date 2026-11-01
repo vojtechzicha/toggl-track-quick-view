@@ -10,6 +10,7 @@ import { NextRequest } from 'next/server';
 
 import { cacheIntervalSec, cachedToggl } from '@/lib/serverCache';
 import { gateEnabled, verifyToken } from '@/lib/serverAuth';
+import { recordQuota } from '@/lib/toggl/server';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -82,6 +83,8 @@ export async function GET(
       },
       cache: 'no-store',
     });
+    // Only the server token's budget is shared with the MCP tools.
+    if (!headerToken) recordQuota(joined, res.headers);
 
     const text = await res.text();
     return new Response(text, {

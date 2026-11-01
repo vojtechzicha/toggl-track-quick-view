@@ -41,6 +41,19 @@ MONGODB_DB=
 
 APP_PASSWORD=op://Development/toggl-track-quick-view-prod/APP_PASSWORD
 
+# -- Claude connector (MCP) -------------------------------------------------
+# Served at /api/mcp once MONGODB_URI and APP_PASSWORD are set. Local times in
+# its tools and its timesheets use this zone; Vercel functions run in UTC.
+
+APP_TIME_ZONE=Europe/Prague
+
+# Blank: the origin comes from the request host, which on Vercel is right.
+# Tokens are bound to the origin that issued them.
+
+MCP_PUBLIC_URL=
+
+MCP_EXTRA_REDIRECT_URIS=
+
 # -- PDF template pack --------------------------------------------------------
 # The PDF templates in actual use come from this private repository. Without it
 # the build still succeeds but offers only the generic Timesheet, so the spec

@@ -74,3 +74,16 @@ export function verifyPassword(input: string | null | undefined): boolean {
   const b = crypto.createHash('sha256').update(expected).digest();
   return crypto.timingSafeEqual(a, b);
 }
+
+/**
+ * A stable fingerprint of the current APP_PASSWORD (never the password
+ * itself). MCP grants store it, so rotating the password also disconnects
+ * every Claude connector, as it ends every browser session.
+ */
+export function passwordFingerprint(): string {
+  return crypto
+    .createHmac('sha256', 'tqv-mcp-grant-v1')
+    .update(process.env.APP_PASSWORD || '')
+    .digest('base64url')
+    .slice(0, 22);
+}

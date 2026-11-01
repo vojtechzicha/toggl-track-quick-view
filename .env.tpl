@@ -45,6 +45,21 @@ APP_PASSWORD=
 # Keep the connection string a local literal so the default can never reach
 # production.
 
+# -- Claude connector (MCP) -------------------------------------------------
+# Needs the database block above and APP_PASSWORD. Times in its tools and the
+# timesheets it computes use this zone (blank means Europe/Prague).
+
+APP_TIME_ZONE=Europe/Prague
+
+# Blank: the public origin comes from each request (http://localhost:3000 here).
+
+MCP_PUBLIC_URL=
+
+# Extra OAuth callbacks besides Claude's and loopback, comma-separated. The MCP
+# Inspector's callback is a loopback address, so it needs nothing here.
+
+MCP_EXTRA_REDIRECT_URIS=
+
 # -- PDF template pack --------------------------------------------------------
 # Private repository with the engagement-specific PDF templates, checked out
 # into pdf-templates/ before `pnpm dev` and `pnpm build`. Blank it if you have

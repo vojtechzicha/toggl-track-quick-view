@@ -11,7 +11,8 @@ reading from Toggl Track. Open it on a spare monitor and see at a glance:
 - **When to take a break**: an alert after 4.5h of continuous work.
 
 It also builds a copy-paste-ready **timesheet** for the week and exports it as
-CSV, XLSX or PDF.
+CSV, XLSX or PDF, and serves a [Claude connector](#claude-connector-mcp) so
+Claude can read, check and write the time entries.
 
 You normally pick one project. In Settings, **Track more than one project** lets
 you select several; they then count as one pool for every target, ring and break
@@ -129,6 +130,23 @@ it receives) and the refresh interval.
 **Without a database**, **Sync & transfer** can download the whole setup as a
 JSON file (without the token) and import it on another device. This works on
 every deployment.
+
+## Claude connector (MCP)
+
+With a database and a password (`MONGODB_URI`, `APP_PASSWORD`), the app serves
+a remote MCP server at `/api/mcp`. Add it to claude.ai (Settings → Connectors →
+Add custom connector, `https://track.zicha.dev/api/mcp`) or to Claude Code
+(`claude mcp add --transport http --scope user toggl-quick-view
+https://track.zicha.dev/api/mcp`); approving asks for the app password.
+
+Claude can then list entries, create and update them, and get any stored
+workspace's timesheet computed exactly as the Timesheet page computes it,
+with the same warnings (missing or multiple billing tags, overlaps, entries too
+long to bill alone) and a CSV export. Writes spend the same Toggl budget as the
+dashboard, stop while 5 requests are left, and can be re-sent safely: entries
+already in Toggl are skipped. **Settings → Claude connector** lists the
+connected apps. Tools, quota handling and security:
+[docs/MCP.md](docs/MCP.md).
 
 ## Install as an app
 

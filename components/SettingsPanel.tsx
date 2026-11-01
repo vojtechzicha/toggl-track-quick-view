@@ -16,6 +16,7 @@ import {
 import { mappingGridCompatible, type CodeMapping } from '@/lib/timesheet/mapping';
 import { EMPTY_EXPORT_FIELDS, type ExportFieldValues } from '@/lib/exportFields';
 import InstallAppBlock from '@/components/InstallAppBlock';
+import McpConnections from '@/components/McpConnections';
 
 export type TimesheetMode = 'summary' | 'individual';
 
@@ -524,6 +525,8 @@ export default function SettingsPanel({
   // ---- Sync & transfer ----
   // Starts open on a notice; a pending conflict forces it open below.
   const [syncOpen, setSyncOpen] = useState(!!syncNotice);
+  // Claude connector: loads its list only when opened.
+  const [mcpOpen, setMcpOpen] = useState(false);
   const [syncPw, setSyncPw] = useState('');
   const [importMsg, setImportMsg] = useState<string | null>(null);
   const importInputRef = useRef<HTMLInputElement>(null);
@@ -1508,6 +1511,17 @@ export default function SettingsPanel({
             </p>
           </div>
         </details>
+
+        {sync?.enabled && !sync.needsAuth && (
+          <details
+            className="advanced ws-block"
+            open={mcpOpen}
+            onToggle={(e) => setMcpOpen((e.target as HTMLDetailsElement).open)}
+          >
+            <summary>Claude connector</summary>
+            <McpConnections open={mcpOpen} />
+          </details>
+        )}
 
         {/* Per device, like the refresh interval */}
         <InstallAppBlock />
