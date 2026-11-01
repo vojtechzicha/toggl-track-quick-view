@@ -15,6 +15,7 @@ import { cacheIntervalSec } from '@/lib/serverCache';
 import { gateEnabled } from '@/lib/serverAuth';
 import { syncEnabled, syncMisconfigured } from '@/lib/sync/server';
 import { tsaUrl } from '@/lib/serverTimestamp';
+import { mirrorEnabled, pullIntervalSec } from '@/lib/mirror/sync';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -22,14 +23,19 @@ export const dynamic = 'force-dynamic';
 export async function GET() {
   const serverToken = !!process.env.TOGGL_API_TOKEN;
   const interval = cacheIntervalSec();
-  const cacheEnabled = serverToken && interval !== null;
+  const mirror = mirrorEnabled();
+  // With the local copy, entries come from /api/entries, refreshed from
+  // Toggl once per interval for every device: a shared cache, as far as the
+  // client is concerned.
+  const cacheEnabled = mirror || (serverToken && interval !== null);
   return Response.json({
+    mirror: { enabled: mirror },
     serverToken,
     passwordRequired: gateEnabled(),
     misconfigured: null,
     cache: {
       enabled: cacheEnabled,
-      intervalSec: cacheEnabled ? interval : null,
+      intervalSec: mirror ? pullIntervalSec() : cacheEnabled ? interval : null,
     },
     sync: {
       enabled: syncEnabled(),

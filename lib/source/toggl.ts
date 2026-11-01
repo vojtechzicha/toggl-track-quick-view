@@ -70,6 +70,36 @@ export const getEntries = (
     opts
   );
 
+// Set from /api/config: the server keeps a local copy of Toggl (lib/mirror)
+// and serves entries from it. Only for the server token.
+let viaMirror = false;
+export function setMirrorMode(enabled: boolean): void {
+  viaMirror = enabled;
+}
+
+async function mirrorEntries(startISO: string, endISO: string, opts?: { force?: boolean }) {
+  const auth = loadAuth();
+  const headers: Record<string, string> = {};
+  if (auth?.token) headers['x-app-auth'] = auth.token;
+  if (opts?.force) headers['x-toggl-refresh'] = '1';
+  const res = await fetch(
+    `/api/entries?start_date=${encodeURIComponent(startISO)}&end_date=${encodeURIComponent(endISO)}`,
+    { headers, cache: 'no-store' }
+  );
+  if (res.status === 401 && res.headers.get('x-app-auth') === 'required') {
+    clearAuth();
+    throw new AuthRequiredError();
+  }
+  if (!res.ok) throw new ApiError(res.status);
+  const at = Number(res.headers.get('x-toggl-fetched-at'));
+  const pending = Number(res.headers.get('x-mirror-pending'));
+  return {
+    entries: ((await res.json()) as TimeEntry[]) ?? [],
+    dataAtMs: Number.isFinite(at) && at > 0 ? at : null,
+    pending: Number.isFinite(pending) ? pending : 0,
+  };
+}
+
 export const togglBackend: TrackBackend = {
   hourlyRequestLimit: HOURLY_LIMIT,
 
@@ -87,6 +117,8 @@ export const togglBackend: TrackBackend = {
   },
 
   async fetchEntries(token, startISO, endISO, opts) {
+    // A browser-entered token reads its own account, never the server's copy.
+    if (viaMirror && !token) return mirrorEntries(startISO, endISO, opts);
     const { data, fetchedAtMs } = await tApiMeta<TimeEntry[]>(
       'me/time_entries',
       token,

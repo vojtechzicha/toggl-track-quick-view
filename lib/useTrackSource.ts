@@ -10,7 +10,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { getConfig } from '@/lib/source/config';
 import { hasValidAuth, login } from '@/lib/source/auth';
 import { errorDetail, isRateLimit, isAuthRequired } from '@/lib/source/errors';
-import { togglBackend } from '@/lib/source/toggl';
+import { setMirrorMode, togglBackend } from '@/lib/source/toggl';
 import type { FetchedEntries, TrackProject } from '@/lib/source/types';
 import { presetMatches } from '@/components/SettingsPanel';
 import type {
@@ -276,6 +276,8 @@ export interface UseTrackSource {
    * real data age, not receipt time. Unchanged while fetches fail.
    */
   lastUpdatedMs: number;
+  /** Changes in the server's local copy not yet sent to Toggl (0 without one). */
+  pendingToggl: number;
   nowMs: number;
   reqThisHour: number;
   cacheEnabled: boolean;
@@ -370,6 +372,7 @@ export function useTrackSource(): UseTrackSource {
 
   const [entries, setEntries] = useState<TimeEntry[]>([]);
   const [lastUpdatedMs, setLastUpdatedMs] = useState(0);
+  const [pendingToggl, setPendingToggl] = useState(0);
   const [nowMs, setNowMs] = useState(0);
   const [reqThisHour, setReqThisHour] = useState(0);
   const [livePollPaused, setLivePollPaused] = useState(false);
@@ -393,6 +396,8 @@ export function useTrackSource(): UseTrackSource {
     setHydrated(true);
     getConfig()
       .then((c) => {
+        // Before connect: the poll reads the server's local copy when there is one.
+        setMirrorMode(!!c.mirror?.enabled);
         setServerManaged(!!c.serverToken);
         setPasswordRequired(!!c.passwordRequired);
         setMisconfigured(c.misconfigured ?? null);
@@ -545,13 +550,14 @@ export function useTrackSource(): UseTrackSource {
       if (metered && !cacheEnabled) setReqThisHour(recordReqs(1));
       try {
         const win = pollWindow(new Date());
-        const { entries: ent, dataAtMs } = await backend.fetchEntries(
+        const { entries: ent, dataAtMs, pending } = await backend.fetchEntries(
           settings.token,
           new Date(win.startMs).toISOString(),
           new Date(win.endMs).toISOString()
         );
         if (cancelled) return;
         setEntries(ent ?? []);
+        setPendingToggl(pending ?? 0);
         setLastUpdatedMs(dataAtMs ?? Date.now());
         setFetchError(null);
         backoffStepRef.current = 0;
@@ -867,6 +873,7 @@ export function useTrackSource(): UseTrackSource {
     connect,
     entries,
     lastUpdatedMs,
+    pendingToggl,
     nowMs,
     reqThisHour,
     cacheEnabled,

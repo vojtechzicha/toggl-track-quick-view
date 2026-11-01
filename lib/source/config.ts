@@ -6,6 +6,8 @@ export interface AppConfig {
   /** A deployment problem the operator must fix, or null. */
   misconfigured: string | null;
   cache: { enabled: boolean; intervalSec: number | null };
+  /** Entries come from the server's local copy of Toggl (/api/entries, lib/mirror). */
+  mirror: { enabled: boolean };
   /** Cross-device settings sync availability (see app/api/sync). */
   sync: { enabled: boolean; misconfigured: string | null };
   /**
@@ -21,6 +23,7 @@ const CONFIG_FALLBACK: AppConfig = {
   passwordRequired: false,
   misconfigured: null,
   cache: { enabled: false, intervalSec: null },
+  mirror: { enabled: false },
   sync: { enabled: false, misconfigured: null },
   timestamp: { enabled: false },
 };

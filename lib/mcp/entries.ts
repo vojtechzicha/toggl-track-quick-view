@@ -3,7 +3,8 @@
 // tools return. No I/O, so scripts/check-mcp.ts can test them.
 
 import type { TimeEntry } from '@/lib/calc';
-import type { EntryWrite, TogglAccount, TogglProject } from '@/lib/toggl/server';
+import type { TogglAccount, TogglProject } from '@/lib/toggl/server';
+import { isoSecond, type EntryFields } from '@/lib/mirror/model';
 import { fmtClock, fmtDate, fmtLocal, hours, parseInstant, weekStartOf } from './time';
 
 /** Longest single entry the tools accept. Longer is almost always a typo. */
@@ -154,7 +155,8 @@ export interface EntryInput {
 
 export interface PlannedEntry {
   index: number;
-  write: EntryWrite;
+  /** The entry as the mirror stores it. */
+  write: EntryFields & { stop: string };
   /** The same entry already in Toggl (same start minute, project and description). */
   duplicateOf: number | null;
   /** Existing entries (and earlier batch items, as "#n") it overlaps. */
@@ -224,13 +226,13 @@ export function planEntries(
       return;
     }
     const { startMs, stopMs } = times.value;
-    const write: EntryWrite = {
+    const write = {
       description: input.description.trim(),
       project_id: project.value.id,
       tags: tags.tags,
-      start: new Date(startMs).toISOString(),
-      stop: new Date(stopMs).toISOString(),
-      duration: Math.round((stopMs - startMs) / 1000),
+      start: isoSecond(startMs),
+      stop: isoSecond(stopMs),
+      duration: Math.round((Math.floor(stopMs / 1000) * 1000 - Math.floor(startMs / 1000) * 1000) / 1000),
       billable: input.billable ?? false,
     };
     const duplicate = spans.find(
@@ -265,7 +267,7 @@ export function planEntries(
 }
 
 /** The local-midnight window that covers every planned entry, padded a day each side. */
-export function coveringWindow(planned: { write: EntryWrite }[]): { startISO: string; endISO: string } | null {
+export function coveringWindow(planned: { write: EntryFields & { stop: string } }[]): { startISO: string; endISO: string } | null {
   if (planned.length === 0) return null;
   const starts = planned.map((p) => Date.parse(p.write.start));
   const stops = planned.map((p) => Date.parse(p.write.stop));

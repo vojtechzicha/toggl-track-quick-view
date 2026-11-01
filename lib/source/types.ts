@@ -29,6 +29,8 @@ export interface FetchedEntries {
    * receipt time.
    */
   dataAtMs: number | null;
+  /** Changes in the server's local copy not yet in Toggl (mirror only). */
+  pending?: number;
 }
 
 export interface TrackBackend {

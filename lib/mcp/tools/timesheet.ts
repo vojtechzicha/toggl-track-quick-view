@@ -3,7 +3,9 @@
 
 import { z } from 'zod';
 import { wholeWeeksRange } from '@/lib/export/range';
-import { getAccount, getEntries } from '@/lib/toggl/server';
+import { getAccount } from '@/lib/toggl/server';
+import { readMirror } from '@/lib/mirror/read';
+import { statusOf, toTimeEntry } from '@/lib/mirror/model';
 import { readSyncPayload } from '@/lib/sync/server';
 import { dateRange, fmtLocal } from '../time';
 import { ToolError, defineTool } from '../tool-kit';
@@ -18,7 +20,7 @@ const getTimesheet = defineTool({
     "A stored workspace's timesheet for a date range, computed exactly as the app's Timesheet page and exports do " +
     '(rounding, merging, overtime cap, balancing, linked codes, time off), plus the checks the page flags: entries ' +
     'without a billing tag, with several, too long to bill alone, overlapping. Use it to verify entries after writing ' +
-    'them and before exporting. Whole weeks are loaded, so a range that starts or ends mid-week shows each day as the ' +
+    'them and before exporting; entries still waiting for Toggl are included (see entries_not_yet_in_toggl). Whole weeks are loaded, so a range that starts or ends mid-week shows each day as the ' +
     'screen does. format "csv" also returns the CSV export. PDF export and signing stay in the app (track.zicha.dev/timesheet).',
   access: 'read',
   input: {
@@ -30,7 +32,7 @@ const getTimesheet = defineTool({
     to: date.describe('Inclusive.'),
     view: z.enum(['summary', 'individual']).optional().describe("Default: the workspace's own view."),
     format: z.enum(['json', 'csv']).optional(),
-    fresh: z.boolean().optional().describe('Bypass the 2-minute entries cache.'),
+    fresh: z.boolean().optional().describe('Read Toggl now instead of using a recent copy.'),
   },
   handler: async ({ workspace, from, to, view, format, fresh }) => {
     let range;
@@ -50,14 +52,20 @@ const getTimesheet = defineTool({
       throw new ToolError(`Workspace "${ws.name}" tracks no project.`);
     }
     const load = wholeWeeksRange(range);
-    const [{ value: account }, entries] = await Promise.all([
-      getAccount(),
-      getEntries(new Date(load.fromMs).toISOString(), new Date(load.toMs).toISOString(), fresh ? 0 : undefined),
-    ]);
+    const [{ value: account }, read] = await Promise.all([getAccount(), readMirror(load.fromMs, load.toMs, { fresh })]);
+    const selected = new Set(ws.value.selectedProjects.map((p) => p.id));
+    const notInToggl = read.docs.filter(
+      (d) =>
+        d.fields.project_id !== null &&
+        selected.has(d.fields.project_id) &&
+        Date.parse(d.fields.start) >= range.fromMs &&
+        Date.parse(d.fields.start) < range.toMs &&
+        statusOf(d) !== 'synced'
+    ).length;
     const { doc, checks } = buildTimesheet({
       workspace: ws,
       accountName: account.fullname,
-      entries: entries.value,
+      entries: read.docs.map(toTimeEntry),
       fromMs: range.fromMs,
       toMs: range.toMs,
       view,
@@ -65,7 +73,10 @@ const getTimesheet = defineTool({
     });
     return {
       workspace: describeWorkspace(ws),
-      data_at: fmtLocal(entries.atMs),
+      toggl_read_at: read.dataAtMs ? fmtLocal(read.dataAtMs) : null,
+      ...(read.warning ? { warning: read.warning } : {}),
+      // Included in the figures; Toggl (and anything reading it directly) does not have them yet.
+      entries_not_yet_in_toggl: notInToggl,
       timesheet: compactDoc(doc),
       checks,
       ...(format === 'csv' ? { csv: toCSV(doc).replace(/^﻿/, '') } : {}),

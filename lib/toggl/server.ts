@@ -1,4 +1,5 @@
-// Server-side Toggl Track API client for the MCP tools, using TOGGL_API_TOKEN.
+// Server-side Toggl Track API client (TOGGL_API_TOKEN), for the mirror and
+// the MCP tools.
 //
 // Every response's quota headers are recorded in the database
 // (`toggl_quota`), so all serverless instances, the MCP tools and the
@@ -8,10 +9,10 @@
 // bucket /me/time_entries counts against is not documented, so quota is
 // recorded per path class as Toggl reports it, never estimated.
 //
-// Account data (projects, tags) and entry ranges are cached in `toggl_cache`,
-// so repeated tool calls don't spend the budget.
+// Account data (projects, tags) is cached in `toggl_cache` for a day. Time
+// entries live in the mirror (lib/mirror), which reads and writes them
+// through togglRequestMeta.
 
-import type { TimeEntry } from '@/lib/calc';
 import { getStoreDb } from '@/lib/store/mongo';
 
 const TOGGL_BASE = 'https://api.track.toggl.com/api/v9';
@@ -153,8 +154,6 @@ interface CacheDoc {
   at: Date;
   expires_at: Date;
   value: unknown;
-  /** Entry ids in `value`, for finding an entry's last known state. */
-  entry_ids?: number[];
 }
 
 let cacheIndexes: Promise<unknown> | null = null;
@@ -164,7 +163,6 @@ async function cacheCol() {
   if (!cacheIndexes) {
     cacheIndexes = Promise.all([
       db.collection('toggl_cache').createIndex({ expires_at: 1 }, { expireAfterSeconds: 0 }),
-      db.collection('toggl_cache').createIndex({ entry_ids: 1 }),
     ]).catch((e) => {
       cacheIndexes = null;
       throw e;
@@ -177,8 +175,7 @@ async function cacheCol() {
 async function cached<T>(
   key: string,
   maxAgeSec: number,
-  load: () => Promise<T>,
-  entryIds?: (v: T) => number[]
+  load: () => Promise<T>
 ): Promise<{ value: T; atMs: number; cached: boolean }> {
   const col = await cacheCol();
   const hit = await col.findOne({ _id: key });
@@ -192,21 +189,13 @@ async function cached<T>(
     {
       $set: {
         at,
-        // Kept a day, so an entry's last known state can still be found.
-        expires_at: new Date(at.getTime() + 24 * 3600 * 1000),
+        expires_at: new Date(at.getTime() + 2 * 24 * 3600 * 1000),
         value,
-        ...(entryIds ? { entry_ids: entryIds(value) } : {}),
       },
     },
     { upsert: true }
   );
   return { value, atMs: at.getTime(), cached: false };
-}
-
-/** Drop cached entry ranges (after a write), so the next read is fresh. */
-export async function invalidateEntries(): Promise<void> {
-  const col = await cacheCol();
-  await col.deleteMany({ _id: { $regex: '^entries:' } } as never);
 }
 
 // ─── Account ────────────────────────────────────────────────────────────────
@@ -257,72 +246,6 @@ export async function getAccount(opts: { refresh?: boolean } = {}) {
         .map((t) => ({ id: t.id, name: t.name }))
         .sort((a, b) => a.name.localeCompare(b.name)),
     };
-  });
-}
-
-// ─── Entries ────────────────────────────────────────────────────────────────
-
-export const ENTRIES_TTL_SEC = 120;
-
-/**
- * Entries overlapping [start, end). One request per range, cached for
- * `maxAgeSec` (0 forces a fresh read). Toggl caps one response at 1000
- * entries, which is about three months of normal tracking.
- */
-export async function getEntries(startISO: string, endISO: string, maxAgeSec = ENTRIES_TTL_SEC) {
-  return cached<TimeEntry[]>(
-    `entries:${startISO}:${endISO}`,
-    maxAgeSec,
-    async () =>
-      (await togglRequest<TimeEntry[] | null>(
-        'GET',
-        `/me/time_entries?start_date=${encodeURIComponent(startISO)}&end_date=${encodeURIComponent(endISO)}`
-      )) ?? [],
-    (entries) => entries.map((e) => e.id)
-  );
-}
-
-/**
- * The newest cached copy of an entry (from any range read in the last
- * `maxAgeSec`), or a fresh GET when none is cached.
- */
-export async function getEntry(id: number, maxAgeSec = 15 * 60): Promise<TimeEntry> {
-  const col = await cacheCol();
-  const hit = await col.find({ entry_ids: id }).sort({ at: -1 }).limit(1).next();
-  if (hit && Date.now() - hit.at.getTime() < maxAgeSec * 1000) {
-    const found = (hit.value as TimeEntry[]).find((e) => e.id === id);
-    if (found) return found;
-  }
-  return togglRequest<TimeEntry>('GET', `/me/time_entries/${id}`);
-}
-
-/** Toggl's write shape for one entry. */
-export interface EntryWrite {
-  description: string;
-  project_id: number | null;
-  tags: string[];
-  start: string; // UTC ISO
-  stop: string; // UTC ISO
-  duration: number; // seconds
-  billable?: boolean;
-}
-
-export async function createEntry(workspaceId: number, e: EntryWrite) {
-  return togglRequestMeta<TimeEntry>('POST', `/workspaces/${workspaceId}/time_entries`, {
-    ...e,
-    created_with: CREATED_WITH,
-    workspace_id: workspaceId,
-  });
-}
-
-export async function updateEntry(
-  workspaceId: number,
-  id: number,
-  patch: Partial<EntryWrite>
-) {
-  return togglRequestMeta<TimeEntry>('PUT', `/workspaces/${workspaceId}/time_entries/${id}`, {
-    ...patch,
-    workspace_id: workspaceId,
   });
 }
 

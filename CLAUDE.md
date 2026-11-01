@@ -37,6 +37,8 @@ pnpm check:fonts      # Fonts and pdfmake VFS for the registered templates
 pnpm check:signature  # PDF signing against scripts/fixtures/
 pnpm check:pwa        # Which browsers get the native install prompt vs the guide
 pnpm check:mcp        # Claude connector: OAuth flow, local times, batch planning, timesheet
+pnpm check:mirror     # Local Toggl copy: merge, push bodies, status (pure)
+pnpm test:mirror      # Pull/push loop + entry tools vs MongoDB and a fake Toggl (needs pnpm db)
 pnpm check:pack       # The pack's own checks, if one is checked out
 
 pnpm build            # Sync the pack, next build
@@ -117,9 +119,20 @@ before `dev` and `build`, driven by `PDF_TEMPLATE_PACK_REPO` / `_REF` / `_TOKEN`
 - Old tabs compare their build id against `GET /api/version` and ask to refresh
   (`components/UpdateHint.tsx`). This matters with settings sync: a tab on an
   old build drops settings keys it doesn't know on its next save.
-- The MCP tools spend the same Toggl budget as the dashboard. Every write is
-  one request, so they stop at `QUOTA_RESERVE` (lib/toggl/server.ts) and say
-  what to re-send. Keep any new tool cache-first; never loop over Toggl.
+- **With the server token and a database, entries live in a local copy**
+  (`lib/mirror`, README → "Local copy of Toggl"). The dashboard
+  (`/api/entries`), exports and MCP tools read it; writes are queued and pushed
+  within the quota (`QUOTA_RESERVE` stays for the dashboard). New code reads
+  and writes the mirror, never Toggl's entries directly. Only the browser-token
+  path still goes through `/api/toggl`.
+- Mirror documents are versioned: every local edit `$inc`s `version`, and the
+  pull and push only write with a version filter. Keep that, or a pull can
+  silently drop an edit made while it ran. Change merge rules in
+  `lib/mirror/model.ts` and cover them in `check:mirror`; run `test:mirror`
+  after touching `sync.ts`.
+- `.github/workflows/toggl-sync.yml` calls `/api/toggl-sync` every 10 minutes
+  (Hobby allows only daily Vercel crons). The route is unauthenticated on
+  purpose: it returns counts and cannot spend more than the app would.
 - The MCP route sets `process.env.TZ` to `APP_TIME_ZONE`: the timesheet
   builders work in local time and Vercel runs in UTC. Server code must not
   assume UTC.

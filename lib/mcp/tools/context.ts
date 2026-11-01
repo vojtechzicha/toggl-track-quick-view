@@ -34,8 +34,8 @@ const getContext = defineTool({
       active_workspace: active ? (active.id ?? active.name) : null,
       quota: {
         note:
-          `Free plan: 30 requests/hour per bucket, shared with the dashboard. Writes stop at ${QUOTA_RESERVE} left. ` +
-          'Figures are what Toggl reported on its last response.',
+          `Free plan: 30 requests/hour per bucket, shared with the dashboard. Queued writes are sent until ${QUOTA_RESERVE} are left; ` +
+          'tool calls never wait for it. Figures are what Toggl reported on its last response.',
         buckets: quota.map((q) => ({
           bucket: q.bucket,
           remaining: q.remaining,

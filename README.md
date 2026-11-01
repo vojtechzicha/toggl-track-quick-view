@@ -142,9 +142,9 @@ https://track.zicha.dev/api/mcp`); approving asks for the app password.
 Claude can then list entries, create and update them, and get any stored
 workspace's timesheet computed exactly as the Timesheet page computes it,
 with the same warnings (missing or multiple billing tags, overlaps, entries too
-long to bill alone) and a CSV export. Writes spend the same Toggl budget as the
-dashboard, stop while 5 requests are left, and can be re-sent safely: entries
-already in Toggl are skipped. **Settings → Claude connector** lists the
+long to bill alone) and a CSV export. Writes go to the [local copy of
+Toggl](#local-copy-of-toggl) at once and reach Toggl as its quota allows; a
+re-sent batch skips entries that already exist. **Settings → Claude connector** lists the
 connected apps. Tools, quota handling and security:
 [docs/MCP.md](docs/MCP.md).
 
@@ -785,6 +785,45 @@ The value is in **seconds**. Keep it at 120 or above on the Free plan. `1`,
 
 The cache lives in one server instance's memory. On serverless with several
 instances each keeps its own, which is never worse than no cache.
+
+### Local copy of Toggl
+
+With the server token, a database and a password (`TOGGL_API_TOKEN`,
+`MONGODB_URI`, `APP_PASSWORD`), the server keeps a copy of the time entries in
+MongoDB (`lib/mirror`) and the dashboard, timesheet, exports and the Claude
+connector all read from it. It replaces the shared server cache for entries;
+`TOGGL_CACHE_INTERVAL` sets how often it is refreshed (default 180s).
+
+- **Reading costs one request per interval**, whoever is watching: an
+  incremental pull (`since=`) returns every entry changed in Toggl since the
+  last one, deleted ones included. Past weeks and exports cost nothing once
+  read. The first use reads the last 13 weeks (4 requests); an older week is
+  read once when first opened. ↻ Refresh on the timesheet re-reads its week.
+- **Writes are queued.** Entries created or edited through the Claude
+  connector are saved at once, show everywhere in the app immediately, and go
+  to Toggl in the background, one request each, about 25 an hour (5 are kept
+  for the dashboard). Several edits to an entry before it is sent cost one
+  request; discarding an unsent entry costs none. The dashboard footer says how
+  many changes are waiting.
+- **Background runs** after each dashboard read and each connector write, and
+  every 10 minutes from `.github/workflows/toggl-sync.yml` (Vercel's Hobby plan
+  allows crons only daily). While changes wait, refreshes slow to 10 minutes so
+  the writes get the budget.
+- **Edits on both sides.** A pull merges per field: an edit made here and a
+  different one made in Toggl both survive. If both changed the same field,
+  this side's value is kept and the entry is marked as a conflict; an entry
+  deleted in Toggl while edited here is kept as a conflict too. The connector
+  lists and resolves them (`get_sync_status`, `resolve_conflicts`).
+- **No duplicates from lost answers.** If the server never hears back from a
+  create, the next attempt first pulls and adopts the entry if Toggl has it.
+  A create Toggl refuses (an archived project) is parked and reported, not
+  retried.
+- Once a day the current and previous week are re-read in full, to catch
+  anything an incremental pull missed.
+
+Toggl, and anything reading Toggl directly, sees a queued entry only once it is
+sent. Rules: `lib/mirror/model.ts` (`pnpm check:mirror`); the loop against
+MongoDB and a fake Toggl: `pnpm test:mirror` (needs `pnpm db`).
 
 ## Tuning constants
 

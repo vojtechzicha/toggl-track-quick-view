@@ -1,25 +1,23 @@
-// Time entries: read, create, update. Writes go straight to Toggl and spend
-// its hourly quota (30 requests/hour on Free, shared with the dashboard), so
-// they stop while QUOTA_RESERVE requests are left and report what is still to
-// do. Re-sending the same batch later is safe: entries already in Toggl (same
-// start minute, project and description) are skipped.
+// Time entries, on the local copy of Toggl (lib/mirror). Writes land in the
+// mirror at once and reach Toggl in the background as its hourly quota
+// allows, so a batch never waits for the quota and the dashboard and
+// timesheet show it immediately. Each entry reports its sync status.
 
 import { z } from 'zod';
-import type { TimeEntry } from '@/lib/calc';
+import { QUOTA_RESERVE, getAccount, remainingIn, type TogglAccount } from '@/lib/toggl/server';
 import {
-  QUOTA_RESERVE,
-  createEntry,
-  getAccount,
-  getEntries,
-  getEntry,
-  invalidateEntries,
-  isQuotaError,
-  remainingIn,
-  updateEntry,
-  type EntryWrite,
-  type ResponseQuota,
-  type TogglAccount,
-} from '@/lib/toggl/server';
+  EMPTY_PUSH,
+  changedGroups,
+  publicId,
+  spanOf,
+  statusOf,
+  toTimeEntry,
+  type EntryFields,
+  type MirrorDoc,
+} from '@/lib/mirror/model';
+import { byPublicId, docFromLocal, entriesCol, getState, queueStatus } from '@/lib/mirror/store';
+import { readMirror } from '@/lib/mirror/read';
+import { push, pullIntervalSec, syncAfterResponse } from '@/lib/mirror/sync';
 import {
   compactEntry,
   coveringWindow,
@@ -33,28 +31,52 @@ import {
 import { dateRange, fmtLocal, hours } from '../time';
 import { ToolError, audit, defineTool, type ToolContext } from '../tool-kit';
 
-const MAX_BATCH = 50;
-// Stop starting writes after this long, so the function never hits its 60s limit.
-const WRITE_DEADLINE_MS = 40_000;
-// Toggl's per-IP safeguard tolerates about one request a second.
-const WRITE_SPACING_MS = 1000;
-
-const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+const MAX_BATCH = 200;
+/** Entries Toggl takes per hour after the dashboard's reserve, for the estimate. */
+const WRITES_PER_HOUR = 30 - QUOTA_RESERVE;
 
 const localTime = z
   .string()
   .describe('Local wall time "YYYY-MM-DDTHH:MM" (in the app time zone, see get_context) or ISO 8601 with an offset.');
 const date = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Use YYYY-MM-DD.');
 
-function quotaNote(q: ResponseQuota | { remaining: number; resetsInSec: number } | null) {
-  return q ? { remaining: q.remaining, resets_in_minutes: Math.ceil(q.resetsInSec / 60) } : null;
+/** An entry for the agent: the compact shape plus where it stands with Toggl. */
+function describe(doc: MirrorDoc, account: TogglAccount, nowMs: number) {
+  const status = statusOf(doc);
+  return {
+    ...compactEntry(toTimeEntry(doc), account, nowMs),
+    sync: status,
+    ...(doc.toggl_id === null ? { in_toggl: false } : {}),
+    ...(status === 'failed' ? { error: doc.push.last_error } : {}),
+    ...(doc.remote_deleted ? { conflict: 'deleted in Toggl while edited here' } : {}),
+    ...(doc.conflicts.length ? { conflicts: doc.conflicts } : {}),
+  };
 }
 
-/** Entries of the week(s) around a batch, to dedupe and spot overlaps. One request at most. */
-async function existingAround(planned: { write: EntryWrite }[]): Promise<TimeEntry[]> {
-  const win = coveringWindow(planned);
-  if (!win) return [];
-  return (await getEntries(win.startISO, win.endISO)).value;
+/** The queue in one line for results: how many wait and roughly how long. */
+async function queueSummary() {
+  const [q, quota, st] = await Promise.all([queueStatus(), remainingIn('workspace'), getState()]);
+  const hoursLeft = Math.ceil(q.pending / WRITES_PER_HOUR);
+  return {
+    waiting_for_toggl: q.pending,
+    failed: q.failed,
+    conflicts: q.conflicts,
+    estimate:
+      q.pending === 0
+        ? 'nothing waiting'
+        : q.pending <= Math.max(0, (quota?.remaining ?? WRITES_PER_HOUR) - QUOTA_RESERVE)
+        ? 'within minutes'
+        : `about ${hoursLeft} hour${hoursLeft === 1 ? '' : 's'} (≈${WRITES_PER_HOUR} per hour)`,
+    last_push: st?.last_push_at ? fmtLocal(st.last_push_at.getTime()) : null,
+  };
+}
+
+function rangeOrThrow(from: string, to: string) {
+  try {
+    return dateRange(from, to);
+  } catch (e) {
+    throw new ToolError((e as Error).message);
+  }
 }
 
 // ─── list_time_entries ──────────────────────────────────────────────────────
@@ -63,9 +85,10 @@ const listTimeEntries = defineTool({
   name: 'list_time_entries',
   title: 'List time entries',
   description:
-    'Toggl time entries between two local dates (inclusive), with hours per day and per Saturday–Friday week. ' +
-    'One Toggl request per range, cached for 2 minutes; pass fresh: true to bypass the cache. ' +
-    'Toggl returns at most 1000 entries per range and only about the last three months.',
+    'Time entries between two local dates (inclusive), with hours per day and per Saturday–Friday week, from the local copy of Toggl. ' +
+    `It is refreshed from Toggl at most every ${Math.round(pullIntervalSec() / 60)} minutes in one request; fresh: true refreshes now. ` +
+    'Each entry has sync: "synced" (in Toggl), "pending" (waiting to be sent; negative ids are not in Toggl yet), "failed" or "conflict". ' +
+    'Weeks not read before are loaded from Toggl once (only about the last three months are available).',
   access: 'read',
   input: {
     from: date,
@@ -77,12 +100,7 @@ const listTimeEntries = defineTool({
     fresh: z.boolean().optional(),
   },
   handler: async ({ from, to, projects, fresh }) => {
-    let range;
-    try {
-      range = dateRange(from, to);
-    } catch (e) {
-      throw new ToolError((e as Error).message);
-    }
+    const range = rangeOrThrow(from, to);
     const { value: account } = await getAccount();
     // Archived projects are fine to read.
     const ids = projects?.map((p) => {
@@ -90,22 +108,18 @@ const listTimeEntries = defineTool({
       if (!r.ok) throw new ToolError(r.error);
       return r.value.id;
     });
-    const res = await getEntries(
-      new Date(range.fromMs).toISOString(),
-      new Date(range.toMs).toISOString(),
-      fresh ? 0 : undefined
-    );
+    const read = await readMirror(range.fromMs, range.toMs, { fresh });
     const now = Date.now();
-    const entries = res.value
-      .filter((e) => e.duration !== 0)
-      .filter((e) => !ids || (e.project_id !== null && ids.includes(e.project_id)))
-      .sort((a, b) => Date.parse(a.start) - Date.parse(b.start));
+    const docs = read.docs.filter(
+      (d) => !ids || (d.fields.project_id !== null && ids.includes(d.fields.project_id))
+    );
     return {
-      data_at: fmtLocal(res.atMs),
-      from_cache: res.cached,
-      count: entries.length,
-      ...totals(entries, now),
-      entries: entries.map((e) => compactEntry(e, account, now)),
+      toggl_read_at: read.dataAtMs ? fmtLocal(read.dataAtMs) : null,
+      ...(read.warning ? { warning: read.warning } : {}),
+      count: docs.length,
+      ...totals(docs.map(toTimeEntry), now),
+      entries: docs.map((d) => describe(d, account, now)),
+      queue: await queueSummary(),
     };
   },
 });
@@ -129,11 +143,11 @@ const createTimeEntries = defineTool({
   name: 'create_time_entries',
   title: 'Create time entries',
   description:
-    `Create up to ${MAX_BATCH} entries in Toggl, one request each. The whole batch is validated first (times, projects, tags); ` +
-    'nothing is written if any item fails. Entries already in Toggl (same start minute, project and description) are skipped, ' +
-    `so re-sending a batch is safe. Writing stops when Toggl's quota is down to ${QUOTA_RESERVE} requests (kept for the dashboard) ` +
-    'and the result lists what was not created and when the quota resets; send those again then. ' +
-    'Overlaps with existing entries are reported, not blocked. Use dry_run first for larger batches.',
+    `Create up to ${MAX_BATCH} entries. They are saved at once (the dashboard, timesheet and get_timesheet show them immediately) ` +
+    `and sent to Toggl in the background, about ${WRITES_PER_HOUR} per hour within its quota; the result says how long that takes. ` +
+    'The whole batch is validated first (times, projects, tags); nothing is saved if any item fails. Entries that already exist ' +
+    '(same start minute, project and description) are skipped, so re-sending a batch is safe. Overlaps are reported, not blocked. ' +
+    'Until an entry reaches Toggl its id is negative; use it as is with the other tools.',
   access: 'write',
   input: {
     entries: z.array(entryInput).min(1).max(MAX_BATCH),
@@ -141,29 +155,24 @@ const createTimeEntries = defineTool({
       .boolean()
       .optional()
       .describe('Create tags that do not exist yet. Default false: an unknown tag fails the batch (usually a typo).'),
-    dry_run: z.boolean().optional().describe('Validate and report the plan without writing.'),
+    dry_run: z.boolean().optional().describe('Validate and report the plan without saving.'),
   },
   handler: async ({ entries, allow_new_tags, dry_run }, ctx) => {
     const { value: account } = await getAccount();
     const now = Date.now();
-    // Plan once without existing entries to get the window, then for real.
-    const first = planEntries(entries as EntryInput[], account, [], { allowNewTags: !!allow_new_tags, nowMs: now });
-    if (first.errors.length) throw new ToolError(`Nothing was created.\n${first.errors.join('\n')}`);
-    const existing = await existingAround(first.planned);
-    const { planned } = planEntries(entries as EntryInput[], account, existing, {
-      allowNewTags: !!allow_new_tags,
-      nowMs: now,
-    });
+    const opts = { allowNewTags: !!allow_new_tags, nowMs: now };
+    const first = planEntries(entries as EntryInput[], account, [], opts);
+    if (first.errors.length) throw new ToolError(`Nothing was saved.\n${first.errors.join('\n')}`);
+    const win = coveringWindow(first.planned)!;
+    const read = await readMirror(Date.parse(win.startISO), Date.parse(win.endISO));
+    const { planned } = planEntries(entries as EntryInput[], account, read.docs.map(toTimeEntry), opts);
 
     const todo = planned.filter((p) => p.duplicateOf === null);
     const skipped = planned
       .filter((p) => p.duplicateOf !== null)
       .map((p) => ({ index: p.index, existing_id: p.duplicateOf, entry: p.summary }));
-    const overlaps = planned
-      .filter((p) => p.overlaps.length)
-      .map((p) => ({ index: p.index, overlaps: p.overlaps }));
+    const overlaps = planned.filter((p) => p.overlaps.length).map((p) => ({ index: p.index, overlaps: p.overlaps }));
     const newTags = [...new Set(planned.flatMap((p) => p.newTags))];
-    const quotaBefore = await remainingIn('workspace');
 
     if (dry_run) {
       return {
@@ -172,58 +181,30 @@ const createTimeEntries = defineTool({
         skipped_duplicates: skipped,
         overlaps,
         new_tags: newTags,
-        requests_needed: todo.length,
-        quota: quotaNote(quotaBefore),
+        queue: await queueSummary(),
       };
     }
 
+    const col = await entriesCol();
     const created: { index: number; id: number; entry: string }[] = [];
-    const notCreated: { index: number; entry: string; reason: string }[] = [];
-    let quota: ResponseQuota | { remaining: number; resetsInSec: number } | null = quotaBefore;
-    const started = Date.now();
-    let stopReason: string | null = null;
-
     for (const p of todo) {
-      if (stopReason === null) {
-        if (quota && quota.remaining <= QUOTA_RESERVE) {
-          stopReason = `quota: ${quota.remaining} requests left, kept for the dashboard; resets in ${Math.ceil(quota.resetsInSec / 60)} min`;
-        } else if (Date.now() - started > WRITE_DEADLINE_MS) {
-          stopReason = 'time: call again for the rest';
-        }
-      }
-      if (stopReason !== null) {
-        notCreated.push({ index: p.index, entry: p.summary, reason: stopReason });
-        continue;
-      }
-      try {
-        if (created.length > 0) await sleep(WRITE_SPACING_MS);
-        const res = await createEntry(account.workspaceId, p.write);
-        quota = res.quota ?? quota;
-        created.push({ index: p.index, id: res.data.id, entry: p.summary });
-        await audit(ctx, {
-          tool: 'create_time_entries',
-          action: 'create',
-          entryId: res.data.id,
-          after: compactEntry(res.data, account, Date.now()),
-        });
-      } catch (e) {
-        if (isQuotaError(e)) {
-          stopReason = `quota: Toggl refused (HTTP ${e.status}); resets in ${Math.ceil((e.resetsInSec ?? 3600) / 60)} min`;
-          notCreated.push({ index: p.index, entry: p.summary, reason: stopReason });
-          continue;
-        }
-        notCreated.push({ index: p.index, entry: p.summary, reason: (e as Error).message });
-      }
+      const doc = await docFromLocal(account.workspaceId, p.write);
+      await col.insertOne(doc);
+      created.push({ index: p.index, id: publicId(doc), entry: p.summary });
+      await audit(ctx, {
+        tool: 'create_time_entries',
+        action: 'create',
+        entryId: publicId(doc),
+        after: compactEntry(toTimeEntry(doc), account, now),
+      });
     }
-    if (created.length) await invalidateEntries();
-
+    if (created.length) await syncAfterResponse({ pull: 'none' });
     return {
       created,
-      not_created: notCreated,
       skipped_duplicates: skipped,
       overlaps,
       new_tags: newTags,
-      quota: quotaNote(quota),
+      queue: await queueSummary(),
     };
   },
 });
@@ -231,7 +212,7 @@ const createTimeEntries = defineTool({
 // ─── update_time_entries ────────────────────────────────────────────────────
 
 const updateInput = z.object({
-  id: z.number().int(),
+  id: z.number().int().describe('From list_time_entries; negative for entries not yet in Toggl.'),
   start: localTime.optional(),
   stop: localTime.optional(),
   duration_minutes: z.number().positive().optional().describe('New length, keeping the (new) start.'),
@@ -245,16 +226,10 @@ const updateInput = z.object({
 
 type UpdateInput = z.infer<typeof updateInput>;
 
-/** The full write for one update, from the entry's current state. */
-function planUpdate(
-  u: UpdateInput,
-  before: TimeEntry,
-  account: TogglAccount,
-  allowNewTags: boolean
-): { write: Partial<EntryWrite>; changes: Record<string, { from: unknown; to: unknown }> } {
-  if (before.duration < 0 || !before.stop) throw new ToolError(`Entry ${u.id} is running; stop it in Toggl first.`);
-  const write: Partial<EntryWrite> = {};
-  const changes: Record<string, { from: unknown; to: unknown }> = {};
+/** The entry's fields after the update. */
+function applyUpdate(u: UpdateInput, before: EntryFields, account: TogglAccount, allowNewTags: boolean): EntryFields {
+  if (!before.stop) throw new ToolError(`Entry ${u.id} is running; stop it in Toggl first.`);
+  const next: EntryFields = { ...before, tags: [...before.tags] };
   const beforeStart = Date.parse(before.start);
   const beforeStop = Date.parse(before.stop);
 
@@ -262,72 +237,42 @@ function planUpdate(
     if (u.stop !== undefined && u.duration_minutes !== undefined) {
       throw new ToolError(`Entry ${u.id}: give stop or duration_minutes, not both.`);
     }
-    const start = u.start ?? fmtLocal(beforeStart);
     const keepLength = u.stop === undefined && u.duration_minutes === undefined;
     const times = resolveTimes(
-      start,
+      u.start ?? fmtLocal(beforeStart),
       keepLength ? undefined : u.stop,
       keepLength ? (beforeStop - beforeStart) / 60000 : u.duration_minutes
     );
     if (!times.ok) throw new ToolError(`Entry ${u.id}: ${times.error}`);
-    const { startMs, stopMs } = times.value;
-    if (startMs !== beforeStart || stopMs !== beforeStop) {
-      write.start = new Date(startMs).toISOString();
-      write.stop = new Date(stopMs).toISOString();
-      write.duration = Math.round((stopMs - startMs) / 1000);
-      changes.time = {
-        from: `${fmtLocal(beforeStart)}–${fmtLocal(beforeStop).slice(11)}`,
-        to: `${fmtLocal(startMs)}–${fmtLocal(stopMs).slice(11)}`,
-      };
-    }
+    next.start = new Date(times.value.startMs).toISOString();
+    next.stop = new Date(times.value.stopMs).toISOString();
+    next.duration = Math.round((times.value.stopMs - times.value.startMs) / 1000);
   }
-  if (u.description !== undefined && u.description.trim() !== (before.description ?? '').trim()) {
-    write.description = u.description.trim();
-    changes.description = { from: before.description ?? '', to: write.description };
-  }
+  if (u.description !== undefined) next.description = u.description.trim();
   if (u.project !== undefined) {
     const r = resolveProject(account, u.project);
     if (!r.ok) throw new ToolError(`Entry ${u.id}: ${r.error}`);
-    if (r.value.id !== before.project_id) {
-      write.project_id = r.value.id;
-      changes.project = {
-        from: account.projects.find((p) => p.id === before.project_id)?.name ?? before.project_id,
-        to: r.value.name,
-      };
-    }
+    next.project_id = r.value.id;
   }
   if (u.tags !== undefined || u.add_tags !== undefined || u.remove_tags !== undefined) {
-    const current = before.tags ?? [];
-    const base = u.tags !== undefined ? u.tags : current;
+    const base = u.tags !== undefined ? u.tags : before.tags;
     const resolved = resolveTags(account, [...base, ...(u.add_tags ?? [])], allowNewTags);
     if (resolved.errors.length) throw new ToolError(`Entry ${u.id}: ${resolved.errors.join(' ')}`);
-    const removed = new Set(
-      (u.remove_tags ?? []).map((t) => {
-        const r = resolveTags(account, [t], true);
-        return r.tags[0] ?? t;
-      })
-    );
-    const next = resolved.tags.filter((t) => !removed.has(t));
-    if ([...next].sort().join('\u0000') !== [...current].sort().join('\u0000')) {
-      write.tags = next;
-      changes.tags = { from: current, to: next };
-    }
+    const removed = new Set((u.remove_tags ?? []).map((t) => resolveTags(account, [t], true).tags[0] ?? t));
+    next.tags = resolved.tags.filter((t) => !removed.has(t));
   }
-  if (u.billable !== undefined && u.billable !== (before as TimeEntry & { billable?: boolean }).billable) {
-    write.billable = u.billable;
-    changes.billable = { from: (before as TimeEntry & { billable?: boolean }).billable ?? null, to: u.billable };
-  }
-  return { write, changes };
+  if (u.billable !== undefined) next.billable = u.billable;
+  return next;
 }
 
 const updateTimeEntries = defineTool({
   name: 'update_time_entries',
   title: 'Update time entries',
   description:
-    `Change up to ${MAX_BATCH} existing entries (by id from list_time_entries): time, description, project, tags. ` +
-    'Fields not given stay as they are; changing start alone moves the entry and keeps its length. ' +
-    "Each changed entry is one Toggl request (plus one to read it when it isn't in a recent list). " +
-    `Stops at ${QUOTA_RESERVE} requests left, like create_time_entries. Nothing here deletes entries.`,
+    `Change up to ${MAX_BATCH} entries (ids from list_time_entries, negative ones included): time, description, project, tags. ` +
+    'Fields not given stay as they are; changing start alone moves the entry and keeps its length. Saved at once and sent to Toggl ' +
+    'in the background; several edits to one entry before it is sent cost a single Toggl request. If the same field was also changed ' +
+    'in Toggl meanwhile, this edit wins and the entry shows a conflict (see resolve_conflicts).',
   access: 'write',
   input: {
     updates: z.array(updateInput).min(1).max(MAX_BATCH),
@@ -336,65 +281,190 @@ const updateTimeEntries = defineTool({
   },
   handler: async ({ updates, allow_new_tags, dry_run }, ctx: ToolContext) => {
     const { value: account } = await getAccount();
+    const now = Date.now();
     const plans = [];
     for (const u of updates as UpdateInput[]) {
-      const before = await getEntry(u.id);
-      plans.push({ u, before, ...planUpdate(u, before, account, !!allow_new_tags) });
+      const doc = await byPublicId(u.id);
+      if (!doc) throw new ToolError(`Entry ${u.id} is not in the local copy. List its week first (list_time_entries).`);
+      const next = applyUpdate(u, doc.fields, account, !!allow_new_tags);
+      plans.push({ u, doc, next, changed: changedGroups(doc.fields, next) });
     }
-    const changing = plans.filter((p) => Object.keys(p.changes).length > 0);
-    const unchanged = plans.filter((p) => Object.keys(p.changes).length === 0).map((p) => p.u.id);
-    let quota: ResponseQuota | { remaining: number; resetsInSec: number } | null = await remainingIn('workspace');
+    const changing = plans.filter((p) => p.changed.length > 0);
+    const unchanged = plans.filter((p) => p.changed.length === 0).map((p) => p.u.id);
+    const show = (f: EntryFields, doc: MirrorDoc) => compactEntry(toTimeEntry({ ...doc, fields: f }), account, now);
 
     if (dry_run) {
       return {
         dry_run: true,
-        would_update: changing.map((p) => ({ id: p.u.id, changes: p.changes })),
+        would_update: changing.map((p) => ({ id: p.u.id, changes: p.changed, before: show(p.doc.fields, p.doc), after: show(p.next, p.doc) })),
         unchanged,
-        requests_needed: changing.length,
-        quota: quotaNote(quota),
+        queue: await queueSummary(),
       };
     }
 
-    const updated: { id: number; changes: Record<string, unknown> }[] = [];
-    const notUpdated: { id: number; reason: string }[] = [];
-    const started = Date.now();
-    let stopReason: string | null = null;
+    const col = await entriesCol();
+    const updated: { id: number; changes: string[] }[] = [];
     for (const p of changing) {
-      if (stopReason === null) {
-        if (quota && quota.remaining <= QUOTA_RESERVE) {
-          stopReason = `quota: ${quota.remaining} requests left, kept for the dashboard; resets in ${Math.ceil(quota.resetsInSec / 60)} min`;
-        } else if (Date.now() - started > WRITE_DEADLINE_MS) {
-          stopReason = 'time: call again for the rest';
+      const dirty = p.doc.remote ? changedGroups(p.next, p.doc.remote).length > 0 : true;
+      const res = await col.updateOne(
+        { _id: p.doc._id, version: p.doc.version },
+        {
+          $set: {
+            fields: p.next,
+            ...spanOf(p.next),
+            dirty,
+            // An edit is a new attempt: a parked entry gets another try.
+            push: { ...EMPTY_PUSH, in_flight_since: p.doc.push.in_flight_since },
+            updated_at: new Date(),
+          },
+          $inc: { version: 1 },
         }
-      }
-      if (stopReason !== null) {
-        notUpdated.push({ id: p.u.id, reason: stopReason });
-        continue;
-      }
-      try {
-        if (updated.length > 0) await sleep(WRITE_SPACING_MS);
-        const res = await updateEntry(account.workspaceId, p.u.id, p.write);
-        quota = res.quota ?? quota;
-        updated.push({ id: p.u.id, changes: p.changes });
-        await audit(ctx, {
-          tool: 'update_time_entries',
-          action: 'update',
-          entryId: p.u.id,
-          before: compactEntry(p.before, account, Date.now()),
-          after: compactEntry(res.data, account, Date.now()),
-        });
-      } catch (e) {
-        if (isQuotaError(e)) {
-          stopReason = `quota: Toggl refused (HTTP ${e.status}); resets in ${Math.ceil((e.resetsInSec ?? 3600) / 60)} min`;
-          notUpdated.push({ id: p.u.id, reason: stopReason });
-          continue;
-        }
-        notUpdated.push({ id: p.u.id, reason: (e as Error).message });
-      }
+      );
+      if (res.matchedCount === 0) throw new ToolError(`Entry ${p.u.id} changed while saving; list it and try again.`);
+      updated.push({ id: p.u.id, changes: p.changed });
+      await audit(ctx, {
+        tool: 'update_time_entries',
+        action: 'update',
+        entryId: p.u.id,
+        before: show(p.doc.fields, p.doc),
+        after: show(p.next, p.doc),
+      });
     }
-    if (updated.length) await invalidateEntries();
-    return { updated, not_updated: notUpdated, unchanged, quota: quotaNote(quota) };
+    if (updated.length) await syncAfterResponse({ pull: 'none' });
+    return { updated, unchanged, queue: await queueSummary() };
   },
 });
 
-export const entryTools = [listTimeEntries, createTimeEntries, updateTimeEntries];
+// ─── delete_time_entries ────────────────────────────────────────────────────
+
+const deleteTimeEntries = defineTool({
+  name: 'delete_time_entries',
+  title: 'Delete entries not yet in Toggl',
+  description:
+    'Discard entries created here that have not reached Toggl yet (negative ids). Costs no Toggl request. ' +
+    'Entries already in Toggl are refused: deleting those is left to the user, in Toggl.',
+  access: 'write',
+  input: {
+    ids: z.array(z.number().int()).min(1).max(MAX_BATCH),
+    dry_run: z.boolean().optional(),
+  },
+  handler: async ({ ids, dry_run }, ctx: ToolContext) => {
+    const { value: account } = await getAccount();
+    const now = Date.now();
+    const docs = [];
+    for (const id of ids) {
+      const doc = await byPublicId(id);
+      if (!doc) throw new ToolError(`Entry ${id} is not in the local copy.`);
+      if (doc.toggl_id !== null || doc.push.in_flight_since) {
+        throw new ToolError(`Entry ${id} is already in Toggl (or being sent); delete it in Toggl. Nothing was deleted.`);
+      }
+      docs.push(doc);
+    }
+    if (dry_run) return { dry_run: true, would_delete: docs.map((d) => compactEntry(toTimeEntry(d), account, now)) };
+    const col = await entriesCol();
+    for (const d of docs) {
+      await col.deleteOne({ _id: d._id, toggl_id: null });
+      await audit(ctx, {
+        tool: 'delete_time_entries',
+        action: 'delete',
+        entryId: publicId(d),
+        before: compactEntry(toTimeEntry(d), account, now),
+      });
+    }
+    return { deleted: docs.map(publicId), queue: await queueSummary() };
+  },
+});
+
+// ─── get_sync_status / resolve_conflicts ────────────────────────────────────
+
+const getSyncStatus = defineTool({
+  name: 'get_sync_status',
+  title: 'Get sync status',
+  description:
+    'How the local copy stands with Toggl: entries waiting to be sent and the estimate, entries Toggl refused (with its error), ' +
+    'conflicts, last pull and push, and the quota. push_now: true sends what the quota allows right away (up to ~40 s) instead of ' +
+    'waiting for the background run.',
+  access: 'read',
+  input: { push_now: z.boolean().optional() },
+  handler: async ({ push_now }) => {
+    const { value: account } = await getAccount();
+    const run = push_now ? await push() : null;
+    const col = await entriesCol();
+    const now = Date.now();
+    const problems = await col
+      .find({ $or: [{ 'push.failed': true }, { remote_deleted: true }, { 'conflicts.0': { $exists: true } }] })
+      .sort({ start_at: 1 })
+      .limit(50)
+      .toArray();
+    const st = await getState();
+    const quota = await remainingIn('workspace');
+    return {
+      ...(run ? { pushed_now: run.pushed, stopped: run.stopped } : {}),
+      queue: await queueSummary(),
+      problems: problems.map((d) => describe(d, account, now)),
+      last_pull: st?.last_pull_at ? fmtLocal(st.last_pull_at.getTime()) : null,
+      last_error: st?.last_error ?? null,
+      covered_from: st?.covered_from_ms ? fmtLocal(st.covered_from_ms).slice(0, 10) : null,
+      write_quota: quota ? { remaining: quota.remaining, resets_in_minutes: Math.ceil(quota.resetsInSec / 60) } : null,
+    };
+  },
+});
+
+const resolveConflicts = defineTool({
+  name: 'resolve_conflicts',
+  title: 'Resolve conflicts',
+  description:
+    'Settle entries with sync "conflict" or "failed". keep "local" sends this copy to Toggl (for an entry deleted in Toggl: creates it again); ' +
+    'keep "toggl" drops the local changes and takes what Toggl has (for an entry deleted in Toggl: deletes the local copy too).',
+  access: 'write',
+  input: {
+    resolutions: z.array(z.object({ id: z.number().int(), keep: z.enum(['local', 'toggl']) })).min(1).max(MAX_BATCH),
+  },
+  handler: async ({ resolutions }, ctx: ToolContext) => {
+    const col = await entriesCol();
+    const done: { id: number; kept: string }[] = [];
+    for (const r of resolutions) {
+      const doc = await byPublicId(r.id);
+      if (!doc) throw new ToolError(`Entry ${r.id} is not in the local copy.`);
+      if (r.keep === 'local') {
+        await col.updateOne(
+          { _id: doc._id },
+          {
+            $set: {
+              conflicts: [],
+              push: { ...EMPTY_PUSH },
+              dirty: true,
+              ...(doc.remote_deleted ? { remote_deleted: false, toggl_id: null, remote: null } : {}),
+              updated_at: new Date(),
+            },
+            $inc: { version: 1 },
+          }
+        );
+      } else if (doc.remote_deleted || !doc.remote) {
+        await col.deleteOne({ _id: doc._id });
+      } else {
+        const { at: _at, ...fields } = doc.remote;
+        await col.updateOne(
+          { _id: doc._id },
+          {
+            $set: { fields, ...spanOf(fields), conflicts: [], push: { ...EMPTY_PUSH }, dirty: false, updated_at: new Date() },
+            $inc: { version: 1 },
+          }
+        );
+      }
+      done.push({ id: r.id, kept: r.keep });
+      await audit(ctx, { tool: 'resolve_conflicts', action: 'update', entryId: r.id, before: { sync: statusOf(doc) }, after: { kept: r.keep } });
+    }
+    await syncAfterResponse({ pull: 'none' });
+    return { resolved: done, queue: await queueSummary() };
+  },
+});
+
+export const entryTools = [
+  listTimeEntries,
+  createTimeEntries,
+  updateTimeEntries,
+  deleteTimeEntries,
+  getSyncStatus,
+  resolveConflicts,
+];

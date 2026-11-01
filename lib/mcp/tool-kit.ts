@@ -82,8 +82,8 @@ export function registerTools(server: McpServer, tools: ToolDefinition[], ctx: T
         annotations: {
           title: def.title,
           readOnlyHint: def.access === 'read',
-          // Writes change entries in place; nothing here deletes.
-          destructiveHint: false,
+          // Only delete_time_entries removes anything (entries not yet in Toggl).
+          destructiveHint: def.name.startsWith('delete_'),
           // Toggl is an external system the tools reach.
           openWorldHint: true,
         },
@@ -97,7 +97,7 @@ export function registerTools(server: McpServer, tools: ToolDefinition[], ctx: T
 
 export async function audit(
   ctx: ToolContext,
-  entry: { tool: string; action: 'create' | 'update'; entryId: number | null; before?: unknown; after?: unknown }
+  entry: { tool: string; action: 'create' | 'update' | 'delete'; entryId: number | null; before?: unknown; after?: unknown }
 ) {
   await getMcpStore().insertAudit({
     tool: entry.tool,

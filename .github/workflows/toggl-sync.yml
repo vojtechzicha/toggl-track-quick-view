@@ -1,0 +1,31 @@
+# Sends entries waiting in the local copy to Toggl (and pulls Toggl's
+# changes) while nobody has the app open. The app also syncs after every
+# dashboard read and every MCP write; this is the fallback.
+#
+# Vercel's Hobby plan allows a cron job only once a day, hence GitHub. A
+# scheduled run can start several minutes late, which only delays the sync.
+# GitHub pauses schedules in repositories without activity for 60 days; the
+# Actions tab re-enables them.
+name: Toggl sync
+
+on:
+  schedule:
+    - cron: '*/10 * * * *'
+  workflow_dispatch:
+
+permissions: {}
+
+concurrency:
+  group: toggl-sync
+  cancel-in-progress: false
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - name: Run one sync round on production
+        run: |
+          set -o pipefail
+          curl -fsS --max-time 90 -X POST https://track.zicha.dev/api/toggl-sync | tee result.json
+          echo

@@ -835,6 +835,15 @@ export default function Page() {
             </span>
           )}
           <LastUpdated lastUpdatedMs={lastUpdatedMs} nowMs={nowMs} refreshSec={effectiveRefreshSec} />
+          {t.pendingToggl > 0 && (
+            <span
+              className="budget warn"
+              title="Saved here and counted everywhere in the app; sent to Toggl as its hourly request limit allows."
+            >
+              {' · '}
+              {t.pendingToggl} change{t.pendingToggl === 1 ? '' : 's'} waiting for Toggl
+            </span>
+          )}
           {!cacheEnabled && (
             <span className={`budget ${budgetClass}`}>
               {' · '}≈{reqThisHour}/{HOURLY_LIMIT} API requests this hour
