@@ -155,17 +155,34 @@ const createTimeEntries = defineTool({
       .boolean()
       .optional()
       .describe('Create tags that do not exist yet. Default false: an unknown tag fails the batch (usually a typo).'),
+    avoid_projects: z
+      .array(z.union([z.string(), z.number().int()]))
+      .optional()
+      .describe(
+        'Projects whose existing entries the new ones must not overlap (e.g. travel and lunch): each new entry is trimmed ' +
+          'to the gap, and one left shorter than a minute is skipped. The result lists what was trimmed.'
+      ),
     dry_run: z.boolean().optional().describe('Validate and report the plan without saving.'),
   },
-  handler: async ({ entries, allow_new_tags, dry_run }, ctx) => {
+  handler: async ({ entries, allow_new_tags, avoid_projects, dry_run }, ctx) => {
     const { value: account } = await getAccount();
     const now = Date.now();
-    const opts = { allowNewTags: !!allow_new_tags, nowMs: now };
+    const avoidProjectIds = (avoid_projects ?? []).map((p) => {
+      const r = resolveProject({ ...account, projects: account.projects.map((x) => ({ ...x, active: true })) }, p);
+      if (!r.ok) throw new ToolError(r.error);
+      return r.value.id;
+    });
+    const opts = { allowNewTags: !!allow_new_tags, nowMs: now, avoidProjectIds };
     const first = planEntries(entries as EntryInput[], account, [], opts);
     if (first.errors.length) throw new ToolError(`Nothing was saved.\n${first.errors.join('\n')}`);
     const win = coveringWindow(first.planned)!;
     const read = await readMirror(Date.parse(win.startISO), Date.parse(win.endISO));
-    const { planned } = planEntries(entries as EntryInput[], account, read.docs.map(toTimeEntry), opts);
+    const { planned, trimmed, skippedInside } = planEntries(
+      entries as EntryInput[],
+      account,
+      read.docs.map(toTimeEntry),
+      opts
+    );
 
     const todo = planned.filter((p) => p.duplicateOf === null);
     const skipped = planned
@@ -179,6 +196,8 @@ const createTimeEntries = defineTool({
         dry_run: true,
         would_create: todo.map((p) => ({ index: p.index, entry: p.summary, hours: hours(p.write.duration) })),
         skipped_duplicates: skipped,
+        trimmed_around_avoided: trimmed,
+        skipped_inside_avoided: skippedInside,
         overlaps,
         new_tags: newTags,
         queue: await queueSummary(),
@@ -202,6 +221,8 @@ const createTimeEntries = defineTool({
     return {
       created,
       skipped_duplicates: skipped,
+      trimmed_around_avoided: trimmed,
+      skipped_inside_avoided: skippedInside,
       overlaps,
       new_tags: newTags,
       queue: await queueSummary(),

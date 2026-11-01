@@ -42,7 +42,7 @@ background.
 | `get_context` | Account, projects, tags, stored workspaces (timesheet setups), time zone, last known quota |
 | `list_time_entries` | Entries between two local dates, with hours per day and per Saturday–Friday week, and each entry's `sync` status |
 | `get_timesheet` | A stored workspace's timesheet as the Timesheet page and exports compute it, plus its checks; `format: "csv"` adds the CSV export |
-| `create_time_entries` | Up to 200 entries; validated first, duplicates skipped, overlaps reported, `dry_run` |
+| `create_time_entries` | Up to 200 entries; validated first, duplicates skipped, overlaps reported, `avoid_projects` trims new entries around existing ones (travel, lunch), `dry_run` |
 | `update_time_entries` | Time, description, project, tags (`tags` replaces, `add_tags`/`remove_tags` edit), `dry_run` |
 | `delete_time_entries` | Discards entries not yet in Toggl (negative ids). Entries in Toggl are refused |
 | `get_sync_status` | The queue, an estimate, refused entries with Toggl's error, conflicts; `push_now` sends what the quota allows |

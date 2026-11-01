@@ -204,11 +204,20 @@ export function planEntries(
   inputs: EntryInput[],
   account: TogglAccount,
   existing: TimeEntry[],
-  opts: { allowNewTags: boolean; nowMs: number }
-): { planned: PlannedEntry[]; errors: string[] } {
+  opts: {
+    allowNewTags: boolean;
+    nowMs: number;
+    /** Trim new entries so they never overlap existing entries of these projects. */
+    avoidProjectIds?: number[];
+  }
+): { planned: PlannedEntry[]; errors: string[]; trimmed: { index: number; from: string; to: string }[]; skippedInside: { index: number; entry: string }[] } {
   const errors: string[] = [];
   const planned: PlannedEntry[] = [];
+  const trimmed: { index: number; from: string; to: string }[] = [];
+  const skippedInside: { index: number; entry: string }[] = [];
   const spans = existing.map((e) => ({ e, ...spanOf(e, opts.nowMs) }));
+  const avoid = new Set(opts.avoidProjectIds ?? []);
+  const blocks = spans.filter((s) => s.e.project_id !== null && avoid.has(s.e.project_id));
 
   inputs.forEach((input, index) => {
     const at = `#${index}`;
@@ -225,7 +234,25 @@ export function planEntries(
       errors.push(`${at}: ${problems.join(' ')}`);
       return;
     }
-    const { startMs, stopMs } = times.value;
+    let { startMs, stopMs } = times.value;
+    // Clamp around the avoided entries, like time already taken: an entry that
+    // starts inside one starts at its end, one that ends inside one ends at its
+    // start. Toggl's seconds make sub-minute overlaps common, hence the clamp.
+    for (const b of blocks) {
+      if (b.startMs <= startMs && startMs < b.endMs) startMs = b.endMs;
+      if (b.startMs < stopMs && stopMs <= b.endMs) stopMs = b.startMs;
+    }
+    if (stopMs - startMs < 60_000) {
+      skippedInside.push({ index, entry: `${input.start} ${input.description.trim()}` });
+      return;
+    }
+    if (startMs !== times.value.startMs || stopMs !== times.value.stopMs) {
+      trimmed.push({
+        index,
+        from: `${fmtLocal(times.value.startMs)}–${fmtClock(times.value.stopMs)}`,
+        to: `${fmtLocal(startMs)}–${fmtClock(stopMs)}`,
+      });
+    }
     const write = {
       description: input.description.trim(),
       project_id: project.value.id,
@@ -263,7 +290,7 @@ export function planEntries(
     });
   });
 
-  return { planned, errors };
+  return { planned, errors, trimmed, skippedInside };
 }
 
 /** The local-midnight window that covers every planned entry, padded a day each side. */

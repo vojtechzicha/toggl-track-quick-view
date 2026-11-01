@@ -276,6 +276,25 @@ const account = {
   ok(/#1: Give exactly one/.test(badPlan.errors[1]) && /Unknown project/.test(badPlan.errors[1]) && /Unknown tag/.test(badPlan.errors[1]), 'all problems of one item reported together');
   ok(/#2: Longer than 16h/.test(badPlan.errors[2]), 'over-long entry refused');
 
+  // avoid_projects: trimmed around an entry of another project, skipped when inside it.
+  const lunch = [{ ...existing[0], id: 600, project_id: 11, start: '2026-10-29T10:00:00Z', stop: '2026-10-29T10:30:47Z', duration: 1847, description: 'Lunch' }];
+  const around = entries.planEntries(
+    [
+      { start: '2026-10-29T11:30', stop: '2026-10-29T13:00', description: 'After lunch', project: 'Alpha' },
+      { start: '2026-10-29T11:05', stop: '2026-10-29T11:20', description: 'Inside lunch', project: 'Alpha' },
+      { start: '2026-10-29T14:00', stop: '2026-10-29T15:00', description: 'Untouched', project: 'Alpha' },
+    ],
+    account,
+    lunch,
+    { allowNewTags: false, nowMs: now, avoidProjectIds: [11] }
+  );
+  eq(around.planned[0].write.start, '2026-10-29T10:30:47.000Z', 'start moved to the end of the avoided entry (seconds kept)');
+  eq(around.planned[0].write.duration, 5353, 'duration shrinks accordingly');
+  eq(around.trimmed.map((t) => t.index), [0], 'trim reported');
+  eq(around.skippedInside.map((s) => s.index), [1], 'entry inside the avoided one skipped');
+  eq(around.planned.map((p) => p.index), [0, 2], 'the rest planned');
+  eq(around.planned[0].overlaps, [], 'no overlap left with the avoided entry');
+
   const t = entries.totals(existing, now);
   eq(t.days, [{ date: '2026-10-29', hours: 2 }], 'day totals');
   eq(t.weeks, [{ week_starting_saturday: '2026-10-24', hours: 2 }], 'Saturday–Friday week totals');
