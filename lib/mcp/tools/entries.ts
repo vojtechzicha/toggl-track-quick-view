@@ -185,10 +185,14 @@ const createTimeEntries = defineTool({
       opts
     );
 
-    const todo = planned.filter((p) => p.duplicateOf === null);
+    const todo = planned.filter((p) => p.duplicateOf === null && p.repeatOf === null);
     const skipped = planned
-      .filter((p) => p.duplicateOf !== null)
-      .map((p) => ({ index: p.index, existing_id: p.duplicateOf, entry: p.summary }));
+      .filter((p) => p.duplicateOf !== null || p.repeatOf !== null)
+      .map((p) =>
+        p.duplicateOf !== null
+          ? { index: p.index, existing_id: p.duplicateOf, entry: p.summary }
+          : { index: p.index, same_as_index: p.repeatOf, entry: p.summary }
+      );
     const overlaps = planned.filter((p) => p.overlaps.length).map((p) => ({ index: p.index, overlaps: p.overlaps }));
     const newTags = [...new Set(planned.flatMap((p) => p.newTags))];
 

@@ -183,6 +183,8 @@ export interface PlannedEntry {
   write: EntryFields & { stop: string };
   /** The same entry already in Toggl (same start minute, project and description). */
   duplicateOf: number | null;
+  /** The same entry earlier in this batch (its index); only that one is created. */
+  repeatOf: number | null;
   /** Existing entries (and earlier batch items, as "#n") it overlaps. */
   overlaps: string[];
   newTags: string[];
@@ -291,13 +293,22 @@ export function planEntries(
           sp.e.project_id === project.value.id &&
           sameText(sp.e.description, write.description)
       );
+      const live = planned.filter((p) => p.duplicateOf === null && p.repeatOf === null);
+      const repeat = duplicate
+        ? undefined
+        : live.find(
+            (p) =>
+              minuteOf(Date.parse(p.write.start)) === minuteOf(startMs) &&
+              p.write.project_id === project.value.id &&
+              sameText(p.write.description, write.description)
+          );
       const overlaps = [
         ...spans
           .filter((sp) => sp.e !== duplicate?.e && sp.startMs < stopMs && sp.endMs > startMs)
           .map((sp) => String(sp.e.id)),
         // Batch items skipped as duplicates are already counted as existing entries.
-        ...planned
-          .filter((p) => p.duplicateOf === null)
+        ...live
+          .filter((p) => p !== repeat)
           .filter((p) => Date.parse(p.write.start) < stopMs && Date.parse(p.write.stop) > startMs)
           .map((p) => `#${p.index}`),
       ];
@@ -305,6 +316,7 @@ export function planEntries(
         index,
         write,
         duplicateOf: duplicate ? duplicate.e.id : null,
+        repeatOf: repeat ? repeat.index : null,
         overlaps,
         newTags: tags.created,
         summary: `${fmtLocal(startMs)}–${fmtClock(stopMs)} ${project.value.name}: ${write.description}${

@@ -347,6 +347,18 @@ const account = {
   );
   ok(/Shorter than a minute/.test(tiny.errors[0] ?? ''), 'sub-minute entry is an error');
 
+  // The same entry twice in one batch is created once.
+  const twice = entries.planEntries(
+    [
+      { start: '2026-10-29T15:00', duration_minutes: 30, description: 'Same', project: 'Alpha' },
+      { start: '2026-10-29T15:00', duration_minutes: 30, description: 'Same', project: 'Alpha' },
+    ],
+    account,
+    [],
+    { allowNewTags: false, nowMs: now }
+  );
+  eq(twice.planned.map((p) => [p.repeatOf, p.overlaps]), [[null, []], [0, []]], 'a repeat within the batch is marked, not created');
+
   const t = entries.totals(existing, now);
   eq(t.days, [{ date: '2026-10-29', hours: 2 }], 'day totals');
   eq(t.weeks, [{ week_starting_saturday: '2026-10-24', hours: 2 }], 'Saturday–Friday week totals');
