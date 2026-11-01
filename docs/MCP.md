@@ -67,7 +67,11 @@ code as the screen: `buildExportDoc` for the billed figures and
 Toggl and says how many (`entries_not_yet_in_toggl`). `checks` lists entries
 without a billing tag, with several, too long to bill alone, and overlaps, with
 the minutes and description of each, plus time trimmed by Don't bill overtime,
-time moved by Balance working days, and holidays. `ok` is true when there are
+time moved by Balance working days, and holidays. The billed day totals, the
+trim and the balancing follow the view asked for: with Don't bill overtime the
+Summary view evens the weekdays out while the Individual view cuts in
+proportion, so the same week can show 8/8/8/8/8 in one and 9/8/8/8/7 in the
+other. Check against the view the timesheet is copied or exported from. `ok` is true when there are
 no warnings or overlaps. The workspace settings come from the settings-sync
 document, so a change made on a device reaches the tools once that device has
 synced.

@@ -495,4 +495,54 @@ const account = {
   ok(!('signatureImage' in timesheet.describeWorkspace(ws)), 'no export identity details in the description');
 }
 
+// ─── Per-day figures follow the view ────────────────────────────────────────
+
+{
+  // A capped week where the views spread the cut differently: 10 h Monday,
+  // 8 h Tuesday to Friday, 40 h cap. The Summary view evens the weekdays out;
+  // the Individual view cuts in proportion.
+  const capped = {
+    selectedProjects: [{ id: 10, name: 'Alpha' }],
+    groupName: '', shortFriday: false, weeklyHours: 40, maxBillableHours: 12, minWorkingDayHours: null,
+    billingTagPrefix: 'D', billByProject: false, stripCodeParens: false, timeOffTag: '.Time Off',
+    roundingHours: 1, startWindowHours: null, maxDescriptionLength: null, noOvertime: true,
+    balanceWeekdays: false, codeMappings: [], timesheetMode: 'summary' as const, exportName: '',
+    exportFields: EMPTY_EXPORT_FIELDS,
+  };
+  const ws = { id: 'cap', name: 'Capped', value: capped };
+  const days = ['2026-10-26', '2026-10-27', '2026-10-28', '2026-10-29', '2026-10-30'];
+  const list = days.map((day, i) => ({
+    id: 900 + i,
+    start: `${day}T07:00:00Z`,
+    stop: new Date(Date.parse(`${day}T07:00:00Z`) + (i === 0 ? 10 : 8) * 3600e3).toISOString(),
+    duration: (i === 0 ? 10 : 8) * 3600,
+    project_id: 10,
+    workspace_id: 1,
+    description: `Work ${i}`,
+    tags: ['D-100'],
+  }));
+  const range = time.dateRange('2026-10-24', '2026-10-30');
+  const build = (view: 'summary' | 'individual') =>
+    timesheet.buildTimesheet({ workspace: ws as never, accountName: 'T', entries: list, fromMs: range.fromMs, toMs: range.toMs, view, nowMs: Date.parse('2026-11-01T12:00:00Z') });
+  const sum = build('summary');
+  const ind = build('individual');
+  const sumDoc = sum.doc as { weeks: { dayDates: number[]; dayTotals: number[] }[] };
+  const indDoc = ind.doc as { days: { dateMs: number; total: number }[] };
+  eq(
+    sum.checks.day_totals.map((d) => d.billed_hours),
+    sumDoc.weeks[0].dayTotals.map((s) => s / 3600).filter((h) => h > 0),
+    'summary checks report the Summary view day totals'
+  );
+  eq(
+    ind.checks.day_totals.map((d) => d.billed_hours),
+    indDoc.days.map((d) => d.total / 3600),
+    'individual checks report the Individual view day totals'
+  );
+  eq(sum.checks.day_totals.reduce((a, d) => a + d.billed_hours, 0), 40, 'capped at 40 h');
+  ok(
+    JSON.stringify(sum.checks.day_totals) !== JSON.stringify(ind.checks.day_totals),
+    'and the two views really differ on this week (so the check means something)'
+  );
+}
+
 console.log(`✓ ${checks} MCP checks passed`);

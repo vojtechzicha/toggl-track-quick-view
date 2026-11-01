@@ -16,6 +16,8 @@ import { buildExportDoc, type ExportDoc, type ExportView } from '@/lib/export/mo
 import { weeksInRange } from '@/lib/export/range';
 import { toCSV } from '@/lib/export/csv';
 import { buildIndividualWeek } from '@/lib/timesheet/individual';
+import { buildSummaryGrid } from '@/lib/timesheet/summary';
+import { addDays } from '@/lib/calc';
 import { warnLabel } from '@/lib/timesheet/individual';
 import type { SyncPayload } from '@/lib/sync/model';
 import { fmtClock, fmtDate, hours } from './time';
@@ -161,18 +163,26 @@ export function buildTimesheet(opts: {
     rateBasis: f?.rateBasis === 'md' ? 'md' : 'hourly',
     currency: (f?.currency ?? '').toUpperCase(),
   });
-  return { doc, checks: timesheetChecks({ ...common, fromMs: opts.fromMs, toMs: opts.toMs }) };
+  return {
+    doc,
+    checks: timesheetChecks({ ...common, fromMs: opts.fromMs, toMs: opts.toMs, view: doc.view }),
+  };
 }
 
 /**
  * What the Timesheet page flags, per day in range: warning rows (no billing
- * tag, several, too long to bill alone), overlaps, time trimmed by the
- * overtime cap, time moved by balancing, and holidays.
+ * tag, several, too long to bill alone), overlaps and holidays, plus the
+ * billed day totals, time trimmed by the overtime cap and time moved by
+ * balancing as the requested view computes them.
  */
 function timesheetChecks(
-  o: Omit<Parameters<typeof buildIndividualWeek>[0], 'weekStart'> & { fromMs: number; toMs: number }
+  o: Omit<Parameters<typeof buildIndividualWeek>[0], 'weekStart'> & {
+    fromMs: number;
+    toMs: number;
+    view: ExportView;
+  }
 ) {
-  const { fromMs, toMs, ...input } = o;
+  const { fromMs, toMs, view, ...input } = o;
   const warnings: { date: string; kind: string; minutes: number; desc: string }[] = [];
   const overlaps: { date: string; detail: string }[] = [];
   const overtime: { date: string; hours: number }[] = [];
@@ -196,10 +206,28 @@ function timesheetChecks(
         });
       }
       for (const detail of day.overlaps) overlaps.push({ date, detail });
+      if (day.holiday) holidays.push({ date, billed: day.holidayBilled });
+      if (view !== 'individual') continue;
       if (day.overtime > 0) overtime.push({ date, hours: hours(day.overtime) });
       if (day.balanced !== 0) balanced.push({ date, hours: hours(day.balanced) });
-      if (day.holiday) holidays.push({ date, billed: day.holidayBilled });
       if (day.total > 0) dayTotals.push({ date, billed_hours: hours(day.total) });
+    }
+    // The views share warnings and overlaps (they are about entries), but
+    // spread the overtime cut and the balancing differently, so the per-day
+    // figures come from the view asked for: the Summary view evens the
+    // weekdays out where the Individual view cuts in proportion.
+    if (view !== 'summary') continue;
+    const grid = buildSummaryGrid({ ...input, weekStart });
+    if (!grid) continue;
+    for (let d = 0; d < 7; d++) {
+      const dateMs = addDays(weekStart, d);
+      if (dateMs < fromMs || dateMs >= toMs) continue;
+      const date = fmtDate(dateMs);
+      const col = grid.dayCols.indexOf(d);
+      const total = col >= 0 ? grid.dayTotals[col] : 0;
+      if (grid.overtimeByDay[d] > 0) overtime.push({ date, hours: hours(grid.overtimeByDay[d]) });
+      if (grid.balancedByDay[d] !== 0) balanced.push({ date, hours: hours(grid.balancedByDay[d]) });
+      if (total > 0) dayTotals.push({ date, billed_hours: hours(total) });
     }
   }
   return {
