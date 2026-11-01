@@ -200,7 +200,9 @@ export function resolveTimes(
   stop: string | undefined,
   durationMinutes: number | undefined
 ): Resolved<{ startMs: number; stopMs: number }> {
-  const startMs = parseInstant(start);
+  // Toggl stores whole seconds and wants start + duration = stop exactly.
+  const parsedStart = parseInstant(start);
+  const startMs = parsedStart === null ? null : Math.floor(parsedStart / 1000) * 1000;
   if (startMs === null) {
     return { ok: false, error: `start "${start}" is not a time (local "YYYY-MM-DDTHH:MM" or ISO with offset).` };
   }
@@ -211,7 +213,7 @@ export function resolveTimes(
   if (stop !== undefined) {
     const parsed = parseInstant(stop);
     if (parsed === null) return { ok: false, error: `stop "${stop}" is not a time.` };
-    stopMs = parsed;
+    stopMs = Math.floor(parsed / 1000) * 1000;
   } else {
     stopMs = startMs + Math.round(durationMinutes! * 60) * 1000;
   }

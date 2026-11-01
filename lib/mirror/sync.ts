@@ -15,6 +15,7 @@
 import {
   CREATED_WITH,
   QUOTA_RESERVE,
+  TOGGL_TIMEOUT_MS,
   TogglError,
   getAccount,
   isQuotaError,
@@ -23,7 +24,7 @@ import {
   type ResponseQuota,
 } from '@/lib/toggl/server';
 import { cacheIntervalSec } from '@/lib/serverCache';
-import { addDays, startOfWeek } from '@/lib/calc';
+import { addDays, startOfDay, startOfWeek } from '@/lib/calc';
 import {
   EMPTY_PUSH,
   MAX_PUSH_ATTEMPTS,
@@ -61,9 +62,21 @@ const SINCE_OVERLAP_MS = 60_000;
 const RECONCILE_MS = 24 * 3600 * 1000;
 let writeSpacingMs = 1000; // Toggl's per-IP safeguard tolerates about one request a second
 let backgroundSync = true;
+/**
+ * A create whose answer was lost is only re-checked this long after it was
+ * sent, so a request still running elsewhere (a timed-out function, a slow
+ * Toggl) has settled before Toggl is asked whether it exists.
+ */
+let settleMs = 2 * 60_000;
 
 /** scripts/test-mirror.ts only: no spacing, and no sync started behind the test's back. */
-export function configureForTests(opts: { writeSpacingMs?: number; backgroundSync?: boolean; pageLimit?: number }): void {
+export function configureForTests(opts: {
+  writeSpacingMs?: number;
+  backgroundSync?: boolean;
+  pageLimit?: number;
+  settleMs?: number;
+}): void {
+  if (opts.settleMs !== undefined) settleMs = opts.settleMs;
   if (opts.pageLimit !== undefined) togglPageLimit = opts.pageLimit;
   if (opts.writeSpacingMs !== undefined) writeSpacingMs = opts.writeSpacingMs;
   if (opts.backgroundSync !== undefined) backgroundSync = opts.backgroundSync;
@@ -288,18 +301,47 @@ export async function ensureFilled(): Promise<MirrorState> {
 
 /** Make sure entries from `fromMs` on are in the mirror; reads older weeks from Toggl once. */
 export async function ensureCovered(fromMs: number, toMs?: number): Promise<void> {
-  const st = await ensureFilled();
-  if (fromMs < st.covered_from_ms) {
-    const from = startOfWeek(new Date(fromMs)).getTime();
-    await refreshRange(from, st.covered_from_ms);
-    await setState({ covered_from_ms: from });
-  }
-  // Entries already scheduled beyond the fill never change, so no pull brings
-  // them: read later weeks once, as they are asked for.
-  const coveredTo = st.covered_to_ms ?? addDays(st.since_ms, FILL_AHEAD_DAYS);
-  if (toMs !== undefined && toMs > coveredTo) {
-    await refreshRange(coveredTo, toMs);
-    await setState({ covered_to_ms: toMs });
+  const needs = (st: MirrorState) =>
+    fromMs < st.covered_from_ms || (toMs !== undefined && toMs > coveredToOf(st));
+  if (!needs(await ensureFilled())) return;
+  // Coverage changes (extensions here, the reset after an expired bookmark in
+  // pullIfStale) happen one at a time under the pull lease, each on the state
+  // as it is once the lease is held.
+  await withLease('pull', 120_000, async () => {
+    const st = (await getState())!;
+    if (fromMs < st.covered_from_ms) {
+      const from = startOfWeek(new Date(fromMs)).getTime();
+      await refreshRange(from, st.covered_from_ms);
+      await setState({ covered_from_ms: from });
+    }
+    // Entries already scheduled beyond the fill never change, so no pull brings
+    // them: read later weeks once, as they are asked for.
+    const coveredTo = coveredToOf(st);
+    if (toMs !== undefined && toMs > coveredTo) {
+      await refreshRange(coveredTo, toMs);
+      await setState({ covered_to_ms: toMs });
+    }
+  });
+}
+
+function coveredToOf(st: MirrorState): number {
+  return st.covered_to_ms ?? addDays(st.since_ms, FILL_AHEAD_DAYS);
+}
+
+/** Run `fn` holding a lease, waiting up to `waitMs` for it. */
+export async function withLease<T>(name: string, ms: number, fn: () => Promise<T>, waitMs = 30_000): Promise<T> {
+  const started = Date.now();
+  for (;;) {
+    const release = await acquireLease(name, ms);
+    if (release) {
+      try {
+        return await fn();
+      } finally {
+        await release();
+      }
+    }
+    if (Date.now() - started > waitMs) throw new Error(`Busy: another request holds the ${name} lease. Try again shortly.`);
+    await sleep(500);
   }
 }
 
@@ -385,7 +427,9 @@ function errorText(e: unknown): string {
  */
 export async function push(budgetMs = 40_000): Promise<PushResult> {
   const result: PushResult = { pushed: 0, failed: 0, stopped: null, quota: null };
-  const release = await acquireLease('push', budgetMs + 15_000);
+  // Covers the budget plus one request at its timeout (lib/toggl/server.ts)
+  // and the bookkeeping after it, so the lease never lapses mid-request.
+  const release = await acquireLease('push', budgetMs + TOGGL_TIMEOUT_MS + 30_000);
   if (!release) return { ...result, stopped: 'another instance is pushing' };
   const col = await entriesCol();
   const started = Date.now();
@@ -439,41 +483,48 @@ async function pushOne(read: MirrorDoc): Promise<Outcome> {
   const now = new Date();
   const creating = doc.toggl_id === null;
 
-  // A create whose answer never arrived may have reached Toggl: pull first,
-  // which adopts it if it did (applyRemote).
-  // Only a pull that actually read Toggl may clear it for a second POST: if
-  // another instance holds the pull lease, or Toggl can't be read, wait.
+  // A create whose answer never arrived may have reached Toggl. Once it has
+  // settled, read the day it was sent for from Toggl: if the entry is there,
+  // applyRemote adopts it; only if it is not may it be sent again.
   if (creating && doc.push.in_flight_since) {
-    const pulled = await pullIfStale(0).catch(() => false);
-    if (!pulled) {
-      return { kind: 'stop', reason: 'a create whose answer was lost waits for a pull to check Toggl', quota: null };
+    if (now.getTime() - doc.push.in_flight_since.getTime() < settleMs) {
+      return { kind: 'stop', reason: 'a create whose answer was lost is settling before Toggl is checked', quota: null };
+    }
+    const sentStart = Date.parse(doc.push.sent?.start ?? doc.fields.start);
+    const day = startOfDay(new Date(sentStart)).getTime();
+    try {
+      await refreshRange(addDays(day, -1), addDays(day, 2));
+    } catch (e) {
+      return { kind: 'stop', reason: `a create whose answer was lost waits for Toggl to be readable: ${errorText(e)}`, quota: null };
     }
     const again = await col.findOne({ _id: doc._id });
     if (!again || again.toggl_id !== null || !again.dirty) return { kind: 'ok', quota: null };
     doc = again;
   }
 
-  // Claim the document as it was read: if it was deleted or edited since, the
-  // claim misses and the next loop iteration picks up the current state. For a
-  // create the claim records what is sent, so a lost answer can be adopted
-  // (applyRemote) even if the entry is edited before the next pull, and
-  // delete_time_entries refuses a claimed entry.
+  // Claim the document as it was read, bumping its version: a tool or pull
+  // holding an older snapshot then re-reads instead of overwriting the claim,
+  // and if the document changed since it was read the claim misses and the
+  // next loop iteration takes the current state. For a create the claim
+  // records what is sent, so a lost answer can be adopted (applyRemote) even
+  // if the entry is edited before the next pull, and delete_time_entries
+  // refuses a claimed entry.
+  const sent = creating
+    ? { start: doc.fields.start, project_id: doc.fields.project_id, description: doc.fields.description }
+    : null;
+  const claimed: MirrorDoc = {
+    ...doc,
+    version: doc.version + 1,
+    push: creating ? { ...doc.push, in_flight_since: now, sent, last_attempt_at: now } : { ...doc.push, last_attempt_at: now },
+  };
   const claim = await col.updateOne(
     { _id: doc._id, version: doc.version, toggl_id: doc.toggl_id },
     {
       $set: {
         'push.last_attempt_at': now,
-        ...(creating
-          ? {
-              'push.in_flight_since': now,
-              'push.sent': {
-                start: doc.fields.start,
-                project_id: doc.fields.project_id,
-                description: doc.fields.description,
-              },
-            }
-          : {}),
+        ...(creating ? { 'push.in_flight_since': now, 'push.sent': sent } : {}),
       },
+      $inc: { version: 1 },
     }
   );
   if (claim.matchedCount === 0) return { kind: 'ok', quota: null };
@@ -490,15 +541,19 @@ async function pushOne(read: MirrorDoc): Promise<Outcome> {
         updateBody(doc)
       );
     }
-    await acknowledge(doc, res.data);
+    await acknowledge(claimed, res.data);
     return { kind: 'ok', quota: res.quota };
   } catch (e) {
-    // Every update below is guarded by the version the request was built
-    // from: an entry corrected while it was out (a valid project instead of
-    // an archived one) keeps its fresh push state and goes out next run.
+    // Every update below is guarded by the claimed version: an entry corrected
+    // while the request was out (a valid project instead of an archived one)
+    // keeps its fresh push state and goes out next run.
+    const quota = e instanceof TogglError ? e.quota : null;
     if (isQuotaError(e)) {
       // 402/429: Toggl did not take it.
-      await col.updateOne({ _id: doc._id, version: doc.version }, { $set: { 'push.in_flight_since': null, 'push.sent': null } });
+      await col.updateOne(
+        { _id: doc._id, version: claimed.version },
+        { $set: { 'push.in_flight_since': null, 'push.sent': null } }
+      );
       return {
         kind: 'stop',
         reason: `quota: Toggl refused (HTTP ${e.status}); resets in ${Math.ceil((e.resetsInSec ?? 3600) / 60)} min`,
@@ -507,32 +562,35 @@ async function pushOne(read: MirrorDoc): Promise<Outcome> {
     }
     if (e instanceof TogglError && e.status === 404 && !creating) {
       // Deleted in Toggl since the last pull.
-      await col.updateOne({ _id: doc._id, version: doc.version }, { $set: { remote_deleted: true, updated_at: new Date() } });
-      return { kind: 'failed', quota: null };
+      await col.updateOne(
+        { _id: doc._id, version: claimed.version },
+        { $set: { remote_deleted: true, updated_at: new Date() } }
+      );
+      return { kind: 'failed', quota };
     }
     // A 4xx is Toggl refusing this entry (an archived project, a bad value):
     // sending it again would only spend quota, so it is parked until edited.
-    // Anything else (5xx, network) may have reached Toggl or may pass next
-    // time; it is retried in later runs, MAX_PUSH_ATTEMPTS times.
+    // Anything else (5xx, network, timeout) may have reached Toggl or may pass
+    // next time; it is retried in later runs, MAX_PUSH_ATTEMPTS times.
     const refused = e instanceof TogglError && e.status >= 400 && e.status < 500;
     const attempts = doc.push.attempts + 1;
     const failed = refused || attempts >= MAX_PUSH_ATTEMPTS;
     await col.updateOne(
-      { _id: doc._id, version: doc.version },
+      { _id: doc._id, version: claimed.version },
       {
         $set: {
           'push.attempts': attempts,
           'push.last_error': errorText(e),
           // A create that may have reached Toggl stays in flight, so the next
-          // try pulls first and adopts it instead of creating a twin.
-          'push.in_flight_since': creating && !refused ? doc.push.in_flight_since ?? now : null,
+          // try checks Toggl and adopts it instead of creating a twin.
+          'push.in_flight_since': creating && !refused ? now : null,
           ...(creating && refused ? { 'push.sent': null } : {}),
           'push.failed': failed,
         },
       }
     );
-    if (!refused) return { kind: 'stop', reason: `Toggl unreachable: ${errorText(e)}`, quota: null };
-    return { kind: 'failed', quota: null };
+    if (!refused) return { kind: 'stop', reason: `Toggl unreachable: ${errorText(e)}`, quota };
+    return { kind: 'failed', quota };
   }
 }
 
@@ -542,24 +600,24 @@ async function pushOne(read: MirrorDoc): Promise<Outcome> {
  * is recomputed against what Toggl now has (an edit back to the old value is
  * then still a change to send).
  */
-async function acknowledge(sentDoc: MirrorDoc, answer: TogglEntry): Promise<void> {
+async function acknowledge(claimed: MirrorDoc, answer: TogglEntry): Promise<void> {
   const col = await entriesCol();
   const theirs = fieldsFromToggl(answer);
-  const base = {
-    toggl_id: answer.id,
-    remote: { ...theirs, at: answer.at },
-    push: { ...EMPTY_PUSH },
-    updated_at: new Date(),
-  };
+  const answerRemote = { ...theirs, at: answer.at };
   for (let attempt = 0; attempt < 5; attempt++) {
-    const current = attempt === 0 ? sentDoc : await col.findOne({ _id: sentDoc._id });
+    const current = attempt === 0 ? claimed : await col.findOne({ _id: claimed._id });
     if (!current) return;
-    const unchanged = current.version === sentDoc.version;
+    // The stored Toggl state only moves forward: a pull may already have
+    // brought a newer one while this request was out.
+    const newer =
+      current.remote && Date.parse(current.remote.at) > Date.parse(answer.at) ? current.remote : answerRemote;
+    const base = { toggl_id: answer.id, remote: newer, push: { ...EMPTY_PUSH }, updated_at: new Date() };
+    const unchanged = current.version === claimed.version && newer === answerRemote;
     const res = await col.updateOne(
-      { _id: sentDoc._id, version: current.version },
+      { _id: claimed._id, version: current.version },
       unchanged
         ? { $set: { ...base, dirty: false, fields: theirs, ...spanOf(theirs) }, $inc: { version: 1 } }
-        : { $set: { ...base, dirty: changedGroups(current.fields, theirs).length > 0 }, $inc: { version: 1 } }
+        : { $set: { ...base, dirty: changedGroups(current.fields, newer).length > 0 }, $inc: { version: 1 } }
     );
     if (res.matchedCount > 0) return;
   }

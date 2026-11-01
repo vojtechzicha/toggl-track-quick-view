@@ -212,6 +212,10 @@ setMcpStoreForChecks(null);
   eq(time.parseInstant('2026-03-29T02:30'), null, 'wall time skipped by the spring DST jump is refused');
   eq(time.parseInstant('2026-02-30T09:00'), null, 'impossible date refused');
   eq(time.parseInstant('9:00'), null, 'bare clock refused');
+  eq(time.parseInstant('2026-13-01T09:00'), null, 'month 13 refused, not rolled over');
+  eq(time.parseInstant('2026-00-01T09:00'), null, 'month 0 refused');
+  eq(time.parseInstant('2026-02-30T09:00:00+01:00'), null, 'February 30 refused with an offset too');
+  eq(time.parseInstant('2026-10-29T24:00:00Z'), null, '24:00 refused');
   eq(time.fmtLocal(Date.parse('2026-10-25T00:30:00Z')), '2026-10-25T02:30', 'formats in local time');
   const r = time.dateRange('2026-10-24', '2026-10-25');
   eq((r.toMs - r.fromMs) / 3600000, 49, 'a range over the autumn change is 49 hours');
@@ -382,6 +386,12 @@ const account = {
   eq(longer.duration, 5400, 'new length');
   const stopOnly = applyUpdate({ id: 1, stop: '2026-10-25T01:45:00Z' }, before, account, false);
   eq(stopOnly.start, before.start, 'changing only the stop keeps the exact start');
+  const frac = applyUpdate({ id: 1, stop: '2026-10-25T01:45:00.500Z' }, before, account, false);
+  eq(
+    [frac.stop, frac.duration, (Date.parse(frac.stop!) - Date.parse(frac.start)) / 1000],
+    ['2026-10-25T01:45:00.000Z', 4455, 4455],
+    'second precision: start + duration = stop exactly'
+  );
 
   const tagged = applyUpdate({ id: 1, add_tags: ['D-200'] }, before, account, false);
   eq(tagged.tags, ['D-100', 'Brand new', 'D-200 Phase two'], 'kept tags are not re-validated; added ones are');

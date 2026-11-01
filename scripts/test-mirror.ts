@@ -154,7 +154,7 @@ const sync = await import('../lib/mirror/sync.ts');
 const store = await import('../lib/mirror/store.ts');
 const { memoryStore, setMcpStoreForChecks } = await import('../lib/mcp/store.ts');
 const { entryTools } = await import('../lib/mcp/tools/entries.ts');
-sync.configureForTests({ writeSpacingMs: 0, backgroundSync: false });
+sync.configureForTests({ writeSpacingMs: 0, backgroundSync: false, settleMs: 0 });
 setMcpStoreForChecks(memoryStore());
 
 const ctx = { auth: { token: 't', clientId: 'c', scopes: ['timesheet:read', 'timesheet:write'], expiresAt: 0, grantId: 'g', clientName: 'test' } } as never;
@@ -304,21 +304,24 @@ try {
   ok(await store.byPublicId(claimed.created[0].id), 'an entry being sent is not deleted');
   await sync.push();
 
-  // A lost create waits while another instance holds the pull lease: no second POST.
+  // Recovery reads the entry's own day from Toggl, so a held pull lease doesn't block it or risk a twin.
   const lost4 = await tool('create_time_entries', { entries: [{ start: `${d}T18:45`, duration_minutes: 10, description: 'Lease held', project: 'Alpha' }] });
   toggl.loseNextAnswer = true;
   await sync.push();
   const releaseLease = (await store.acquireLease('pull', 60_000))!;
   const postsHeld = posts();
-  const held = await sync.push();
-  eq(posts(), postsHeld, 'no POST while the recovery pull cannot run');
-  ok(/waits for a pull/.test(held.stopped ?? ''), 'and it says so');
+  await sync.push();
   await releaseLease();
+  eq(posts(), postsHeld, 'no POST: the lost create is found in Toggl');
+  ok((await store.byPublicId(lost4.created[0].id))!.toggl_id !== null, 'and adopted');
 
   // Keeping the local copy of a lost create keeps the recovery: still one entry.
-  await tool('resolve_conflicts', { resolutions: [{ id: lost4.created[0].id, keep: 'local' }] });
+  const lost5 = await tool('create_time_entries', { entries: [{ start: `${d}T18:55`, duration_minutes: 5, description: 'Kept local', project: 'Alpha' }] });
+  toggl.loseNextAnswer = true;
   await sync.push();
-  eq([...toggl.entries.values()].filter((e) => e.description === 'Lease held').length, 1, 'no twin after keep local');
+  await tool('resolve_conflicts', { resolutions: [{ id: lost5.created[0].id, keep: 'local' }] });
+  await sync.push();
+  eq([...toggl.entries.values()].filter((e) => e.description === 'Kept local').length, 1, 'no twin after keep local');
 
   // A push acknowledged while a range re-read is out survives its cleanup.
   const racing = await tool('create_time_entries', { entries: [{ start: `${d}T06:00`, duration_minutes: 20, description: 'Pushed mid-read', project: 'Alpha' }] });
@@ -329,6 +332,84 @@ try {
   await sync.refreshRange(dayStart, dayStart + 86400e3);
   const survivor = await store.byPublicId(racing.created[0].id);
   ok(survivor && survivor.toggl_id !== null && !survivor.dirty, 'pushed during the re-read and still there');
+
+  // ── Review round 11 ──
+  // A lost create waits out the settle window before Toggl is checked.
+  sync.configureForTests({ settleMs: 60_000 });
+  await tool('create_time_entries', { entries: [{ start: `${d}T05:00`, duration_minutes: 10, description: 'Settling', project: 'Alpha' }] });
+  toggl.loseNextAnswer = true;
+  await sync.push();
+  const postsSettle = posts();
+  const settling = await sync.push();
+  eq(posts(), postsSettle, 'no second POST inside the settle window');
+  ok(/settling/.test(settling.stopped ?? ''), `and it says so (${settling.stopped})`);
+  sync.configureForTests({ settleMs: 0 });
+  await sync.push();
+  eq([...toggl.entries.values()].filter((e) => e.description === 'Settling').length, 1, 'adopted after it, no twin');
+
+  // A claim bumps the version: a write from a snapshot taken before it misses.
+  const claimProbe = await tool('create_time_entries', { entries: [{ start: `${d}T05:20`, duration_minutes: 10, description: 'Claim probe', project: 'Alpha' }] });
+  const probeDoc = (await store.byPublicId(claimProbe.created[0].id))!;
+  let staleWrite = -1;
+  toggl.duringNextPost = async () => {
+    staleWrite = (await (await store.entriesCol()).updateOne({ _id: probeDoc._id, version: probeDoc.version }, { $set: { 'push.in_flight_since': null } })).matchedCount;
+  };
+  await sync.push();
+  eq(staleWrite, 0, 'a pre-claim snapshot cannot clear the in-flight marker');
+
+  // A late PUT answer does not roll back a newer state a pull brought meanwhile.
+  const late = [...toggl.entries.values()].find((e) => e.description === 'Claim probe')!;
+  await tool('update_time_entries', { updates: [{ id: late.id, add_tags: ['D-1'] }] });
+  toggl.duringNextPut = async () => {
+    put({ ...toggl.entries.get(late.id)!, description: 'B by Toggl' });
+    await sync.pullIfStale(0);
+  };
+  await sync.push();
+  eq((await store.byTogglId(late.id))!.remote!.description, 'B by Toggl', 'the newer pulled state stays the baseline');
+  put({ ...toggl.entries.get(late.id)!, description: 'C by Toggl' });
+  await sync.pullIfStale(0);
+  await sync.push();
+  eq(toggl.entries.get(late.id)!.description, 'C by Toggl', 'nothing sends the older description back');
+
+  // Two identical creates at once: one entry.
+  const twin = { entries: [{ start: `${d}T05:40`, duration_minutes: 10, description: 'Concurrent', project: 'Alpha' }] };
+  const [c1, c2] = await Promise.all([tool('create_time_entries', twin), tool('create_time_entries', twin)]);
+  eq(c1.created.length + c2.created.length, 1, 'concurrent identical creates make one entry');
+
+  // A lost create dated outside the recent weeks, recovered while the bookmark is expired: no twin.
+  const oldLost = new Date(now - 45 * 86400e3);
+  const ol = `${oldLost.getFullYear()}-${String(oldLost.getMonth() + 1).padStart(2, '0')}-${String(oldLost.getDate()).padStart(2, '0')}`;
+  await tool('create_time_entries', { entries: [{ start: `${ol}T10:00`, duration_minutes: 30, description: 'Old lost create', project: 'Alpha' }] });
+  toggl.loseNextAnswer = true;
+  await sync.push();
+  toggl.rejectSince = true;
+  await sync.push();
+  toggl.rejectSince = false;
+  eq([...toggl.entries.values()].filter((e) => e.description === 'Old lost create').length, 1, 'recovery checks the day it was sent for');
+
+  // keep "toggl" refuses a create that may be in Toggl.
+  const inFlight = await tool('create_time_entries', { entries: [{ start: `${d}T06:30`, duration_minutes: 10, description: 'Unsettled', project: 'Alpha' }] });
+  await (await store.entriesCol()).updateOne({ local_seq: -inFlight.created[0].id }, { $set: { 'push.in_flight_since': new Date() } });
+  await assert.rejects(tool('resolve_conflicts', { resolutions: [{ id: inFlight.created[0].id, keep: 'toggl' }] }), /being sent/);
+  checks++;
+  await (await store.entriesCol()).updateOne({ local_seq: -inFlight.created[0].id }, { $set: { 'push.in_flight_since': null } });
+  await sync.push();
+
+  // Refused writes count against the reserve too.
+  toggl.quota.workspace = 7;
+  await new Promise((r) => setTimeout(r, 200));
+  await db.collection('toggl_quota').deleteMany({});
+  const docsCol = await store.entriesCol();
+  for (let i = 0; i < 4; i++) {
+    await docsCol.insertOne(await store.docFromLocal(1, { project_id: 99, description: `Refused ${i}`, tags: [], billable: false, start: new Date(`${d}T0${i}:00`).toISOString(), stop: new Date(`${d}T0${i}:10`).toISOString(), duration: 600 }));
+  }
+  const postsQ = posts();
+  await sync.push();
+  ok(posts() - postsQ <= 2, `refused answers' quota stops the run at the reserve (${posts() - postsQ} sent)`);
+  await docsCol.deleteMany({ 'fields.description': { $regex: '^Refused \\d$' } });
+  toggl.quota.workspace = 30;
+  await new Promise((r) => setTimeout(r, 200));
+  await db.collection('toggl_quota').deleteMany({});
 
   // ── Merge: edited in Toggl and here ──
   const one = [...toggl.entries.values()].find((e) => e.description === 'One')!;

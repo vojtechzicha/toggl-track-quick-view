@@ -36,13 +36,19 @@ export class TogglError extends Error {
   readonly status: number;
   /** Seconds until the quota resets, for 402/429. */
   readonly resetsInSec: number | null;
-  constructor(status: number, message: string, resetsInSec: number | null = null) {
+  /** The quota the error response reported: refused requests count too. */
+  readonly quota: ResponseQuota | null;
+  constructor(status: number, message: string, resetsInSec: number | null = null, quota: ResponseQuota | null = null) {
     super(message);
     this.name = 'TogglError';
     this.status = status;
     this.resetsInSec = resetsInSec;
+    this.quota = quota;
   }
 }
+
+/** No Toggl request runs longer than this (the push lease is sized on it). */
+export const TOGGL_TIMEOUT_MS = 20_000;
 
 export function isQuotaError(e: unknown): e is TogglError {
   return e instanceof TogglError && (e.status === 402 || e.status === 429);
@@ -121,30 +127,31 @@ export async function togglRequestMeta<T>(
     headers: { Authorization: authHeader(), 'Content-Type': 'application/json' },
     body: body === undefined ? undefined : JSON.stringify(body),
     cache: 'no-store',
+    // A hung request must end before the lease guarding it does; a timed-out
+    // create counts as possibly sent (lib/mirror/sync.ts).
+    signal: AbortSignal.timeout(TOGGL_TIMEOUT_MS),
   });
   recordQuota(path, res.headers);
   const text = await res.text();
+  const remaining = Number(res.headers.get('x-toggl-quota-remaining'));
+  const resetsIn = Number(res.headers.get('x-toggl-quota-resets-in'));
+  const quota: ResponseQuota | null =
+    res.headers.has('x-toggl-quota-remaining') && Number.isFinite(remaining)
+      ? { remaining, resetsInSec: Number.isFinite(resetsIn) ? resetsIn : 3600 }
+      : null;
   if (!res.ok) {
-    const resetsIn = Number(res.headers.get('x-toggl-quota-resets-in'));
     const detail = text.slice(0, 300).replace(/\s+/g, ' ').trim();
     if (res.status === 402 || res.status === 429) {
       throw new TogglError(
         res.status,
         `Toggl rate limit reached (HTTP ${res.status}).`,
-        Number.isFinite(resetsIn) ? resetsIn : null
+        Number.isFinite(resetsIn) ? resetsIn : null,
+        quota
       );
     }
-    throw new TogglError(res.status, `Toggl answered HTTP ${res.status}: ${detail || res.statusText}`);
+    throw new TogglError(res.status, `Toggl answered HTTP ${res.status}: ${detail || res.statusText}`, null, quota);
   }
-  const remaining = Number(res.headers.get('x-toggl-quota-remaining'));
-  const resetsIn = Number(res.headers.get('x-toggl-quota-resets-in'));
-  return {
-    data: (text ? JSON.parse(text) : null) as T,
-    quota:
-      res.headers.has('x-toggl-quota-remaining') && Number.isFinite(remaining)
-        ? { remaining, resetsInSec: Number.isFinite(resetsIn) ? resetsIn : 3600 }
-        : null,
-  };
+  return { data: (text ? JSON.parse(text) : null) as T, quota };
 }
 
 // ─── Cache ──────────────────────────────────────────────────────────────────

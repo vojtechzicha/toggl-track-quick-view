@@ -20,7 +20,6 @@ export function useAppTimeZone(): string {
 
 const DATE_RE = /^(\d{4})-(\d{2})-(\d{2})$/;
 const LOCAL_RE = /^(\d{4})-(\d{2})-(\d{2})[T ](\d{2}):(\d{2})(?::(\d{2}))?$/;
-const OFFSET_RE = /(Z|[+-]\d{2}:?\d{2})$/;
 
 /** "YYYY-MM-DD" → local midnight (ms), or null. */
 export function parseDate(s: string): number | null {
@@ -33,21 +32,35 @@ export function parseDate(s: string): number | null {
   return d.getTime();
 }
 
+const ISO_OFFSET_RE =
+  /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})(?::(\d{2})(?:\.\d+)?)?(Z|[+-]\d{2}:?\d{2})$/;
+
+/** Calendar and clock parts that exist (no month 13, February 30 or 24:00). */
+function validParts(y: number, mo: number, d: number, h: number, mi: number, se: number): boolean {
+  if (mo < 1 || mo > 12 || d < 1 || h > 23 || mi > 59 || se > 59) return false;
+  return d <= new Date(Date.UTC(y, mo, 0)).getUTCDate();
+}
+
 /**
  * A point in time: local wall time ("2026-10-30T09:15", "2026-10-30 09:15")
- * in the app's zone, or an ISO string with an offset or Z. Null if unparseable.
+ * in the app's zone, or an ISO string with an offset or Z. Null if
+ * unparseable or not a real date and time (no rolling over into another day).
  */
 export function parseInstant(s: string): number | null {
   const v = s.trim();
   const m = LOCAL_RE.exec(v);
   if (m) {
     const [y, mo, d, h, mi, se] = [m[1], m[2], m[3], m[4], m[5], m[6] ?? '0'].map(Number);
+    if (!validParts(y, mo, d, h, mi, se)) return null;
     const date = new Date(y, mo - 1, d, h, mi, se);
-    // Reject 2026-02-30 and wall times skipped by a DST jump.
+    // Reject wall times skipped by a DST jump (the Date rolls them forward).
     if (date.getDate() !== d || date.getHours() !== h || date.getMinutes() !== mi) return null;
     return date.getTime();
   }
-  if (OFFSET_RE.test(v)) {
+  const o = ISO_OFFSET_RE.exec(v);
+  if (o) {
+    const [y, mo, d, h, mi, se] = [o[1], o[2], o[3], o[4], o[5], o[6] ?? '0'].map(Number);
+    if (!validParts(y, mo, d, h, mi, se)) return null;
     const ms = Date.parse(v);
     return Number.isFinite(ms) ? ms : null;
   }

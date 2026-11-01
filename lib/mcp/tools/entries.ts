@@ -17,7 +17,7 @@ import {
 } from '@/lib/mirror/model';
 import { byPublicId, docFromLocal, entriesCol, getState, nextLocalSeq, queueStatus } from '@/lib/mirror/store';
 import { readMirror } from '@/lib/mirror/read';
-import { push, pullIntervalSec, syncAfterResponse } from '@/lib/mirror/sync';
+import { push, pullIntervalSec, syncAfterResponse, withLease } from '@/lib/mirror/sync';
 import {
   compactEntry,
   coveringWindow,
@@ -173,33 +173,64 @@ const createTimeEntries = defineTool({
       return r.value.id;
     });
     const opts = { allowNewTags: !!allow_new_tags, nowMs: now, avoidProjectIds };
-    const first = planEntries(entries as EntryInput[], account, [], opts);
-    if (first.errors.length) throw new ToolError(`Nothing was saved.\n${first.errors.join('\n')}`);
-    const win = coveringWindow(first.planned);
-    if (!win) throw new ToolError('Nothing to create.');
-    const read = await readMirror(Date.parse(win.startISO), Date.parse(win.endISO));
-    const { planned, trimmed, skippedInside } = planEntries(
-      entries as EntryInput[],
-      account,
-      read.docs.map(toTimeEntry),
-      opts
-    );
-
-    const todo = planned.filter((p) => p.duplicateOf === null && p.repeatOf === null);
-    const skipped = planned
-      .filter((p) => p.duplicateOf !== null || p.repeatOf !== null)
-      .map((p) =>
-        p.duplicateOf !== null
-          ? { index: p.index, existing_id: p.duplicateOf, entry: p.summary }
-          : { index: p.index, same_as_index: p.repeatOf, entry: p.summary }
+    // One create at a time: two identical calls at once would both pass the
+    // duplicate check before either saved.
+    return withLease('create', 60_000, async () => {
+      const first = planEntries(entries as EntryInput[], account, [], opts);
+      if (first.errors.length) throw new ToolError(`Nothing was saved.\n${first.errors.join('\n')}`);
+      const win = coveringWindow(first.planned);
+      if (!win) throw new ToolError('Nothing to create.');
+      const read = await readMirror(Date.parse(win.startISO), Date.parse(win.endISO));
+      const { planned, trimmed, skippedInside } = planEntries(
+        entries as EntryInput[],
+        account,
+        read.docs.map(toTimeEntry),
+        opts
       );
-    const overlaps = planned.filter((p) => p.overlaps.length).map((p) => ({ index: p.index, overlaps: p.overlaps }));
-    const newTags = [...new Set(planned.flatMap((p) => p.newTags))];
 
-    if (dry_run) {
+      const todo = planned.filter((p) => p.duplicateOf === null && p.repeatOf === null);
+      const skipped = planned
+        .filter((p) => p.duplicateOf !== null || p.repeatOf !== null)
+        .map((p) =>
+          p.duplicateOf !== null
+            ? { index: p.index, existing_id: p.duplicateOf, entry: p.summary }
+            : { index: p.index, same_as_index: p.repeatOf, entry: p.summary }
+        );
+      const overlaps = planned.filter((p) => p.overlaps.length).map((p) => ({ index: p.index, overlaps: p.overlaps }));
+      const newTags = [...new Set(planned.flatMap((p) => p.newTags))];
+
+      if (dry_run) {
+        return {
+          dry_run: true,
+          would_create: todo.map((p) => ({ index: p.index, entry: p.summary, hours: hours(p.write.duration) })),
+          skipped_duplicates: skipped,
+          trimmed_around_avoided: trimmed,
+          skipped_inside_avoided: skippedInside,
+          overlaps,
+          new_tags: newTags,
+          queue: await queueSummary(),
+        };
+      }
+
+      const col = await entriesCol();
+      const created: { index: number; id: number; entry: string }[] = [];
+      for (const p of todo) {
+        const doc = await docFromLocal(account.workspaceId, p.write);
+        await col.insertOne(doc);
+        created.push({ index: p.index, id: publicId(doc), entry: p.summary });
+        await audit(ctx, {
+          tool: 'create_time_entries',
+          action: 'create',
+          entryId: publicId(doc),
+          after: compactEntry(toTimeEntry(doc), account, now),
+        });
+      }
+      if (created.length) {
+        await rememberTags(newTags);
+        await syncAfterResponse({ pull: 'none' });
+      }
       return {
-        dry_run: true,
-        would_create: todo.map((p) => ({ index: p.index, entry: p.summary, hours: hours(p.write.duration) })),
+        created,
         skipped_duplicates: skipped,
         trimmed_around_avoided: trimmed,
         skipped_inside_avoided: skippedInside,
@@ -207,34 +238,7 @@ const createTimeEntries = defineTool({
         new_tags: newTags,
         queue: await queueSummary(),
       };
-    }
-
-    const col = await entriesCol();
-    const created: { index: number; id: number; entry: string }[] = [];
-    for (const p of todo) {
-      const doc = await docFromLocal(account.workspaceId, p.write);
-      await col.insertOne(doc);
-      created.push({ index: p.index, id: publicId(doc), entry: p.summary });
-      await audit(ctx, {
-        tool: 'create_time_entries',
-        action: 'create',
-        entryId: publicId(doc),
-        after: compactEntry(toTimeEntry(doc), account, now),
-      });
-    }
-    if (created.length) {
-      await rememberTags(newTags);
-      await syncAfterResponse({ pull: 'none' });
-    }
-    return {
-      created,
-      skipped_duplicates: skipped,
-      trimmed_around_avoided: trimmed,
-      skipped_inside_avoided: skippedInside,
-      overlaps,
-      new_tags: newTags,
-      queue: await queueSummary(),
-    };
+    });
   },
 });
 
@@ -525,6 +529,15 @@ const resolveConflicts = defineTool({
             )
           ).matchedCount;
         } else if (doc.remote_deleted || !doc.remote) {
+          // Never created in Toggl as far as this copy knows. If a create is
+          // out (or its answer was lost), Toggl may have it: deleting the
+          // document would lose the means to adopt it, and a re-sent batch
+          // would make a twin. Let the push settle first.
+          if (!doc.remote_deleted && doc.push.in_flight_since) {
+            throw new ToolError(
+              `Entry ${r.id} is being sent to Toggl (or its answer was lost); resolve it once get_sync_status shows it settled.`
+            );
+          }
           matched = (await col.deleteOne({ _id: doc._id, version: doc.version })).deletedCount;
         } else {
           const { at: _at, ...fields } = doc.remote;
