@@ -18,8 +18,8 @@ const KEY_SALT = 'tqv-auth-v1';
 
 /**
  * Active when APP_PASSWORD is set and the server holds data worth guarding:
- * a Toggl token, or a database (MONGODB_URI) whose routes write. The store
- * and sync routes require the password (lib/store/guard.ts).
+ * a Toggl token, or a database (MONGODB_URI) whose routes write. The sync
+ * route and the MCP consent page require the password.
  */
 export function gateEnabled(): boolean {
   return (

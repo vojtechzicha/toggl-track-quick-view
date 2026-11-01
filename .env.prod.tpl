@@ -13,13 +13,6 @@
 #
 # Full guide: docs/ENVIRONMENT.md
 
-# -- Track source -------------------------------------------------------------
-# Keeps Toggl as the source while MONGODB_URI is set. Without it production
-# would switch to standalone mode and serve an empty store, so the spec marks
-# it required.
-
-APP_MODE=toggl
-
 # -- Toggl --------------------------------------------------------------------
 
 TOGGL_API_TOKEN=op://Development/toggl-track-quick-view-prod/TOGGL_API_TOKEN
@@ -30,7 +23,8 @@ TOGGL_API_TOKEN=op://Development/toggl-track-quick-view-prod/TOGGL_API_TOKEN
 TOGGL_CACHE_INTERVAL=170
 
 # -- Database -----------------------------------------------------------------
-# MongoDB Atlas. With APP_MODE=toggl it holds synced settings only.
+# MongoDB Atlas: synced settings and the Claude connector's OAuth grants and
+# audit log.
 
 MONGODB_URI=op://Development/toggl-track-quick-view-prod/MONGODB_URI
 

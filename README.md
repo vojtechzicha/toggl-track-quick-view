@@ -1,8 +1,7 @@
 # toggl-track-quick-view
 
 A single-screen dashboard for tracking your work day against a weekly target,
-reading from Toggl Track or from its own database. Open it on a spare monitor and
-see at a glance:
+reading from Toggl Track. Open it on a spare monitor and see at a glance:
 
 - **Whether you are tracking**: a live badge (this project, another project, or
   nothing).
@@ -38,8 +37,8 @@ Open Settings (⚙), pick your project, and optionally turn on **Short Friday** 
 change **Hours worked per week**.
 
 `pnpm dev` also starts a local MongoDB in Docker (port 27018) and stops it on
-Ctrl-C if it started it. It is only used once you enable settings sync or
-standalone mode; see [docs/ENVIRONMENT.md](docs/ENVIRONMENT.md).
+Ctrl-C if it started it. It is only used once you enable the database (settings
+sync and the Claude connector); see [docs/ENVIRONMENT.md](docs/ENVIRONMENT.md).
 
 ## Deploying to Vercel
 
@@ -53,13 +52,9 @@ standalone mode; see [docs/ENVIRONMENT.md](docs/ENVIRONMENT.md).
 With no variables at all, the deployment is a bring-your-own-token dashboard:
 each visitor enters their own Toggl token, which stays in their browser.
 
-`MONGODB_URI` and `APP_MODE` together decide what the deployment is:
-
-| `MONGODB_URI` | `APP_MODE` | Result |
-| --- | --- | --- |
-| unset | (any) | Toggl mode, no sync |
-| set | unset | [Standalone mode](#standalone-mode-no-toggl): own store, Toggl never contacted |
-| set | `toggl` | Toggl mode with [settings sync](#settings-sync-across-devices) |
+4. Optional: set `MONGODB_URI` (with `APP_PASSWORD`) for [settings
+   sync](#settings-sync-across-devices) and the [Claude
+   connector](#claude-connector-mcp).
 
 The `vercel-build` script runs `pnpm env:check` before `next build`, so a missing
 or contradictory variable fails the deployment. Every variable, the 1Password
@@ -111,39 +106,12 @@ their own token and the password has no effect.
 `localStorage` is readable by any script on the page. The app loads no
 third-party scripts, so the remaining risk is XSS.
 
-## Standalone mode (no Toggl)
-
-With `MONGODB_URI` set and `APP_MODE` unset, the app keeps its own time entries
-in MongoDB (a free Atlas M0 cluster is enough) and never contacts Toggl.
-`APP_PASSWORD` is required, since the store accepts writes. `MONGODB_DB` picks
-the database name (default `toggl-quick-view`).
-
-- The **Tracker** page (`/tracker`) replaces Toggl's timer view: start/stop,
-  manual entries, inline editing, billing-tag autocomplete, continue, delete, and
-  a list grouped by day and week.
-- **Workspaces** are stored on the server. Each one has its own settings and time
-  entries, syncs across devices, and acts as the selectable "project" on the
-  dashboard and timesheet, so multi-project tracking, billing codes, timesheets
-  and exports work as in Toggl mode.
-- [Linked billing codes](#linked-billing-codes-subcontracting) can point at
-  another stored workspace.
-- Every device refreshes every 30 seconds and immediately after a change. There
-  is no request budget, and `TOGGL_API_TOKEN` / `TOGGL_CACHE_INTERVAL` are
-  ignored.
-- **Import** (`/import`) brings in Toggl history: connect with your Toggl token,
-  map each Toggl project to a workspace (existing, new, or skipped), pick a
-  range and run. It pages through history oldest first in ~90-day windows,
-  pausing to stay within Toggl's rate limit. Re-running it skips entries already
-  imported.
-
 ## Settings sync across devices
 
-With a database, your setup follows you between devices: stored workspaces,
-targets, billing options, timesheet options and the export details.
-
-- **Standalone mode:** always on.
-- **Toggl mode:** set `MONGODB_URI`, `APP_PASSWORD` and `APP_MODE=toggl`. The
-  database then holds settings only.
+With a database (`MONGODB_URI` and `APP_PASSWORD`), your setup follows you
+between devices: stored workspaces, targets, billing options, timesheet options
+and the export details. `MONGODB_DB` picks the database name (default
+`toggl-quick-view`).
 
 Changes upload shortly after you make them. Other devices pick them up on load
 and when the page regains focus, and a new device adopts the synced setup
@@ -153,7 +121,7 @@ transfer** shows both and asks which to keep.
 
 If a newer setup arrives while Settings or the export dialog is open, their
 fields are reloaded and the app tells you, so saving does not overwrite the newer
-values. In standalone mode the workspace list is also re-read on focus.
+values.
 
 **Never synced:** the Toggl API token (the server also strips it from anything
 it receives) and the refresh interval.
@@ -319,9 +287,7 @@ to that id:
 > "Fix login redirect".
 
 The id needs no prefix, an explicit billing tag wins over it, and overtime
-markers work inside the bracket (`[T-1234(X)] …`). It is always on. In the
-standalone tracker the derived code shows as a dashed chip; click it to set an
-explicit tag.
+markers work inside the bracket (`[T-1234(X)] …`). It is always on.
 
 ### Bill by project
 
@@ -336,7 +302,6 @@ per workspace) makes every entry bill to its project's name:
   restores them).
 - Rounding, start grid, description limit, billable-length cap, overlap
   warnings, Don't bill overtime and the time off tag all still apply.
-- The standalone tracker hides the billing-tag chip for such a workspace.
 
 ## Workspaces
 
@@ -352,8 +317,7 @@ billing options and export details. Use one per client.
 - Editing live settings never changes a stored workspace; only **↻** does.
 
 A workspace captures everything except the API token and the refresh interval.
-In Toggl mode the list lives in `localStorage` (and syncs if settings sync is
-on).
+The list lives in `localStorage` (and syncs if settings sync is on).
 
 ### Export details are per workspace
 
@@ -525,10 +489,7 @@ entry.
 it must match S's sheet; the linked hours still count toward the cap, so the
 other lines absorb the cut. The link's own **It doesn't bill overtime** applies
 S's cap upstream with the same rules S's sheet uses. Keep it in step with the
-sub-client workspace's setting.
-
-In standalone mode the link can target another stored workspace instead of a
-Toggl project. The logic is in `lib/timesheet/mapping.ts`.
+sub-client workspace's setting. The logic is in `lib/timesheet/mapping.ts`.
 
 ## Exports
 

@@ -71,7 +71,6 @@ export const getEntries = (
   );
 
 export const togglBackend: TrackBackend = {
-  mode: 'toggl',
   hourlyRequestLimit: HOURLY_LIMIT,
 
   // Two requests: me (account + default workspace), then its active projects.

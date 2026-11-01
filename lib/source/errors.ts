@@ -1,5 +1,5 @@
-// Errors shared by both sources. Callers use the classifiers below and need
-// not know which backend threw.
+// Errors shared by the Toggl proxy and the sync client. Callers use the
+// classifiers below.
 
 export class ApiError extends Error {
   status: number;

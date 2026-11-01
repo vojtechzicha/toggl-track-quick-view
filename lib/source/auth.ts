@@ -1,4 +1,4 @@
-// Client side of the password gate (APP_PASSWORD), shared by both sources.
+// Client side of the password gate (APP_PASSWORD).
 // Stores only the signed, expiring session token, never the password. Server
 // side: lib/serverAuth.ts.
 

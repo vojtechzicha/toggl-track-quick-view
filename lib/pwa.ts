@@ -18,8 +18,7 @@
  *   Older Safari has no install; Chromium on the Mac takes the native path.
  *
  * Returns null inside the installed app. The platform calls that "standalone
- * display mode"; here it is `installed`, because "standalone" already means
- * the no-Toggl store mode (lib/source).
+ * display mode"; here it is `installed`, which says what it means.
  *
  * Pure, so `pnpm check:pwa` can test it against real user-agent strings.
  */

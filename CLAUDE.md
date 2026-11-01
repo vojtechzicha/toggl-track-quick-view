@@ -1,8 +1,8 @@
 # toggl-track-quick-view
 
 A one-screen view for tracking a work day against a weekly target, reading from
-Toggl Track or from its own MongoDB store. Next.js App Router, deployed on
-Vercel at track.zicha.dev.
+Toggl Track, plus a remote MCP server so Claude can read, check and write time
+entries. Next.js App Router, deployed on Vercel at track.zicha.dev.
 
 - `README.md` is the product spec: targets, Short Friday, billing tags,
   timesheets, PDF export and signing, workspaces, rate limits. Read the relevant
@@ -57,16 +57,9 @@ Details and rationale: `docs/ENVIRONMENT.md`.
 - **Never write an `op://` string in a template comment.** `op inject` resolves
   comments too, and a bad reference breaks the pull. Write the path without the
   scheme.
-- `MONGODB_URI` and `APP_MODE` decide what the deployment is:
-
-  | `MONGODB_URI` | `APP_MODE` | Result |
-  | --- | --- | --- |
-  | unset | (ignored) | Toggl mode, no sync |
-  | set | unset | Standalone mode: own store, Toggl never contacted |
-  | set | `toggl` | Toggl mode with settings sync |
-
-  Production needs `APP_MODE=toggl`. Without it the live dashboard becomes an
-  empty standalone store and still deploys green.
+- `MONGODB_URI` (with `APP_PASSWORD`) turns on settings sync and the MCP
+  connector. Entries always come from Toggl. `APP_MODE` is retired (it chose
+  the removed standalone store); `env:check` warns while it is set.
 - **`MONGODB_DB` is all that separates preview data from production.** Both use
   the same Atlas cluster and connection string. Production leaves `MONGODB_DB`
   unset (code default `toggl-quick-view`), preview sets `timetrack-quick-view`.
@@ -76,7 +69,7 @@ Details and rationale: `docs/ENVIRONMENT.md`.
 - `DEPLOYMENT_TOPOLOGY` in the spec is our deployment's shape, not an app
   requirement. An empty environment is a supported mode.
 - Local `.env.tpl` has no password and no database by default. To work on sync
-  or standalone mode, uncomment its MongoDB block and set `APP_PASSWORD`
+  or the MCP connector, uncomment its MongoDB block and set `APP_PASSWORD`
   together. That connection string must stay a literal pointing at the local
   container.
 - `.env.local` outranks `.env`. The Vercel CLI creates one; delete it.
@@ -117,8 +110,8 @@ before `dev` and `build`, driven by `PDF_TEMPLATE_PACK_REPO` / `_REF` / `_TOKEN`
   `app/api/toggl/[...path]`.
 - Rotating `APP_PASSWORD` invalidates every session: the signing key is derived
   from it (`lib/serverAuth.ts`).
-- "Standalone" means the no-Toggl store mode. The PWA display mode is called
-  `installed` in code to avoid the clash.
+- The PWA display mode ("standalone" in the platform's terms) is called
+  `installed` in code.
 - Old tabs compare their build id against `GET /api/version` and ask to refresh
   (`components/UpdateHint.tsx`). This matters with settings sync: a tab on an
   old build drops settings keys it doesn't know on its next save.
