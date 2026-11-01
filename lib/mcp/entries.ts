@@ -9,6 +9,30 @@ import { fmtClock, fmtDate, fmtLocal, hours, parseInstant, weekStartOf } from '.
 
 /** Longest single entry the tools accept. Longer is almost always a typo. */
 export const MAX_ENTRY_SECONDS = 16 * 3600;
+/** Shortest entry: anything less is noise, and the timesheet would not show it. */
+const MIN_ENTRY_MS = 60_000;
+
+/**
+ * [startMs, stopMs) minus the blocks: the free stretches, each at least a
+ * minute long. An entry that encloses a block splits around it.
+ */
+export function freeSegments(
+  startMs: number,
+  stopMs: number,
+  blocks: { startMs: number; endMs: number }[]
+): { startMs: number; stopMs: number }[] {
+  let segments = [{ startMs, stopMs }];
+  for (const b of blocks) {
+    segments = segments.flatMap((seg) => {
+      if (b.endMs <= seg.startMs || b.startMs >= seg.stopMs) return [seg];
+      return [
+        { startMs: seg.startMs, stopMs: Math.min(seg.stopMs, b.startMs) },
+        { startMs: Math.max(seg.startMs, b.endMs), stopMs: seg.stopMs },
+      ];
+    });
+  }
+  return segments.filter((seg) => seg.stopMs - seg.startMs >= MIN_ENTRY_MS);
+}
 
 // ─── Resolution ─────────────────────────────────────────────────────────────
 
@@ -190,6 +214,7 @@ export function resolveTimes(
     stopMs = startMs + Math.round(durationMinutes! * 60) * 1000;
   }
   if (stopMs <= startMs) return { ok: false, error: 'stop must be after start.' };
+  if (stopMs - startMs < MIN_ENTRY_MS) return { ok: false, error: 'Shorter than a minute.' };
   if (stopMs - startMs > MAX_ENTRY_SECONDS * 1000) {
     return { ok: false, error: `Longer than ${MAX_ENTRY_SECONDS / 3600}h; split it.` };
   }
@@ -234,60 +259,59 @@ export function planEntries(
       errors.push(`${at}: ${problems.join(' ')}`);
       return;
     }
-    let { startMs, stopMs } = times.value;
-    // Clamp around the avoided entries, like time already taken: an entry that
-    // starts inside one starts at its end, one that ends inside one ends at its
-    // start. Toggl's seconds make sub-minute overlaps common, hence the clamp.
-    for (const b of blocks) {
-      if (b.startMs <= startMs && startMs < b.endMs) startMs = b.endMs;
-      if (b.startMs < stopMs && stopMs <= b.endMs) stopMs = b.startMs;
-    }
-    if (stopMs - startMs < 60_000) {
+    // Avoided entries are time already taken: the new entry keeps only the
+    // free stretches around them, split where one sits inside it. Toggl's
+    // seconds make sub-minute overlaps common, hence the minute minimum.
+    const original = times.value;
+    const segments = freeSegments(original.startMs, original.stopMs, blocks);
+    if (segments.length === 0) {
       skippedInside.push({ index, entry: `${input.start} ${input.description.trim()}` });
       return;
     }
-    if (startMs !== times.value.startMs || stopMs !== times.value.stopMs) {
+    if (segments.length > 1 || segments[0].startMs !== original.startMs || segments[0].stopMs !== original.stopMs) {
       trimmed.push({
         index,
-        from: `${fmtLocal(times.value.startMs)}–${fmtClock(times.value.stopMs)}`,
-        to: `${fmtLocal(startMs)}–${fmtClock(stopMs)}`,
+        from: `${fmtLocal(original.startMs)}–${fmtClock(original.stopMs)}`,
+        to: segments.map((seg) => `${fmtLocal(seg.startMs)}–${fmtClock(seg.stopMs)}`).join(', '),
       });
     }
-    const write = {
-      description: input.description.trim(),
-      project_id: project.value.id,
-      tags: tags.tags,
-      start: isoSecond(startMs),
-      stop: isoSecond(stopMs),
-      duration: Math.round((Math.floor(stopMs / 1000) * 1000 - Math.floor(startMs / 1000) * 1000) / 1000),
-      billable: input.billable ?? false,
-    };
-    const duplicate = spans.find(
-      (s) =>
-        minuteOf(s.startMs) === minuteOf(startMs) &&
-        s.e.project_id === project.value.id &&
-        sameText(s.e.description, write.description)
-    );
-    const overlaps = [
-      ...spans
-        .filter((s) => s.e !== duplicate?.e && s.startMs < stopMs && s.endMs > startMs)
-        .map((s) => String(s.e.id)),
-      // Batch items skipped as duplicates are already counted as existing entries.
-      ...planned
-        .filter((p) => p.duplicateOf === null)
-        .filter((p) => Date.parse(p.write.start) < stopMs && Date.parse(p.write.stop) > startMs)
-        .map((p) => `#${p.index}`),
-    ];
-    planned.push({
-      index,
-      write,
-      duplicateOf: duplicate ? duplicate.e.id : null,
-      overlaps,
-      newTags: tags.created,
-      summary: `${fmtLocal(startMs)}–${fmtClock(stopMs)} ${project.value.name}: ${write.description}${
-        write.tags.length ? ` [${write.tags.join(', ')}]` : ''
-      }`,
-    });
+    for (const { startMs, stopMs } of segments) {
+      const write = {
+        description: input.description.trim(),
+        project_id: project.value.id,
+        tags: tags.tags,
+        start: isoSecond(startMs),
+        stop: isoSecond(stopMs),
+        duration: Math.round((Math.floor(stopMs / 1000) * 1000 - Math.floor(startMs / 1000) * 1000) / 1000),
+        billable: input.billable ?? false,
+      };
+      const duplicate = spans.find(
+        (sp) =>
+          minuteOf(sp.startMs) === minuteOf(startMs) &&
+          sp.e.project_id === project.value.id &&
+          sameText(sp.e.description, write.description)
+      );
+      const overlaps = [
+        ...spans
+          .filter((sp) => sp.e !== duplicate?.e && sp.startMs < stopMs && sp.endMs > startMs)
+          .map((sp) => String(sp.e.id)),
+        // Batch items skipped as duplicates are already counted as existing entries.
+        ...planned
+          .filter((p) => p.duplicateOf === null)
+          .filter((p) => Date.parse(p.write.start) < stopMs && Date.parse(p.write.stop) > startMs)
+          .map((p) => `#${p.index}`),
+      ];
+      planned.push({
+        index,
+        write,
+        duplicateOf: duplicate ? duplicate.e.id : null,
+        overlaps,
+        newTags: tags.created,
+        summary: `${fmtLocal(startMs)}–${fmtClock(stopMs)} ${project.value.name}: ${write.description}${
+          write.tags.length ? ` [${write.tags.join(', ')}]` : ''
+        }`,
+      });
+    }
   });
 
   return { planned, errors, trimmed, skippedInside };

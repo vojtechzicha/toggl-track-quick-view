@@ -221,6 +221,16 @@ try {
   eq([...toggl.entries.values()].filter((e) => e.description === 'Lost').length, 1, 'no duplicate in Toggl');
   ok(p6.pushed === 1 || (await store.queueStatus()).pending === 0, 'adopted');
 
+  // Lost answer, then an edit before the next run: adoption keeps the edit pending.
+  const lost2 = await tool('create_time_entries', { entries: [{ start: `${d}T17:00`, duration_minutes: 30, description: 'Lost again', project: 'Alpha' }] });
+  toggl.loseNextAnswer = true;
+  await sync.push();
+  await tool('update_time_entries', { updates: [{ id: lost2.created[0].id, add_tags: ['D-2'] }] });
+  await sync.push();
+  const lostRemote = [...toggl.entries.values()].filter((e) => e.description === 'Lost again');
+  eq(lostRemote.length, 1, 'adopted, not duplicated');
+  eq(lostRemote[0].tags, ['D-2'], 'the edit made after the lost answer reached Toggl');
+
   // ── Merge: edited in Toggl and here ──
   const one = [...toggl.entries.values()].find((e) => e.description === 'One')!;
   const oneDoc = (await store.byTogglId(one.id))!;

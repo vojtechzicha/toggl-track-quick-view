@@ -27,6 +27,7 @@ import { addDays, startOfWeek } from '@/lib/calc';
 import {
   EMPTY_PUSH,
   MAX_PUSH_ATTEMPTS,
+  changedGroups,
   createBody,
   fieldsFromToggl,
   matchesInFlight,
@@ -135,7 +136,8 @@ export async function applyRemote(e: TogglEntry, counts: ApplyCounts = emptyCoun
             $set: {
               toggl_id: e.id,
               remote: { ...theirs, at: e.at },
-              dirty: false,
+              // Edits made after the lost create (tags, say) still have to go out.
+              dirty: changedGroups(mine.fields, theirs).length > 0,
               push: { ...EMPTY_PUSH },
               updated_at: new Date(),
             },

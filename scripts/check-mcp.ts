@@ -320,6 +320,33 @@ const account = {
   eq(around.planned.map((p) => p.index), [0, 2], 'the rest planned');
   eq(around.planned[0].overlaps, [], 'no overlap left with the avoided entry');
 
+  // An entry that encloses an avoided one splits around it.
+  const day = entries.planEntries(
+    [{ start: '2026-10-29T09:00', stop: '2026-10-29T17:00', description: 'Whole day', project: 'Alpha' }],
+    account,
+    [{ ...existing[0], id: 601, project_id: 11, start: '2026-10-29T11:00:00Z', stop: '2026-10-29T12:00:00Z', duration: 3600, description: 'Lunch' }],
+    { allowNewTags: false, nowMs: now, avoidProjectIds: [11] }
+  );
+  eq(
+    day.planned.map((p) => [p.index, p.write.start, p.write.stop]),
+    [
+      [0, '2026-10-29T08:00:00.000Z', '2026-10-29T11:00:00.000Z'],
+      [0, '2026-10-29T12:00:00.000Z', '2026-10-29T16:00:00.000Z'],
+    ],
+    'enclosed avoided entry: split into the free stretches'
+  );
+  eq(day.planned.map((p) => p.overlaps), [[], []], 'no overlap with the avoided entry');
+  eq(day.trimmed[0].to, '2026-10-29T09:00–12:00, 2026-10-29T13:00–17:00', 'split reported');
+
+  // Sub-minute entries are refused up front, not silently dropped.
+  const tiny = entries.planEntries(
+    [{ start: '2026-10-29T09:00', duration_minutes: 0.5, description: 'Blink', project: 'Alpha' }],
+    account,
+    [],
+    { allowNewTags: false, nowMs: now }
+  );
+  ok(/Shorter than a minute/.test(tiny.errors[0] ?? ''), 'sub-minute entry is an error');
+
   const t = entries.totals(existing, now);
   eq(t.days, [{ date: '2026-10-29', hours: 2 }], 'day totals');
   eq(t.weeks, [{ week_starting_saturday: '2026-10-24', hours: 2 }], 'Saturday–Friday week totals');

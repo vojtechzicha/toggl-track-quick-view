@@ -175,7 +175,8 @@ const createTimeEntries = defineTool({
     const opts = { allowNewTags: !!allow_new_tags, nowMs: now, avoidProjectIds };
     const first = planEntries(entries as EntryInput[], account, [], opts);
     if (first.errors.length) throw new ToolError(`Nothing was saved.\n${first.errors.join('\n')}`);
-    const win = coveringWindow(first.planned)!;
+    const win = coveringWindow(first.planned);
+    if (!win) throw new ToolError('Nothing to create.');
     const read = await readMirror(Date.parse(win.startISO), Date.parse(win.endISO));
     const { planned, trimmed, skippedInside } = planEntries(
       entries as EntryInput[],
