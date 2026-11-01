@@ -386,17 +386,24 @@ type Outcome =
   | { kind: 'failed'; quota: ResponseQuota | null }
   | { kind: 'stop'; reason: string; quota: ResponseQuota | null };
 
-async function pushOne(doc: MirrorDoc): Promise<Outcome> {
+async function pushOne(read: MirrorDoc): Promise<Outcome> {
+  let doc = read;
   const col = await entriesCol();
   const now = new Date();
   const creating = doc.toggl_id === null;
 
   // A create whose answer never arrived may have reached Toggl: pull first,
   // which adopts it if it did (applyRemote).
+  // Only a pull that actually read Toggl may clear it for a second POST: if
+  // another instance holds the pull lease, or Toggl can't be read, wait.
   if (creating && doc.push.in_flight_since) {
-    await pullIfStale(0);
+    const pulled = await pullIfStale(0).catch(() => false);
+    if (!pulled) {
+      return { kind: 'stop', reason: 'a create whose answer was lost waits for a pull to check Toggl', quota: null };
+    }
     const again = await col.findOne({ _id: doc._id });
     if (!again || again.toggl_id !== null || !again.dirty) return { kind: 'ok', quota: null };
+    doc = again;
   }
 
   // Claim the document as it was read: if it was deleted or edited since, the

@@ -15,7 +15,7 @@ import {
   type EntryFields,
   type MirrorDoc,
 } from '@/lib/mirror/model';
-import { byPublicId, docFromLocal, entriesCol, getState, queueStatus } from '@/lib/mirror/store';
+import { byPublicId, docFromLocal, entriesCol, getState, nextLocalSeq, queueStatus } from '@/lib/mirror/store';
 import { readMirror } from '@/lib/mirror/read';
 import { push, pullIntervalSec, syncAfterResponse } from '@/lib/mirror/sync';
 import {
@@ -483,19 +483,30 @@ const resolveConflicts = defineTool({
   },
   handler: async ({ resolutions }, ctx: ToolContext) => {
     const col = await entriesCol();
-    const done: { id: number; kept: string }[] = [];
+    const done: { id: number; kept: string; new_id?: number }[] = [];
     for (const r of resolutions) {
       const doc = await byPublicId(r.id);
       if (!doc) throw new ToolError(`Entry ${r.id} is not in the local copy.`);
       if (r.keep === 'local') {
+        // Re-created in Toggl: it needs a local number to be addressed by
+        // until Toggl assigns a new id.
+        const recreate = doc.remote_deleted;
+        const localSeq = recreate && doc.local_seq === null ? await nextLocalSeq() : doc.local_seq;
         await col.updateOne(
           { _id: doc._id },
           {
             $set: {
               conflicts: [],
-              push: { ...EMPTY_PUSH },
+              // A create that may have reached Toggl keeps its in-flight
+              // marker, so the next push checks Toggl before sending again.
+              push: {
+                ...EMPTY_PUSH,
+                in_flight_since: recreate ? null : doc.push.in_flight_since,
+                sent: recreate ? null : doc.push.sent ?? null,
+              },
               dirty: true,
-              ...(doc.remote_deleted ? { remote_deleted: false, toggl_id: null, remote: null } : {}),
+              local_seq: localSeq,
+              ...(recreate ? { remote_deleted: false, toggl_id: null, remote: null } : {}),
               updated_at: new Date(),
             },
             $inc: { version: 1 },
@@ -513,7 +524,8 @@ const resolveConflicts = defineTool({
           }
         );
       }
-      done.push({ id: r.id, kept: r.keep });
+      const after = await col.findOne({ _id: doc._id });
+      done.push({ id: r.id, kept: r.keep, ...(after && publicId(after) !== r.id ? { new_id: publicId(after) } : {}) });
       await audit(ctx, { tool: 'resolve_conflicts', action: 'update', entryId: r.id, before: { sync: statusOf(doc) }, after: { kept: r.keep } });
     }
     await syncAfterResponse({ pull: 'none' });

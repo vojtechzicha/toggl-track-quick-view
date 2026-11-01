@@ -273,6 +273,22 @@ try {
   ok(await store.byPublicId(claimed.created[0].id), 'an entry being sent is not deleted');
   await sync.push();
 
+  // A lost create waits while another instance holds the pull lease: no second POST.
+  const lost4 = await tool('create_time_entries', { entries: [{ start: `${d}T18:45`, duration_minutes: 10, description: 'Lease held', project: 'Alpha' }] });
+  toggl.loseNextAnswer = true;
+  await sync.push();
+  const releaseLease = (await store.acquireLease('pull', 60_000))!;
+  const postsHeld = posts();
+  const held = await sync.push();
+  eq(posts(), postsHeld, 'no POST while the recovery pull cannot run');
+  ok(/waits for a pull/.test(held.stopped ?? ''), 'and it says so');
+  await releaseLease();
+
+  // Keeping the local copy of a lost create keeps the recovery: still one entry.
+  await tool('resolve_conflicts', { resolutions: [{ id: lost4.created[0].id, keep: 'local' }] });
+  await sync.push();
+  eq([...toggl.entries.values()].filter((e) => e.description === 'Lease held').length, 1, 'no twin after keep local');
+
   // ── Merge: edited in Toggl and here ──
   const one = [...toggl.entries.values()].find((e) => e.description === 'One')!;
   const oneDoc = (await store.byTogglId(one.id))!;
@@ -306,7 +322,10 @@ try {
   const pBefore = posts();
   await sync.push();
   eq(posts(), pBefore, 'conflicts are not pushed');
-  await tool('resolve_conflicts', { resolutions: [{ id: q11.id, keep: 'local' }] });
+  const resolvedQ11 = await tool('resolve_conflicts', { resolutions: [{ id: q11.id, keep: 'local' }] });
+  const recreatedId = resolvedQ11.resolved[0].new_id;
+  ok(recreatedId < 0, 'a re-created entry gets a local (negative) id');
+  ok(await store.byPublicId(recreatedId), 'and can be addressed by it');
   await sync.push();
   eq([...toggl.entries.values()].filter((e) => e.description === 'Q11 edited here' && !e.server_deleted_at).length, 1, 'keep local re-creates it');
 
