@@ -19,8 +19,12 @@ export async function readMirror(fromMs: number, toMs: number, opts: { fresh?: b
     await ensureCovered(fromMs, toMs);
     await pullIfStale(opts.fresh ? 0 : pullIntervalSec());
   } catch (e) {
+    // Serve the local copy only for weeks it has really read; a range never
+    // read would come back empty or partial, and writes plan against it.
     const st = await getState();
-    if (!st?.covered_from_ms) throw e; // nothing to serve yet
+    const covered =
+      !!st?.covered_from_ms && fromMs >= st.covered_from_ms && (st.covered_to_ms === undefined || toMs <= st.covered_to_ms);
+    if (!covered) throw e;
     warning = `Toggl could not be read (${(e as Error).message}); showing the local copy.`;
   }
   const st = await getState();

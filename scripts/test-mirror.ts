@@ -409,6 +409,23 @@ try {
   const oldList = await tool('list_time_entries', { from: od, to: od });
   ok(oldList.entries.some((e: { description: string }) => e.description === 'Old work, edited during the outage'), 'the edit made during the outage is served');
 
+  // A GET that captured an entry before a push answers after it: the older snapshot is ignored.
+  const fresh = [...toggl.entries.values()].find((e) => e.description === 'Two, revised')!;
+  await tool('update_time_entries', { updates: [{ id: fresh.id, description: 'Two, newest' }] });
+  toggl.duringNextRangeGet = async () => {
+    await sync.push();
+  };
+  await sync.refreshRange(dayStart, dayStart + 86400e3);
+  eq((await store.byTogglId(fresh.id))!.fields.description, 'Two, newest', 'a pushed edit is not undone by an older snapshot');
+
+  // Toggl unreachable: a never-read range is an error, not an empty answer.
+  toggl.quota.user = 0;
+  await assert.rejects(tool('list_time_entries', { from: '2025-01-06', to: '2025-01-07', fresh: true }), /rate limit|402/i);
+  checks++;
+  const covered = await tool('list_time_entries', { from: d, to: d, fresh: true });
+  ok(covered.warning && covered.entries.length > 0, 'a covered range is served from the copy, with a warning');
+  toggl.quota.user = 30;
+
   // ── A since too old falls back to a range re-read ──
   ok((await sync.syncNow({ pull: 'force', push: false })).error === null, 'sync round without errors');
 

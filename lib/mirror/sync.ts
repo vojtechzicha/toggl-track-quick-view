@@ -158,8 +158,9 @@ export async function applyRemote(e: TogglEntry, counts: ApplyCounts = emptyCoun
       return counts;
     }
 
-    // Our own write echoed back, or nothing new.
-    if (doc.remote?.at === e.at) return counts;
+    // Our own write echoed back, nothing new, or a snapshot taken before the
+    // state we already have (a GET that overlapped a push): ignore it.
+    if (doc.remote && Date.parse(e.at) <= Date.parse(doc.remote.at)) return counts;
 
     const merged = mergeRemote(doc, e);
     const res = await col.updateOne(
