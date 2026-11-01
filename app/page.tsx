@@ -5,7 +5,6 @@ import Link from 'next/link';
 import ProgressRing from '@/components/ProgressRing';
 import AppSettings from '@/components/AppSettings';
 import LastUpdated from '@/components/LastUpdated';
-import MutationToast from '@/components/MutationToast';
 import ProjectChips from '@/components/ProjectChips';
 import PasswordGate from '@/components/PasswordGate';
 import WorkspaceSwitcher from '@/components/WorkspaceSwitcher';
@@ -47,7 +46,6 @@ export default function Page() {
   const t = useTrackSource();
   const {
     hydrated,
-    mode,
     settings,
     serverManaged,
     passwordRequired,
@@ -66,7 +64,6 @@ export default function Page() {
     showSettings,
     setShowSettings,
   } = t;
-  const standalone = mode === 'standalone';
 
   const [snoozeUntil, setSnoozeUntil] = useState(0);
   // Settings was opened from the switcher's "Manage workspaces…" and should open
@@ -522,12 +519,6 @@ export default function Page() {
                 <span className="navbtn-text">Details</span>
               </button>
             )}
-            {standalone && (
-              <Link className="navbtn" href="/tracker" aria-label="Tracker">
-                <span className="navbtn-icon">⏱</span>
-                <span className="navbtn-text">Tracker</span>
-              </Link>
-            )}
             <WorkspaceSwitcher
               t={t}
               onManage={() => {
@@ -628,9 +619,7 @@ export default function Page() {
               </>
             ) : (
               <div className="center-msg" style={{ height: 'auto' }}>
-                {standalone
-                  ? 'Create a workspace in settings to begin.'
-                  : settings.token || serverManaged
+                {settings.token || serverManaged
                   ? 'Pick a project in settings to begin.'
                   : 'Connect Toggl to begin.'}
               </div>
@@ -802,7 +791,7 @@ export default function Page() {
                             {h.missingTag && (
                               <span
                                 className="tag-warn"
-                                title={`No billing tag. Add one ${standalone ? 'in the tracker' : 'in Toggl'}.`}
+                                title={`No billing tag. Add one $in Toggl.`}
                               >
                                 ⚠
                               </span>
@@ -810,7 +799,7 @@ export default function Page() {
                             {h.tooLong && (
                               <span
                                 className="tag-warn"
-                                title={`Longer than ${maxBillableLabel}, the limit for one billed line. Split it ${standalone ? 'in the tracker' : 'in Toggl'}.`}
+                                title={`Longer than ${maxBillableLabel}, the limit for one billed line. Split it $in Toggl.`}
                               >
                                 ⚠
                               </span>
@@ -846,15 +835,22 @@ export default function Page() {
             </span>
           )}
           <LastUpdated lastUpdatedMs={lastUpdatedMs} nowMs={nowMs} refreshSec={effectiveRefreshSec} />
-          {!cacheEnabled && !standalone && (
+          {t.pendingToggl > 0 && (
+            <span
+              className="budget warn"
+              title="Saved here and counted everywhere in the app; sent to Toggl as its hourly request limit allows."
+            >
+              {' · '}
+              {t.pendingToggl} change{t.pendingToggl === 1 ? '' : 's'} waiting for Toggl
+            </span>
+          )}
+          {!cacheEnabled && (
             <span className={`budget ${budgetClass}`}>
               {' · '}≈{reqThisHour}/{HOURLY_LIMIT} API requests this hour
             </span>
           )}
         </footer>
       </div>
-
-      <MutationToast t={t} />
 
       {needsPassword && (
         <PasswordGate onSubmit={submitPassword} error={pwError} busy={pwBusy} />

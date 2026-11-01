@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useRef, useState } from 'react';
-import type { SourceMode, TrackProject } from '@/lib/source/types';
+import type { TrackProject } from '@/lib/source/types';
 import {
   DEFAULT_WEEKLY_HOURS,
   DEFAULT_BILLING_TAG_PREFIX,
@@ -16,6 +16,7 @@ import {
 import { mappingGridCompatible, type CodeMapping } from '@/lib/timesheet/mapping';
 import { EMPTY_EXPORT_FIELDS, type ExportFieldValues } from '@/lib/exportFields';
 import InstallAppBlock from '@/components/InstallAppBlock';
+import McpConnections from '@/components/McpConnections';
 
 export type TimesheetMode = 'summary' | 'individual';
 
@@ -90,8 +91,6 @@ export interface SettingsPreset {
   id: string;
   name: string;
   value: PresetValue;
-  // Standalone mode only: chip color, assigned by the server, editable here.
-  color?: string;
 }
 
 export function toPresetValue(s: SettingsValue): PresetValue {
@@ -235,7 +234,6 @@ export default function SettingsPanel({
   projects,
   projectsLoaded,
   serverManaged,
-  mode = 'toggl',
   cacheInterval,
   authError,
   connecting,
@@ -246,14 +244,8 @@ export default function SettingsPanel({
   onSave,
   onClose,
   canClose,
-  activeWorkspaceId,
   activePresetId,
   openWorkspaces = false,
-  onWorkspaceCreate,
-  onWorkspaceRecapture,
-  onWorkspaceRename,
-  onWorkspaceDelete,
-  onWorkspaceColor,
   sync,
   syncNotice,
   onSyncResolve,
@@ -269,16 +261,11 @@ export default function SettingsPanel({
   // (e.g. every project archived), which must still show archived rows.
   projectsLoaded: boolean;
   serverManaged: boolean;
-  // In standalone mode the "projects" are stored workspaces, the token and
-  // refresh UI are hidden, and the Workspaces section uses onWorkspace*.
-  mode?: SourceMode;
   // Server cache interval in seconds. When set, the refresh picker is hidden.
   cacheInterval: number | null;
   authError: string | null;
   connecting: boolean;
-  // Stored workspaces. Edits persist at once, independent of Save. In
-  // standalone mode these are the server's workspaces and onPresetsChange is
-  // unused.
+  // Stored workspaces. Edits persist at once, independent of Save.
   presets: SettingsPreset[];
   onPresetsChange: (presets: SettingsPreset[]) => void;
   // Switch to a workspace and persist it immediately.
@@ -287,22 +274,12 @@ export default function SettingsPanel({
   onSave: (value: SettingsValue) => void;
   onClose: () => void;
   canClose: boolean;
-  // Standalone mode: the active workspace, excluded from the linked-codes
-  // picker (it can't link onto its own timesheet).
-  activeWorkspaceId?: number | null;
   // The active workspace by id. Needed when two workspaces differ only in
   // export details. Undefined falls back to presetMatches.
   activePresetId?: string | null;
   // Opened from the topbar's "Manage workspaces…": expand that section and
   // scroll to it.
   openWorkspaces?: boolean;
-  // Standalone-mode workspace CRUD. Create resolves the new workspace, or null
-  // on failure. Delete resolves false when the user cancelled a confirm.
-  onWorkspaceCreate?: (name: string, settings: PresetValue) => Promise<SettingsPreset | null>;
-  onWorkspaceRecapture?: (id: string, settings: PresetValue) => void;
-  onWorkspaceRename?: (id: string, name: string) => void;
-  onWorkspaceDelete?: (id: string) => Promise<boolean>;
-  onWorkspaceColor?: (id: string, color: string) => void;
   // ---- "Sync & transfer" section, mirrored from useTrackSource().sync ----
   sync?: {
     enabled: boolean;
@@ -375,7 +352,6 @@ export default function SettingsPanel({
       initial.exportName.trim() !== ''
   );
 
-  const standalone = mode === 'standalone';
   const tokenConnected = projects.length > 0;
 
   // Selected projects missing from the fetched list (archived or deleted). They
@@ -389,8 +365,6 @@ export default function SettingsPanel({
   // Archived rows keep the picker visible even with an empty active list, or
   // they could never be unchecked.
   const showProjects = serverManaged || tokenConnected || archivedSelected.length > 0;
-  // In standalone mode stored workspaces fill the "project" slot.
-  const itemNoun = standalone ? 'workspace' : 'project';
 
   // Stays open while editing even at one selection, or a second could never be
   // picked. Reopening Settings with one project saved shows the dropdown.
@@ -520,28 +494,16 @@ export default function SettingsPanel({
     .map(([, label]) => label);
 
   // ---- Linked billing codes ----
-  // Half-filled rows are fine while editing; buildValue drops them.
-  //
-  // Toggl mode targets the tracked projects. Standalone mode targets any other
-  // workspace and adds it to the tracked set, since its entries must load with
-  // this sheet's.
-  const mappingCandidateIds = standalone
-    ? projects.map((p) => p.id).filter((id) => id !== activeWorkspaceId)
-    : selectedIds;
-  const ensureSelected = (id: number) => {
-    if (standalone && id) {
-      setSelectedIds((prev) => (prev.includes(id) ? prev : [...prev, id]));
-    }
-  };
+  // Half-filled rows are fine while editing; buildValue drops them. A link
+  // targets one of the tracked projects.
+  const mappingCandidateIds = selectedIds;
   const updateMapping = (i: number, patch: Partial<CodeMapping>) => {
-    if (patch.projectId) ensureSelected(patch.projectId);
     setCodeMappings((ms) => ms.map((m, idx) => (idx === i ? { ...m, ...patch } : m)));
   };
   const removeMapping = (i: number) =>
     setCodeMappings((ms) => ms.filter((_, idx) => idx !== i));
   const addMapping = () => {
     const free = mappingCandidateIds.find((id) => !codeMappings.some((m) => m.projectId === id));
-    if (free) ensureSelected(free);
     setCodeMappings((ms) => [
       ...ms,
       // New rows start on this sheet's grid
@@ -563,6 +525,8 @@ export default function SettingsPanel({
   // ---- Sync & transfer ----
   // Starts open on a notice; a pending conflict forces it open below.
   const [syncOpen, setSyncOpen] = useState(!!syncNotice);
+  // Claude connector: loads its list only when opened.
+  const [mcpOpen, setMcpOpen] = useState(false);
   const [syncPw, setSyncPw] = useState('');
   const [importMsg, setImportMsg] = useState<string | null>(null);
   const importInputRef = useRef<HTMLInputElement>(null);
@@ -575,9 +539,8 @@ export default function SettingsPanel({
   };
 
   // ---- Workspaces (stored settings) ----
-  // Starts open on a fresh standalone install (first task: create a workspace)
-  // or when opened for this section.
-  const [wsOpen, setWsOpen] = useState(openWorkspaces || (standalone && presets.length === 0));
+  // Starts open when opened for this section.
+  const [wsOpen, setWsOpen] = useState(openWorkspaces);
   // The section is far down the form, so scroll to it too.
   const wsSectionRef = useRef<HTMLDetailsElement>(null);
   useEffect(() => {
@@ -629,45 +592,21 @@ export default function SettingsPanel({
     }
   };
 
-  // Standalone mode: server workspaces via onWorkspace*. Toggl mode: the
-  // localStorage preset list.
-  const addPreset = async () => {
+  // The preset list lives in the settings (localStorage, and the sync store).
+  const addPreset = () => {
     const name = newPresetName.trim();
     if (!name) return;
-    if (standalone) {
-      // The server copies the form's settings but points the new workspace's
-      // selection at itself. The form then switches to it.
-      const created = await onWorkspaceCreate?.(name, toPresetValue(buildValue()));
-      if (!created) return;
-      applyPresetToForm(created.value);
-      setNewPresetName('');
-      return;
-    }
     if (selectedIds.length === 0) return;
     onPresetsChange([...presets, { id: genPresetId(), name, value: toPresetValue(buildValue()) }]);
     setNewPresetName('');
   };
   const updatePreset = (id: string) => {
-    if (standalone) {
-      onWorkspaceRecapture?.(id, toPresetValue(buildValue()));
-      return;
-    }
     onPresetsChange(
       presets.map((p) => (p.id === id ? { ...p, value: toPresetValue(buildValue()) } : p))
     );
   };
-  const deletePreset = async (id: string) => {
-    if (standalone) {
-      const deleted = (await onWorkspaceDelete?.(id)) ?? false;
-      if (deleted) {
-        // Mirror the server: drop references to the deleted workspace.
-        const numId = Number(id);
-        setSelectedIds((prev) => prev.filter((x) => x !== numId));
-        setCodeMappings((ms) => ms.filter((m) => m.projectId !== numId));
-      }
-    } else {
-      onPresetsChange(presets.filter((p) => p.id !== id));
-    }
+  const deletePreset = (id: string) => {
+    onPresetsChange(presets.filter((p) => p.id !== id));
     if (renamingId === id) setRenamingId(null);
   };
   const startRename = (p: SettingsPreset) => {
@@ -677,11 +616,7 @@ export default function SettingsPanel({
   const commitRename = () => {
     const name = renameText.trim();
     if (name) {
-      if (standalone && renamingId !== null) {
-        onWorkspaceRename?.(renamingId, name);
-      } else {
-        onPresetsChange(presets.map((p) => (p.id === renamingId ? { ...p, name } : p)));
-      }
+      onPresetsChange(presets.map((p) => (p.id === renamingId ? { ...p, name } : p)));
     }
     setRenamingId(null);
   };
@@ -696,13 +631,7 @@ export default function SettingsPanel({
       <div className="panel">
         <h2>Settings</h2>
 
-        {standalone ? (
-          <p className="hint">
-            This deployment stores its own time entries, so there&apos;s no Toggl account to
-            connect. Pick workspaces below and track time on the <strong>Tracker</strong> page. To
-            bring over Toggl history, use <a href="/import">Import</a>.
-          </p>
-        ) : serverManaged ? (
+        {serverManaged ? (
           <p className="hint">
             The Toggl API token is set on the server. Pick your project below.
           </p>
@@ -745,7 +674,7 @@ export default function SettingsPanel({
         {showProjects && (
           <div className="field">
             <label htmlFor="project">
-              {standalone ? (multiMode ? 'Workspaces' : 'Workspace') : multiMode ? 'Projects' : 'Project'}
+              {multiMode ? 'Projects' : 'Project'}
             </label>
             {multiMode ? (
               <>
@@ -781,8 +710,8 @@ export default function SettingsPanel({
                   ))}
                 </div>
                 <p className="hint">
-                  Selected {itemNoun}s count together toward your targets. The timesheet keeps
-                  them apart, prefixed by {itemNoun} name.
+                  Selected projects count together toward your targets. The timesheet keeps
+                  them apart, prefixed by project name.
                 </p>
                 <button
                   type="button"
@@ -792,7 +721,7 @@ export default function SettingsPanel({
                     setMultiExpanded(false);
                   }}
                 >
-                  Back to a single {itemNoun}
+                  Back to a single project
                 </button>
               </>
             ) : (
@@ -804,7 +733,7 @@ export default function SettingsPanel({
                     setSelectedIds(e.target.value ? [Number(e.target.value)] : [])
                   }
                 >
-                  <option value="">Select a {itemNoun}…</option>
+                  <option value="">Select a project…</option>
                   {projects.map((p) => (
                     <option key={p.id} value={p.id}>
                       {p.name}
@@ -816,33 +745,24 @@ export default function SettingsPanel({
                   className="linkbtn"
                   onClick={() => setMultiExpanded(true)}
                 >
-                  Track more than one {itemNoun}
+                  Track more than one project
                 </button>
               </>
             )}
             {/* The project list is cached for 24h. In server-managed mode this is
                 the only way to refresh it (there is no Connect button). */}
-            {!standalone && (
-              <>
-                <button
-                  type="button"
-                  className="linkbtn"
-                  onClick={() => onConnect(serverManaged ? '' : token)}
-                  disabled={connecting}
-                >
-                  {connecting ? 'Refreshing…' : '↻ Refresh project list'}
-                </button>
-                <p className="hint">
-                  Missing a new project? The list is cached for a day; refreshing costs 2 API
-                  requests. Only your default Toggl workspace is shown.
-                </p>
-              </>
-            )}
-            {standalone && projects.length === 0 && (
-              <p className="hint">
-                No workspaces yet. Create one under <strong>Workspaces</strong> below.
-              </p>
-            )}
+            <button
+              type="button"
+              className="linkbtn"
+              onClick={() => onConnect(serverManaged ? '' : token)}
+              disabled={connecting}
+            >
+              {connecting ? 'Refreshing…' : '↻ Refresh project list'}
+            </button>
+            <p className="hint">
+              Missing a new project? The list is cached for a day; refreshing costs 2 API
+              requests. Only your default Toggl workspace is shown.
+            </p>
           </div>
         )}
 
@@ -857,7 +777,7 @@ export default function SettingsPanel({
               onChange={(e) => setGroupName(e.target.value)}
             />
             <p className="hint">
-              Title for the combined {itemNoun}s. Leave blank to show their initials.
+              Title for the combined projects. Leave blank to show their initials.
             </p>
           </div>
         )}
@@ -871,7 +791,7 @@ export default function SettingsPanel({
               onChange={(e) => setTimesheetMode(e.target.value as TimesheetMode)}
             >
               <option value="summary">
-                Summary — combined per {billByProject ? itemNoun : 'billing tag'}
+                Summary — combined per {billByProject ? 'project' : 'billing tag'}
               </option>
               <option value="individual">Individual — one row per entry</option>
             </select>
@@ -936,7 +856,7 @@ export default function SettingsPanel({
             />
             <p className="hint">
               Longer single entries are flagged to split{' '}
-              {standalone ? 'in the tracker' : 'in Toggl'}. Leave blank to scale with the week
+              in Toggl. Leave blank to scale with the week
               (currently{' '}
               <strong>{fmtHoursLabel(defaultMaxBillableHours(previewWeekly))}</strong>).
             </p>
@@ -965,9 +885,9 @@ export default function SettingsPanel({
 
           <div className="toggle">
             <div className="t-text">
-              <strong>Bill by {itemNoun}</strong>
+              <strong>Bill by project</strong>
               <span>
-                Skip billing codes: each entry bills to its {itemNoun}, which becomes the line on
+                Skip billing codes: each entry bills to its project, which becomes the line on
                 timesheets and exports, and nothing is flagged as untagged. Billing-code options
                 and the <strong>(X)</strong> / <strong>(!)</strong> markers don&apos;t apply. The
                 time-off tag still works.
@@ -994,10 +914,10 @@ export default function SettingsPanel({
               onChange={(e) => setBillingPrefix(e.target.value)}
             />
             <p className="hint">
-              {standalone ? 'Tags' : 'Toggl tags'} starting with this (e.g.{' '}
+              Toggl tags starting with this (e.g.{' '}
               <strong>{(billingPrefix.trim() || DEFAULT_BILLING_TAG_PREFIX)}123</strong>) set the
               line an entry bills to. Entries without one are flagged to fix{' '}
-              {standalone ? 'in the tracker' : 'in Toggl'}.
+              in Toggl.
             </p>
           </div>
           )}
@@ -1035,7 +955,7 @@ export default function SettingsPanel({
               onChange={(e) => setTimeOffTag(e.target.value)}
             />
             <p className="hint">
-              An entry with this tag, on a tracked {itemNoun}, marks its day as{' '}
+              An entry with this tag, on a tracked project, marks its day as{' '}
               <strong>time off</strong> (a holiday or vacation). The day counts like a weekend: 0h
               expected, and the weekly goal and the &ldquo;Don&apos;t bill overtime&rdquo; cap drop
               by <strong>{fmtHoursLabel(previewWeekly / 5)}</strong>. The marker entry is never
@@ -1115,7 +1035,7 @@ export default function SettingsPanel({
               <strong>&ldquo;; …&rdquo;</strong>. A linked code&apos;s breakdown comes first, so
               it stays. PDFs show the full text unless you choose otherwise when exporting. A
               single description over the limit is cut and marked ✂; shorten it{' '}
-              {standalone ? 'in the tracker' : 'in Toggl'}.
+              in Toggl.
             </p>
           </div>
 
@@ -1130,14 +1050,14 @@ export default function SettingsPanel({
                     <div key={i} className="map-row">
                       <div className="map-grid">
                         <label className="map-cell">
-                          <span className="map-cap">{standalone ? 'Workspace' : 'Project'}</span>
+                          <span className="map-cap">Project</span>
                           <select
                             value={m.projectId || ''}
                             onChange={(e) =>
                               updateMapping(i, { projectId: Number(e.target.value) || 0 })
                             }
                           >
-                            <option value="">Pick a {itemNoun}…</option>
+                            <option value="">Pick a project…</option>
                             {/* Keep a stored id the list no longer offers (e.g. it
                                 became the active workspace) instead of blanking. */}
                             {m.projectId > 0 && !mappingCandidateIds.includes(m.projectId) && (
@@ -1237,14 +1157,13 @@ export default function SettingsPanel({
               onClick={addMapping}
               disabled={mappingCandidateIds.length === 0}
             >
-              + Link a {itemNoun}&apos;s codes
+              + Link a project&apos;s codes
             </button>
             <p className="hint">
-              Bill {standalone ? 'another workspace' : 'a selected project'} as a{' '}
+              Bill a selected project as a{' '}
               <strong>single code</strong> here while it keeps its own billing tags.
-              {standalone && ' Linking also adds it to the tracked workspaces above.'}{' '}
               Each day its entries are rounded on its own grid and the total goes on the code
-              entered here, so the line matches that {itemNoun}&apos;s own timesheet. The per-code
+              entered here, so the line matches that project&apos;s own timesheet. The per-code
               breakdown goes in the description. If it doesn&apos;t bill overtime, tick its cap:
               it is trimmed by <em>its own</em> rules first. This sheet&apos;s &ldquo;Don&apos;t
               bill overtime&rdquo; never trims a linked line, but counts it toward the cap. Its
@@ -1306,12 +1225,12 @@ export default function SettingsPanel({
               id="export-name"
               type="text"
               value={exportName}
-              placeholder={standalone ? 'e.g. Jane Doe' : 'Defaults to your Toggl account name'}
+              placeholder="Defaults to your Toggl account name"
               onChange={(e) => setExportName(e.target.value)}
             />
             <p className="hint">
               Printed in the PDF header. You can change it per export.
-              {standalone ? '' : ' Blank uses your Toggl account name.'}
+              {' Blank uses your Toggl account name.'}
             </p>
           </div>
 
@@ -1334,15 +1253,7 @@ export default function SettingsPanel({
           </div>
         </details>
 
-        {standalone ? (
-          <div className="field">
-            <label>Refresh interval</label>
-            <p className="hint">
-              Every <strong>30 seconds</strong>, and right after any change in the tracker. The
-              timer still ticks every second.
-            </p>
-          </div>
-        ) : cacheInterval !== null ? (
+        {cacheInterval !== null ? (
           <div className="field">
             <label>Refresh interval</label>
             <p className="hint">
@@ -1380,19 +1291,11 @@ export default function SettingsPanel({
             onToggle={(e) => setWsOpen((e.target as HTMLDetailsElement).open)}
           >
             <summary>Workspaces</summary>
-            {standalone ? (
-              <p className="hint">
-                Each workspace holds its own settings and time entries, stored on the server. Click
-                one to switch to it; ↻ saves the settings above into it. A new workspace copies the
-                current settings but tracks its own entries.
-              </p>
-            ) : (
-              <p className="hint">
-                Save the settings above under a name, then click it to switch back. Editing
-                settings doesn&apos;t change a stored workspace; ↻ overwrites it with the current
-                settings.
-              </p>
-            )}
+            <p className="hint">
+              Save the settings above under a name, then click it to switch back. Editing
+              settings doesn&apos;t change a stored workspace; ↻ overwrites it with the current
+              settings.
+            </p>
 
             {presets.length > 0 && (
               <ul className="ws-list">
@@ -1437,26 +1340,8 @@ export default function SettingsPanel({
                             onClick={() => recallPreset(p)}
                           >
                             {active && <span className="ws-dot" aria-label="current" />}
-                            {standalone && p.color && (
-                              <span className="proj-swatch" style={{ background: p.color }} />
-                            )}
                             <span className="ws-name-text">{p.name}</span>
                           </button>
-                          {standalone && (
-                            <input
-                              type="color"
-                              className="ws-color"
-                              title="Chip color"
-                              defaultValue={p.color ?? '#0b83d9'}
-                              // Commit on close; onChange would PATCH for every
-                              // hue dragged through.
-                              onBlur={(e) => {
-                                if (e.target.value !== p.color) {
-                                  onWorkspaceColor?.(p.id, e.target.value);
-                                }
-                              }}
-                            />
-                          )}
                           <button
                             type="button"
                             className="ws-icon"
@@ -1502,12 +1387,10 @@ export default function SettingsPanel({
               <button
                 type="button"
                 className="btn"
-                // The first standalone workspace is created before anything is
-                // selectable; the server points it at itself.
-                disabled={!newPresetName.trim() || (!standalone && selectedIds.length === 0)}
+                disabled={!newPresetName.trim() || selectedIds.length === 0}
                 onClick={addPreset}
               >
-                {standalone ? 'Create workspace' : 'Save current'}
+                Save current
               </button>
             </div>
           </details>
@@ -1573,10 +1456,10 @@ export default function SettingsPanel({
               </div>
             ) : (
               <p className="hint">
-                Your setup ({standalone ? '' : 'workspaces, '}targets, linked codes, export
+                Your setup (workspaces, targets, linked codes, export
                 details) syncs across your devices. Changes upload after a moment; other devices
                 pick them up when their page regains focus. The{' '}
-                {standalone ? 'refresh interval stays' : 'Toggl API token and the refresh interval stay'}{' '}
+                Toggl API token and the refresh interval stay{' '}
                 on each device.{' '}
                 {sync.status === 'syncing' ? (
                   <strong>Syncing…</strong>
@@ -1591,8 +1474,7 @@ export default function SettingsPanel({
             <p className="hint">
               {sync?.misconfigured ??
                 'Sync is off; settings live only in this browser. Move them with a settings ' +
-                  'file below, or deploy with MONGODB_URI and APP_PASSWORD (plus ' +
-                  'APP_MODE=toggl to keep Toggl) to sync.'}
+                  'file below, or deploy with MONGODB_URI and APP_PASSWORD to sync.'}
             </p>
           )}
 
@@ -1623,12 +1505,23 @@ export default function SettingsPanel({
             </div>
             {importMsg && <div className="err-msg">{importMsg}</div>}
             <p className="hint">
-              Holds the same setup as sync ({standalone ? '' : 'workspaces, '}targets, export
-              details), never the {standalone ? 'app password' : 'Toggl API token'}. Import it on
+              Holds the same setup as sync (workspaces, targets, export
+              details), never the Toggl API token. Import it on
               another device or keep it as a backup.
             </p>
           </div>
         </details>
+
+        {sync?.enabled && !sync.needsAuth && (
+          <details
+            className="advanced ws-block"
+            open={mcpOpen}
+            onToggle={(e) => setMcpOpen((e.target as HTMLDetailsElement).open)}
+          >
+            <summary>Claude connector</summary>
+            <McpConnections open={mcpOpen} />
+          </details>
+        )}
 
         {/* Per device, like the refresh interval */}
         <InstallAppBlock />

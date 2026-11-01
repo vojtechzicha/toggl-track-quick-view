@@ -1,16 +1,13 @@
-// Client for /api/config: server configuration needed on load, including the
-// source mode.
-
-import type { SourceMode } from './types';
+// Client for /api/config: server configuration needed on load.
 
 export interface AppConfig {
-  /** Which backend this deployment serves. */
-  mode: SourceMode;
   serverToken: boolean;
   passwordRequired: boolean;
-  /** A deployment problem the operator must fix (e.g. standalone without APP_PASSWORD). */
+  /** A deployment problem the operator must fix, or null. */
   misconfigured: string | null;
   cache: { enabled: boolean; intervalSec: number | null };
+  /** Entries come from the server's local copy of Toggl (/api/entries, lib/mirror). */
+  mirror: { enabled: boolean };
   /** Cross-device settings sync availability (see app/api/sync). */
   sync: { enabled: boolean; misconfigured: string | null };
   /**
@@ -22,11 +19,11 @@ export interface AppConfig {
 }
 
 const CONFIG_FALLBACK: AppConfig = {
-  mode: 'toggl',
   serverToken: false,
   passwordRequired: false,
   misconfigured: null,
   cache: { enabled: false, intervalSec: null },
+  mirror: { enabled: false },
   sync: { enabled: false, misconfigured: null },
   timestamp: { enabled: false },
 };

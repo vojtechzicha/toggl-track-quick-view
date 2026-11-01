@@ -29,17 +29,14 @@ code.
 
 ## What the variables decide
 
-### Data source: `MONGODB_URI` and `APP_MODE`
+### Database: `MONGODB_URI`
 
-| `MONGODB_URI` | `APP_MODE` | Result |
-| --- | --- | --- |
-| unset | (ignored) | **Toggl mode.** Entries come from Toggl. No settings sync. |
-| set | unset | **Standalone mode.** The app serves its own MongoDB store. Toggl is never contacted and `TOGGL_API_TOKEN` is ignored. |
-| set | `toggl` | **Toggl mode with settings sync.** Entries from Toggl; MongoDB holds only the synced settings. |
+Entries always come from Toggl. `MONGODB_URI` adds a database for settings
+sync and the Claude connector (OAuth clients, grants, tokens and the audit log;
+see [MCP.md](MCP.md)). Without it, neither exists.
 
-`APP_MODE` is required in production because of the middle row: without it the
-live dashboard would switch to an empty standalone store and still deploy
-successfully.
+`APP_MODE` is retired. It used to choose between Toggl and a standalone store,
+which has been removed; `env:check` warns while it is still set anywhere.
 
 `MONGODB_DB` names the database. The code default is `toggl-quick-view`
 (`lib/store/mongo.ts`). `client.db()` always gets an explicit name, so a
@@ -51,9 +48,9 @@ The gate is on only when `APP_PASSWORD` is set and there is something
 server-side to protect: `TOGGL_API_TOKEN` or `MONGODB_URI` (`gateEnabled()` in
 `lib/serverAuth.ts`).
 
-- `MONGODB_URI` without `APP_PASSWORD` is an **error**. The store and sync
-  routes write and refuse to do so unauthenticated, so the deployment would boot
-  and report itself misconfigured.
+- `MONGODB_URI` without `APP_PASSWORD` is an **error**. Sync and the Claude
+  connector write and refuse to do so unauthenticated, so the deployment would
+  boot with both switched off.
 - `TOGGL_API_TOKEN` without `APP_PASSWORD` is a warning in deployments: anyone
   with the URL can read your time entries. A public dashboard is allowed.
 - `APP_PASSWORD` with neither has no effect.
@@ -94,6 +91,19 @@ nothing is fetched and the app offers only its generic Timesheet template.
 - A configured pack that cannot be fetched **fails the build**, so a deployment
   never ships without its templates. The exception is a network failure when a
   checkout is already on disk: the script keeps it and carries on.
+
+### Claude connector: `APP_TIME_ZONE`, `MCP_PUBLIC_URL`, `MCP_EXTRA_REDIRECT_URIS`
+
+The connector at `/api/mcp` is on whenever `MONGODB_URI` and `APP_PASSWORD` are
+set ([MCP.md](MCP.md)). Its tools take and return local times, and the
+timesheets it computes have day and week boundaries, so it needs a zone:
+`APP_TIME_ZONE`, default Europe/Prague, set as a literal in both templates.
+The route assigns it to `process.env.TZ`, because Vercel functions run in UTC.
+The dashboard is unaffected; it uses the browser's zone.
+
+`MCP_PUBLIC_URL` pins the public origin when a proxy hides the request host;
+blank is right on Vercel. `MCP_EXTRA_REDIRECT_URIS` adds OAuth callbacks
+besides Claude's and loopback addresses. Both are blank everywhere.
 
 ### Timestamping: `TSA_URL` and `TSA_CREDENTIALS`
 
@@ -166,9 +176,8 @@ Two things to know:
   refresh is an upstream request.
 - **There is no password or database by default.** `.env.tpl` leaves
   `APP_PASSWORD` blank and the MongoDB block commented out. To work on settings
-  sync or standalone mode, uncomment that block (keep `APP_MODE=toggl` for sync,
-  drop it for standalone) and set `APP_PASSWORD` to anything, for example
-  `localdev`. Set both or neither: `env:check` fails on a database without a
+  sync or the Claude connector, uncomment that block and set `APP_PASSWORD` to
+  anything, for example `localdev`. Set both or neither: `env:check` fails on a database without a
   password. When the gate is on, `env:check` prints a note saying so.
 
 ## Running op without a prompt per command
@@ -247,7 +256,6 @@ non-secret values included.
 
 | Field | Value | Compared with production |
 | --- | --- | --- |
-| `APP_MODE` | `toggl` | Same Vercel variable. |
 | `TOGGL_API_TOKEN` | secret | Same Vercel variable. |
 | `TOGGL_CACHE_INTERVAL` | `170` | Same Vercel variable. |
 | `MONGODB_URI` | secret | Identical connection string: same cluster, same credentials. |
@@ -255,6 +263,7 @@ non-secret values included.
 | `APP_PASSWORD` | secret | Its own value, so a leaked preview password does not open production. |
 | `PDF_TEMPLATE_PACK_REPO` | https remote | Same Vercel variable. |
 | `PDF_TEMPLATE_PACK_TOKEN` | secret | Same Vercel variable; one PAT serves both. |
+| `APP_TIME_ZONE` | `Europe/Prague` | Same Vercel variable. |
 
 Preview and production share one Atlas cluster and one database user. Only
 `MONGODB_DB` keeps a branch deployment from writing to the live settings, so the
@@ -348,8 +357,8 @@ fails at the service.
 | A template change never takes effect | A `.env.local` overrides `.env`. `pnpm env:check` notes when one exists; delete it. `vercel link` and `vercel env pull` recreate it. |
 | A variable is set but the service rejects it | The value is `[SENSITIVE]` from `vercel env pull` or an unreplaced `replaceMe`. `pnpm env:check` catches both. |
 | The app says it is misconfigured | `MONGODB_URI` is set without `APP_PASSWORD`. |
-| Settings sync is missing from the UI | Sync needs `MONGODB_URI` and `APP_PASSWORD`, plus `APP_MODE=toggl` to keep Toggl as the source. |
-| The dashboard shows an empty store instead of Toggl data | `MONGODB_URI` is set without `APP_MODE=toggl`: standalone mode. |
+| Settings sync is missing from the UI | Sync needs `MONGODB_URI` and `APP_PASSWORD`. |
+| `env:check` warns that `APP_MODE` is no longer read | Delete it from Vercel (production and preview) and from the 1Password items. |
 | Toggl returns 429 | The hourly budget is per account and local dev shares it with production. Raise `TOGGL_CACHE_INTERVAL` in `.env`. |
 | The "Refresh interval" picker is gone from Settings | Expected while `TOGGL_CACHE_INTERVAL` is set. |
 | The build fails with `pdf-pack  ERROR` | The template pack could not be checked out. Usually an expired `PDF_TEMPLATE_PACK_TOKEN`, an ssh remote in a deployment, or a local ssh remote you have no access to. |

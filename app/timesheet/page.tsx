@@ -5,7 +5,6 @@ import Link from 'next/link';
 import { type TimesheetMode } from '@/components/SettingsPanel';
 import AppSettings from '@/components/AppSettings';
 import LastUpdated from '@/components/LastUpdated';
-import MutationToast from '@/components/MutationToast';
 import ProjectChips from '@/components/ProjectChips';
 import PasswordGate from '@/components/PasswordGate';
 import SummaryTimesheet from '@/components/timesheet/SummaryTimesheet';
@@ -64,7 +63,6 @@ export default function TimesheetPage() {
   const t = useTrackSource();
   const {
     hydrated,
-    mode: sourceMode,
     settings,
     serverManaged,
     passwordRequired,
@@ -82,7 +80,6 @@ export default function TimesheetPage() {
     setLivePollPaused,
     loadRange,
   } = t;
-  const standalone = sourceMode === 'standalone';
 
   const [mode, setMode] = useState<Mode>('current');
   const [showExport, setShowExport] = useState(false);
@@ -232,12 +229,6 @@ export default function TimesheetPage() {
                 <span className="navbtn-text">Export</span>
               </button>
             )}
-            {standalone && (
-              <Link className="navbtn" href="/tracker" aria-label="Tracker">
-                <span className="navbtn-icon">⏱</span>
-                <span className="navbtn-text">Tracker</span>
-              </Link>
-            )}
             <Link className="navbtn" href="/" aria-label="Dashboard">
               <span className="navbtn-icon">⌂</span>
               <span className="navbtn-text">Dashboard</span>
@@ -373,8 +364,6 @@ export default function TimesheetPage() {
           onClose={() => setShowExport(false)}
         />
       )}
-
-      <MutationToast t={t} />
 
       {needsPassword && <PasswordGate onSubmit={submitPassword} error={pwError} busy={pwBusy} />}
 

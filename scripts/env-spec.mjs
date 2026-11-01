@@ -5,9 +5,9 @@
 // is compiled, so bare Node must be able to import it.
 //
 // The app needs no variable to start (an empty environment is a
-// bring-your-own-token dashboard). What goes wrong is combinations that change
-// what the deployment is (Toggl vs. standalone) or leave a feature off; the
-// rules in validateEnv() catch those.
+// bring-your-own-token dashboard). What goes wrong is combinations that leave
+// a feature off or the data unprotected; the rules in validateEnv() catch
+// those.
 
 /**
  * @typedef {'dev' | 'prod' | 'preview'} EnvEnvironment
@@ -69,8 +69,6 @@ const mustBeCacheInterval = (value) => {
  * the format checks and combination rules still apply.
  */
 export const DEPLOYMENT_TOPOLOGY = {
-  // Both set MONGODB_URI, so without this they would switch to standalone.
-  APP_MODE: ['prod', 'preview'],
   TOGGL_API_TOKEN: ['prod', 'preview'],
   APP_PASSWORD: ['prod', 'preview'],
   MONGODB_URI: ['prod', 'preview'],
@@ -84,24 +82,12 @@ export const DEPLOYMENT_TOPOLOGY = {
 
 /** @type {EnvVarSpec[]} */
 export const ENV_SPEC = [
-  // -- Track source -----------------------------------------------------------
-  {
-    name: 'APP_MODE',
-    scope: 'server',
-    description:
-      '"toggl" keeps Toggl as the data source when MONGODB_URI is set, so the database holds synced settings only. Without it, MONGODB_URI switches the app to standalone mode.',
-    check: (value) =>
-      value === 'toggl'
-        ? null
-        : 'must be "toggl" or empty. Any other value leaves the app in standalone mode',
-  },
-
   // -- Toggl ------------------------------------------------------------------
   {
     name: 'TOGGL_API_TOKEN',
     scope: 'server',
     description:
-      'Toggl Track API token from https://track.toggl.com/profile. When set, the server holds the token and Settings hides the token field. Ignored in standalone mode.',
+      'Toggl Track API token from https://track.toggl.com/profile. When set, the server holds the token and Settings hides the token field.',
     check: (value) => {
       if (/\s/.test(value)) return 'must not contain whitespace (often a newline from copy-paste)';
       return value.length >= 20 && value.length <= 64 ? null : 'does not look like a Toggl API token (expected ~32 characters)';
@@ -111,7 +97,7 @@ export const ENV_SPEC = [
     name: 'TOGGL_CACHE_INTERVAL',
     scope: 'server',
     description:
-      'Seconds between Toggl refreshes for the shared server-side cache, or 1/true/on/yes for the 180s default. Needs TOGGL_API_TOKEN and Toggl mode. While set, Settings hides the per-device "Refresh interval" picker.',
+      'Seconds between Toggl refreshes for the shared server-side cache, or 1/true/on/yes for the 180s default. Needs TOGGL_API_TOKEN. While set, Settings hides the per-device "Refresh interval" picker.',
     check: mustBeCacheInterval,
   },
 
@@ -120,7 +106,7 @@ export const ENV_SPEC = [
     name: 'MONGODB_URI',
     scope: 'server',
     description:
-      'MongoDB connection string. On its own it switches the app to standalone mode; with APP_MODE=toggl it enables settings sync. Either way it needs APP_PASSWORD.',
+      'MongoDB connection string. Enables settings sync and the Claude connector (MCP). Needs APP_PASSWORD.',
     check: mustBeMongoUri,
   },
   {
@@ -141,6 +127,38 @@ export const ENV_SPEC = [
       value.length >= 8
         ? null
         : 'should be at least 8 characters',
+  },
+
+  // -- Claude connector (MCP) ------------------------------------------------
+  {
+    name: 'APP_TIME_ZONE',
+    scope: 'server',
+    description:
+      'IANA time zone for the Claude connector: local times in its tools, and the day and week boundaries of the timesheets it computes. Defaults to Europe/Prague. The dashboard itself uses the browser\'s zone.',
+    check: (value) => {
+      try {
+        new Intl.DateTimeFormat('en', { timeZone: value });
+        return null;
+      } catch {
+        return 'must be an IANA time zone such as Europe/Prague';
+      }
+    },
+  },
+  {
+    name: 'MCP_PUBLIC_URL',
+    scope: 'server',
+    description:
+      'Public origin of the Claude connector (e.g. https://track.zicha.dev), when a proxy hides the request host. Empty: taken from each request, which is right on Vercel.',
+    check: (value) =>
+      /^https?:\/\/[^/\s]+\/?$/.test(value) ? null : 'must be an origin like https://track.zicha.dev, without a path',
+  },
+  {
+    name: 'MCP_EXTRA_REDIRECT_URIS',
+    scope: 'server',
+    description:
+      'Comma-separated OAuth redirect URIs the connector accepts besides Claude\'s own and loopback addresses, e.g. for the MCP Inspector.',
+    check: (value) =>
+      value.split(',').every((u) => /^https?:\/\/\S+$/.test(u.trim())) ? null : 'must be comma-separated http(s) URLs',
   },
 
   // -- PDF template pack (build time only) ------------------------------------
@@ -195,6 +213,8 @@ export const EXTERNAL_ENV = {
   scriptFlags: ['TZ'],
   // OP_SERVICE_ACCOUNT_TOKEN belongs in the shell profile, not in .env.
   tooling: ['OP_SERVICE_ACCOUNT_TOKEN', 'VERCEL_OIDC_TOKEN'],
+  // No longer read. validateEnv() warns so they get deleted where they are set.
+  retired: ['APP_MODE'],
 };
 
 const DEFAULT_APPLIES_TO = ['dev', 'prod', 'preview'];
@@ -267,18 +287,22 @@ export function validateEnv(env, environment = 'dev') {
   const uri = present(env, 'MONGODB_URI');
   const password = present(env, 'APP_PASSWORD');
   const token = present(env, 'TOGGL_API_TOKEN');
-  const mode = present(env, 'APP_MODE');
   const interval = present(env, 'TOGGL_CACHE_INTERVAL');
   const dbName = present(env, 'MONGODB_DB');
-  const standalone = Boolean(uri) && mode !== 'toggl';
 
-  // The app would boot, report itself misconfigured and refuse the store or
-  // sync routes. Fail the build instead.
+  for (const name of EXTERNAL_ENV.retired) {
+    if (present(env, name)) {
+      warnings.push(
+        `${name} is no longer read (standalone mode was removed). Delete it from Vercel and 1Password.`
+      );
+    }
+  }
+
+  // The app would boot with sync and the Claude connector refusing every
+  // request. Fail the build instead.
   if (uri && !password) {
     errors.push(
-      standalone
-        ? 'MONGODB_URI is set without APP_PASSWORD: the app is in standalone mode and every store route will refuse requests. Set APP_PASSWORD, or unset MONGODB_URI.'
-        : 'MONGODB_URI is set without APP_PASSWORD, so settings sync stays off (it writes, so it needs a password). Set APP_PASSWORD, or unset MONGODB_URI.'
+      'MONGODB_URI is set without APP_PASSWORD, so settings sync and the Claude connector stay off (they write, so they need a password). Set APP_PASSWORD, or unset MONGODB_URI.'
     );
   }
 
@@ -297,26 +321,16 @@ export function validateEnv(env, environment = 'dev') {
     );
   }
 
-  if (mode === 'toggl' && !uri) {
-    warnings.push(
-      'APP_MODE=toggl has no effect without MONGODB_URI. Was MONGODB_URI meant to be set?'
-    );
-  }
-
   if (dbName && !uri) {
     warnings.push(
       `MONGODB_DB is "${dbName}" but MONGODB_URI is not set, so no database is opened.`
     );
   }
 
-  // cacheIntervalSec() is used only for the server-held token in Toggl mode.
+  // cacheIntervalSec() is used only for the server-held token.
   if (interval && !token) {
     warnings.push(
       'TOGGL_CACHE_INTERVAL has no effect without TOGGL_API_TOKEN: the shared cache only serves the server-held token.'
-    );
-  } else if (interval && standalone) {
-    warnings.push(
-      'TOGGL_CACHE_INTERVAL has no effect in standalone mode. Add APP_MODE=toggl if Toggl should stay the source.'
     );
   }
 
@@ -357,13 +371,6 @@ export function validateEnv(env, environment = 'dev') {
   if (packRef && !packRepo) {
     warnings.push(
       `PDF_TEMPLATE_PACK_REF is "${packRef}" but has no effect without PDF_TEMPLATE_PACK_REPO.`
-    );
-  }
-
-  // Only the Toggl proxy reads the token, and standalone mode never uses it.
-  if (token && standalone) {
-    warnings.push(
-      'TOGGL_API_TOKEN is ignored: MONGODB_URI without APP_MODE=toggl puts the app in standalone mode, which does not use Toggl.'
     );
   }
 

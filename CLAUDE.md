@@ -1,8 +1,8 @@
 # toggl-track-quick-view
 
 A one-screen view for tracking a work day against a weekly target, reading from
-Toggl Track or from its own MongoDB store. Next.js App Router, deployed on
-Vercel at track.zicha.dev.
+Toggl Track, plus a remote MCP server so Claude can read, check and write time
+entries. Next.js App Router, deployed on Vercel at track.zicha.dev.
 
 - `README.md` is the product spec: targets, Short Friday, billing tags,
   timesheets, PDF export and signing, workspaces, rate limits. Read the relevant
@@ -11,6 +11,7 @@ Vercel at track.zicha.dev.
 - `docs/ENVIRONMENT.md` is the configuration guide: templates, 1Password,
   Vercel, every variable.
 - `docs/pdf-signing-v2.md` covers PDF signing.
+- `docs/MCP.md` covers the Claude connector: tools, OAuth, quota handling.
 
 ## Commands
 
@@ -35,6 +36,9 @@ pnpm check:templates  # PDF template registry (app + pack)
 pnpm check:fonts      # Fonts and pdfmake VFS for the registered templates
 pnpm check:signature  # PDF signing against scripts/fixtures/
 pnpm check:pwa        # Which browsers get the native install prompt vs the guide
+pnpm check:mcp        # Claude connector: OAuth flow, local times, batch planning, timesheet
+pnpm check:mirror     # Local Toggl copy: merge, push bodies, status (pure)
+pnpm test:mirror      # Pull/push loop + entry tools vs MongoDB and a fake Toggl (needs pnpm db)
 pnpm check:pack       # The pack's own checks, if one is checked out
 
 pnpm build            # Sync the pack, next build
@@ -57,16 +61,9 @@ Details and rationale: `docs/ENVIRONMENT.md`.
 - **Never write an `op://` string in a template comment.** `op inject` resolves
   comments too, and a bad reference breaks the pull. Write the path without the
   scheme.
-- `MONGODB_URI` and `APP_MODE` decide what the deployment is:
-
-  | `MONGODB_URI` | `APP_MODE` | Result |
-  | --- | --- | --- |
-  | unset | (ignored) | Toggl mode, no sync |
-  | set | unset | Standalone mode: own store, Toggl never contacted |
-  | set | `toggl` | Toggl mode with settings sync |
-
-  Production needs `APP_MODE=toggl`. Without it the live dashboard becomes an
-  empty standalone store and still deploys green.
+- `MONGODB_URI` (with `APP_PASSWORD`) turns on settings sync and the MCP
+  connector. Entries always come from Toggl. `APP_MODE` is retired (it chose
+  the removed standalone store); `env:check` warns while it is set.
 - **`MONGODB_DB` is all that separates preview data from production.** Both use
   the same Atlas cluster and connection string. Production leaves `MONGODB_DB`
   unset (code default `toggl-quick-view`), preview sets `timetrack-quick-view`.
@@ -76,7 +73,7 @@ Details and rationale: `docs/ENVIRONMENT.md`.
 - `DEPLOYMENT_TOPOLOGY` in the spec is our deployment's shape, not an app
   requirement. An empty environment is a supported mode.
 - Local `.env.tpl` has no password and no database by default. To work on sync
-  or standalone mode, uncomment its MongoDB block and set `APP_PASSWORD`
+  or the MCP connector, uncomment its MongoDB block and set `APP_PASSWORD`
   together. That connection string must stay a literal pointing at the local
   container.
 - `.env.local` outranks `.env`. The Vercel CLI creates one; delete it.
@@ -117,11 +114,30 @@ before `dev` and `build`, driven by `PDF_TEMPLATE_PACK_REPO` / `_REF` / `_TOKEN`
   `app/api/toggl/[...path]`.
 - Rotating `APP_PASSWORD` invalidates every session: the signing key is derived
   from it (`lib/serverAuth.ts`).
-- "Standalone" means the no-Toggl store mode. The PWA display mode is called
-  `installed` in code to avoid the clash.
+- The PWA display mode ("standalone" in the platform's terms) is called
+  `installed` in code.
 - Old tabs compare their build id against `GET /api/version` and ask to refresh
   (`components/UpdateHint.tsx`). This matters with settings sync: a tab on an
   old build drops settings keys it doesn't know on its next save.
+- **With the server token and a database, entries live in a local copy**
+  (`lib/mirror`, README → "Local copy of Toggl"). The dashboard
+  (`/api/entries`), exports and MCP tools read it; writes are queued and pushed
+  within the quota (`QUOTA_RESERVE` stays for the dashboard). New code reads
+  and writes the mirror, never Toggl's entries directly. Only the browser-token
+  path still goes through `/api/toggl`.
+- Mirror documents are versioned: every local edit `$inc`s `version`, and the
+  pull and push only write with a version filter. Keep that, or a pull can
+  silently drop an edit made while it ran. Change merge rules in
+  `lib/mirror/model.ts` and cover them in `check:mirror`; run `test:mirror`
+  after touching `sync.ts`.
+- `.github/workflows/toggl-sync.yml` calls `/api/toggl-sync` every 10 minutes
+  (Hobby allows only daily Vercel crons). The route is unauthenticated on
+  purpose: it returns counts and cannot spend more than the app would.
+- The MCP route sets `process.env.TZ` to `APP_TIME_ZONE`: the timesheet
+  builders work in local time and Vercel runs in UTC. Server code must not
+  assume UTC.
+- MCP grants store a fingerprint of `APP_PASSWORD`; rotating it disconnects
+  every Claude connector too.
 - `beta.track.zicha.dev` follows the newest preview
   (`.github/workflows/preview-alias.yml`), so preview sessions and PWA installs
   survive redeploys.

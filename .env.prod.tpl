@@ -13,13 +13,6 @@
 #
 # Full guide: docs/ENVIRONMENT.md
 
-# -- Track source -------------------------------------------------------------
-# Keeps Toggl as the source while MONGODB_URI is set. Without it production
-# would switch to standalone mode and serve an empty store, so the spec marks
-# it required.
-
-APP_MODE=toggl
-
 # -- Toggl --------------------------------------------------------------------
 
 TOGGL_API_TOKEN=op://Development/toggl-track-quick-view-prod/TOGGL_API_TOKEN
@@ -30,7 +23,8 @@ TOGGL_API_TOKEN=op://Development/toggl-track-quick-view-prod/TOGGL_API_TOKEN
 TOGGL_CACHE_INTERVAL=170
 
 # -- Database -----------------------------------------------------------------
-# MongoDB Atlas. With APP_MODE=toggl it holds synced settings only.
+# MongoDB Atlas: synced settings and the Claude connector's OAuth grants and
+# audit log.
 
 MONGODB_URI=op://Development/toggl-track-quick-view-prod/MONGODB_URI
 
@@ -46,6 +40,19 @@ MONGODB_DB=
 # changing it logs out every device.
 
 APP_PASSWORD=op://Development/toggl-track-quick-view-prod/APP_PASSWORD
+
+# -- Claude connector (MCP) -------------------------------------------------
+# Served at /api/mcp once MONGODB_URI and APP_PASSWORD are set. Local times in
+# its tools and its timesheets use this zone; Vercel functions run in UTC.
+
+APP_TIME_ZONE=Europe/Prague
+
+# Blank: the origin comes from the request host, which on Vercel is right.
+# Tokens are bound to the origin that issued them.
+
+MCP_PUBLIC_URL=
+
+MCP_EXTRA_REDIRECT_URIS=
 
 # -- PDF template pack --------------------------------------------------------
 # The PDF templates in actual use come from this private repository. Without it

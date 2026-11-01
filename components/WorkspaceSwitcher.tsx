@@ -1,7 +1,7 @@
 'use client';
 
-// Topbar switcher between stored workspaces (standalone: store documents;
-// Toggl: saved presets). Managing them stays in Settings → Workspaces.
+// Topbar switcher between stored workspaces (the saved presets). Managing
+// them stays in Settings → Workspaces.
 //
 // The menu is a popover on wide screens and a bottom sheet on narrow ones
 // (.ws-switch-menu in globals.css), where the topbar buttons are icon-sized.
@@ -57,8 +57,6 @@ export default function WorkspaceSwitcher({
 
   if (workspaceList.length === 0) return null;
 
-  const activeEntry = workspaceList.find((w) => w.id === activeWorkspace?.id) ?? null;
-
   const onItemKeyDown = (e: React.KeyboardEvent<HTMLButtonElement>) => {
     if (e.key !== 'ArrowDown' && e.key !== 'ArrowUp') return;
     e.preventDefault();
@@ -89,11 +87,7 @@ export default function WorkspaceSwitcher({
         aria-expanded={open}
         onClick={() => setOpen((v) => !v)}
       >
-        {activeEntry?.color ? (
-          <span className="proj-swatch ws-switch-swatch" style={{ background: activeEntry.color }} />
-        ) : (
-          <span className="navbtn-icon">🗂</span>
-        )}
+        <span className="navbtn-icon">🗂</span>
         <span className="navbtn-text ws-switch-name">{activeWorkspace?.name ?? 'Workspace'}</span>
         <span className="ws-switch-caret" aria-hidden="true">
           ▾
@@ -126,7 +120,7 @@ export default function WorkspaceSwitcher({
                   >
                     <span
                       className="proj-swatch ws-switch-swatch"
-                      style={{ background: w.color ?? 'var(--line)' }}
+                      style={{ background: 'var(--line)' }}
                     />
                     <span className="ws-switch-item-name">{w.name}</span>
                     {active && (

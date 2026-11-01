@@ -28,25 +28,37 @@ TOGGL_CACHE_INTERVAL=600
 
 # -- Access -------------------------------------------------------------------
 # Blank locally: the gate is off. Set it together with the MongoDB block below
-# to work on settings sync or standalone mode; those routes write and require a
-# password, so `pnpm env:check` fails on one without the other. Any value works,
-# e.g. `localdev`.
+# to work on settings sync or the Claude connector (MCP); those routes write
+# and require a password, so `pnpm env:check` fails on one without the other.
+# Any value works, e.g. `localdev`.
 
 APP_PASSWORD=
 
-# -- Settings sync / standalone mode (opt-in) ---------------------------------
-# Uncomment all three lines and set APP_PASSWORD to run what production runs:
-# Toggl as the source, MongoDB (the local Docker container) for settings sync.
+# -- Database: settings sync and the Claude connector (opt-in) ---------------
+# Uncomment both lines and set APP_PASSWORD to run what production runs:
+# MongoDB (the local Docker container) for settings sync and the MCP
+# connector's OAuth grants.
 #
-#   APP_MODE=toggl
 #   MONGODB_URI=mongodb://localhost:27018/toggl-quick-view
 #   MONGODB_DB=toggl-quick-view
 #
-# Leave out APP_MODE for standalone mode: the app serves its own store and
-# never contacts Toggl. See README.md.
-#
 # Keep the connection string a local literal so the default can never reach
 # production.
+
+# -- Claude connector (MCP) -------------------------------------------------
+# Needs the database block above and APP_PASSWORD. Times in its tools and the
+# timesheets it computes use this zone (blank means Europe/Prague).
+
+APP_TIME_ZONE=Europe/Prague
+
+# Blank: the public origin comes from each request (http://localhost:3000 here).
+
+MCP_PUBLIC_URL=
+
+# Extra OAuth callbacks besides Claude's and loopback, comma-separated. The MCP
+# Inspector's callback is a loopback address, so it needs nothing here.
+
+MCP_EXTRA_REDIRECT_URIS=
 
 # -- PDF template pack --------------------------------------------------------
 # Private repository with the engagement-specific PDF templates, checked out

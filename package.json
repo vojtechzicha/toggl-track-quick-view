@@ -2,7 +2,7 @@
   "name": "toggl-track-quick-view",
   "version": "0.1.0",
   "private": true,
-  "description": "A one-screen view for tracking a work day against a weekly target, from Toggl Track or its own MongoDB store.",
+  "description": "A one-screen view for tracking a work day against a weekly target, from Toggl Track.",
   "scripts": {
     "dev": "node scripts/sync-pack.mjs && WAS_RUNNING=$(docker compose ps -q mongo 2>/dev/null); docker compose up -d mongo && trap '[ -z \"$WAS_RUNNING\" ] && docker compose down' EXIT && next dev",
     "devsafe": "node scripts/sync-pack.mjs && rm -rf .next && next dev",
@@ -16,7 +16,7 @@
     "env:pull": "op inject -i .env.tpl -o .env -f",
     "env:pull:prod": "op inject -i .env.prod.tpl -o .env.prod -f",
     "env:check": "node scripts/check-env.mjs",
-    "check": "npm run check:money && npm run check:codes && npm run check:balance && npm run check:timeoff && npm run check:windows && npm run check:export && npm run check:templates && npm run check:fonts && npm run check:signature && npm run check:pwa && npm run check:pack",
+    "check": "npm run check:money && npm run check:codes && npm run check:balance && npm run check:timeoff && npm run check:windows && npm run check:export && npm run check:templates && npm run check:fonts && npm run check:signature && npm run check:pwa && npm run check:mcp && npm run check:mirror && npm run check:pack",
     "check:money": "node scripts/check-money.ts",
     "check:codes": "node scripts/check-codes.ts",
     "check:balance": "node scripts/check-balance.ts",
@@ -27,11 +27,15 @@
     "check:fonts": "node scripts/check-fonts.ts",
     "check:signature": "node scripts/check-signature.ts",
     "check:pwa": "node scripts/check-pwa.ts",
+    "check:mcp": "node scripts/check-mcp.ts",
+    "check:mirror": "node scripts/check-mirror.ts",
+    "test:mirror": "node scripts/test-mirror.ts",
     "check:pack": "node scripts/check-pack.mjs",
     "make:signature-fixture": "node scripts/make-signature-fixture.ts"
   },
   "dependencies": {
     "@cantoo/pdf-lib": "^2.9.1",
+    "@modelcontextprotocol/sdk": "1.32.2",
     "@peculiar/asn1-ess": "^2.9.3",
     "@peculiar/asn1-schema": "^2.9.3",
     "@peculiar/asn1-x509": "^2.9.3",
@@ -47,7 +51,8 @@
     "pkijs": "^3.4.0",
     "react": "^19.0.0",
     "react-dom": "^19.0.0",
-    "xlsx": "^0.18.5"
+    "xlsx": "^0.18.5",
+    "zod": "^3.25.76"
   },
   "devDependencies": {
     "@types/node": "^22.10.0",

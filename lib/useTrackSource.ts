@@ -1,35 +1,17 @@
 'use client';
 
-// Data-source connection and polling shared by the dashboard, timesheet and
-// tracker pages: settings, server-managed / password-gate status, connecting
-// (cache-first), and the poll that fetches the week's entries. All pages use
-// this one hook so a metered source's request budget is spent once. Pages
-// derive their own views from the raw entries.
-//
-// The backend (lib/source/types.ts) is chosen from AppConfig.mode: the Toggl
-// proxy or the standalone MongoDB store. Standalone mode adds mutations, which
-// this hook applies optimistically to its entries state.
+// Toggl connection and polling shared by the dashboard and timesheet pages:
+// settings, server-managed / password-gate status, connecting (cache-first),
+// and the poll that fetches the week's entries. All pages use this one hook
+// so the request budget is spent once. Pages derive their own views from the
+// raw entries.
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { getConfig } from '@/lib/source/config';
 import { hasValidAuth, login } from '@/lib/source/auth';
-import { ApiError, errorDetail, isRateLimit, isAuthRequired } from '@/lib/source/errors';
-import { togglBackend } from '@/lib/source/toggl';
-import {
-  standaloneBackend,
-  listWorkspaces,
-  workspacesToProjects,
-  createWorkspaceApi,
-  updateWorkspaceApi,
-  deleteWorkspaceApi,
-  createEntryApi,
-  updateEntryApi,
-  deleteEntryApi,
-  stopEntryApi,
-  type EntryInput,
-  type StoreWorkspace,
-} from '@/lib/source/standalone';
-import type { FetchedEntries, SourceMode, TrackProject } from '@/lib/source/types';
+import { errorDetail, isRateLimit, isAuthRequired } from '@/lib/source/errors';
+import { setMirrorMode, togglBackend } from '@/lib/source/toggl';
+import type { FetchedEntries, TrackProject } from '@/lib/source/types';
 import { presetMatches } from '@/components/SettingsPanel';
 import type {
   SettingsValue,
@@ -74,18 +56,14 @@ const REQLOG_KEY = 'tqv.reqlog.v1';
 const CACHE_TTL = 24 * 3600 * 1000; // me/projects cache lifetime
 const HOUR_MS = 3600 * 1000;
 const DEFAULT_REFRESH_SEC = 180; // 20 requests/hour, under Toggl's limit
-// The standalone store has no request budget. Mutations also refetch at once.
-export const STANDALONE_REFRESH_SEC = 30;
 
 export interface StoredSettings extends SettingsValue {
   workspaceId: number | null;
   // Account display name from connect time; the default name on exports.
   accountName: string;
-  // Saved workspaces (named settings snapshots). Toggl mode only; standalone
-  // keeps workspaces in the store.
+  // Saved workspaces (named settings snapshots).
   presets: SettingsPreset[];
-  // Id of the workspace last recalled (preset id, or the store workspace's id
-  // as a string). Tells apart two workspaces that differ only in export
+  // Id of the workspace last recalled. Tells apart two workspaces that differ only in export
   // details, which presetMatches ignores. Re-checked against the content
   // before use, so edited settings stop writing into that workspace.
   activePresetId: string | null;
@@ -203,7 +181,6 @@ function loadSettings(): StoredSettings {
 }
 
 // ---- me/projects cache (saves request budget on reload) ----
-// Toggl mode only. Standalone always fetches the workspace list live.
 interface Cache {
   workspaceId: number;
   projects: TrackProject[];
@@ -263,35 +240,6 @@ export function fmtInterval(sec: number): string {
   return sec % 60 === 0 ? `${sec / 60} min` : `${sec}s`;
 }
 
-// The /import page spends the same Toggl budget, so it shares this log.
-/** Toggl requests recorded in the last rolling hour. */
-export function togglRequestsThisHour(): number {
-  return pruneLoad().length;
-}
-/** Record `n` Toggl requests; returns the new rolling-hour count. */
-export function recordTogglRequests(n: number): number {
-  return recordReqs(n);
-}
-
-// ---- Cross-tab store change notifications (standalone mode) ----
-// Every successful mutation posts here so other tabs and PWA windows refetch
-// at once instead of waiting for their next poll. A BroadcastChannel does not
-// deliver to its own sender. Other devices catch up via the poll.
-type StoreChangeKind = 'entries' | 'workspaces';
-let storeBC: BroadcastChannel | null = null;
-function storeChannel(): BroadcastChannel | null {
-  if (typeof window === 'undefined' || typeof BroadcastChannel === 'undefined') return null;
-  if (!storeBC) storeBC = new BroadcastChannel('tqv.store.v1');
-  return storeBC;
-}
-function broadcastStoreChange(kind: StoreChangeKind): void {
-  try {
-    storeChannel()?.postMessage(kind);
-  } catch {
-    /* ignore: the regular poll catches up */
-  }
-}
-
 /**
  * The range the poll keeps fresh. Starts at the week's start (Saturday) or
  * the start of yesterday, whichever is earlier, so unreported-time detection
@@ -304,25 +252,8 @@ export function pollWindow(now: Date): { startMs: number; endMs: number } {
   return { startMs: Math.min(weekStart, yesterdayStart), endMs: addDays(weekStart, 7) };
 }
 
-/** Apply an EntryInput patch onto a client-side TimeEntry (optimistic preview). */
-function patchEntry(e: TimeEntry, patch: EntryInput): TimeEntry {
-  const next: TimeEntry = { ...e };
-  if (patch.description !== undefined) next.description = patch.description;
-  if (patch.tags !== undefined) next.tags = patch.tags;
-  if (patch.workspaceId !== undefined) next.project_id = patch.workspaceId;
-  if (patch.start !== undefined) next.start = patch.start;
-  if (patch.stop !== undefined) next.stop = patch.stop;
-  const startMs = Date.parse(next.start);
-  next.duration = next.stop
-    ? Math.max(1, Math.round((Date.parse(next.stop) - startMs) / 1000))
-    : -Math.floor(startMs / 1000);
-  return next;
-}
-
 export interface UseTrackSource {
   hydrated: boolean;
-  /** Which backend this deployment serves; null until /api/config resolves. */
-  mode: SourceMode | null;
   settings: StoredSettings;
   setSettings: React.Dispatch<React.SetStateAction<StoredSettings>>;
   persist: (s: StoredSettings) => void;
@@ -345,6 +276,8 @@ export interface UseTrackSource {
    * real data age, not receipt time. Unchanged while fetches fail.
    */
   lastUpdatedMs: number;
+  /** Changes in the server's local copy not yet sent to Toggl (0 without one). */
+  pendingToggl: number;
   nowMs: number;
   reqThisHour: number;
   cacheEnabled: boolean;
@@ -363,13 +296,10 @@ export interface UseTrackSource {
    * the active settings and to the active workspace, if any.
    */
   setExportFields: (fields: ExportFieldValues) => void;
-  /**
-   * The stored workspace the current settings match (standalone: store id as
-   * a string; Toggl: preset id), or null.
-   */
+  /** The stored workspace (preset) the current settings match, or null. */
   activeWorkspace: { id: string; name: string } | null;
-  /** All stored workspaces in one shape, for the quick switcher. `color` is standalone-only. */
-  workspaceList: { id: string; name: string; color?: string; value: PresetValue }[];
+  /** All stored workspaces, for the quick switcher. */
+  workspaceList: { id: string; name: string; value: PresetValue }[];
   /** Recall a stored workspace by id. Unknown ids are ignored. */
   switchWorkspace: (id: string) => void;
 
@@ -400,57 +330,16 @@ export interface UseTrackSource {
     /** Apply a settings file; resolves an error message or null on success. */
     importFile: (file: File) => Promise<string | null>;
   };
-
-  // ---- Standalone mode only (no-ops / empty elsewhere) ----
-  /** Stored workspaces with their settings snapshots (the Settings section). */
-  workspaces: StoreWorkspace[];
-  /** Ask the live poll to fetch immediately (after an external mutation). */
-  refetchEntries: () => void;
-  /** Last failed mutation, for a toast; cleared via clearMutationError. */
-  mutationError: string | null;
-  clearMutationError: () => void;
-  // Entry mutations, optimistic against `entries` and reconciled with the
-  // server response. Resolve null on failure (error in mutationError, or the
-  // password gate returns on an expired session).
-  startTimer: (input: {
-    description: string;
-    tags: string[];
-    workspaceId: number;
-  }) => Promise<TimeEntry | null>;
-  addEntry: (input: {
-    description: string;
-    tags: string[];
-    workspaceId: number;
-    start: string;
-    stop: string;
-  }) => Promise<TimeEntry | null>;
-  editEntry: (id: number, patch: EntryInput) => Promise<TimeEntry | null>;
-  removeEntry: (id: number) => Promise<boolean>;
-  stopTimer: (id: number) => Promise<TimeEntry | null>;
-  // Workspace CRUD. Each refreshes the workspace/project lists.
-  createWorkspace: (
-    name: string,
-    settings?: PresetValue,
-    color?: string
-  ) => Promise<StoreWorkspace | null>;
-  updateWorkspace: (
-    id: number,
-    patch: { name?: string; color?: string; settings?: PresetValue }
-  ) => Promise<StoreWorkspace | null>;
-  deleteWorkspace: (id: number, force?: boolean) => Promise<'ok' | 'has-entries' | null>;
 }
 
 export function useTrackSource(): UseTrackSource {
-  const [mode, setMode] = useState<SourceMode | null>(null);
-  // The Toggl fallback is never used before config resolves: connect waits.
-  const backend = mode === 'standalone' ? standaloneBackend : togglBackend;
+  const backend = togglBackend;
   const metered = backend.hourlyRequestLimit !== null;
 
   const [settings, setSettings] = useState<StoredSettings>(DEFAULTS);
   const [hydrated, setHydrated] = useState(false);
 
   const [projects, setProjects] = useState<TrackProject[]>([]);
-  const [workspaces, setWorkspaces] = useState<StoreWorkspace[]>([]);
   const [serverManaged, setServerManaged] = useState<boolean | null>(null); // null = unknown
   const [passwordRequired, setPasswordRequired] = useState(false);
   const [misconfigured, setMisconfigured] = useState<string | null>(null);
@@ -464,7 +353,6 @@ export function useTrackSource(): UseTrackSource {
   const [connecting, setConnecting] = useState(false);
   const [authError, setAuthError] = useState<string | null>(null);
   const [fetchError, setFetchError] = useState<string | null>(null);
-  const [mutationError, setMutationError] = useState<string | null>(null);
   const [showSettings, setShowSettings] = useState(false);
 
   const [syncEnabled, setSyncEnabled] = useState(false);
@@ -484,6 +372,7 @@ export function useTrackSource(): UseTrackSource {
 
   const [entries, setEntries] = useState<TimeEntry[]>([]);
   const [lastUpdatedMs, setLastUpdatedMs] = useState(0);
+  const [pendingToggl, setPendingToggl] = useState(0);
   const [nowMs, setNowMs] = useState(0);
   const [reqThisHour, setReqThisHour] = useState(0);
   const [livePollPaused, setLivePollPaused] = useState(false);
@@ -491,13 +380,6 @@ export function useTrackSource(): UseTrackSource {
   const lastFetchRef = useRef(0);
   const backoffUntilRef = useRef(0);
   const backoffStepRef = useRef(0);
-  const refetchRef = useRef<(() => void) | null>(null);
-  // Latest refreshWorkspaces, for the cross-tab listener (defined above it).
-  const refreshWorkspacesRef = useRef<(() => Promise<StoreWorkspace[]>) | null>(null);
-  const entriesRef = useRef<TimeEntry[]>([]);
-  useEffect(() => {
-    entriesRef.current = entries;
-  }, [entries]);
   // Latest settings, for async sync callbacks (pull/conflict resolution).
   const settingsRef = useRef<StoredSettings>(DEFAULTS);
   useEffect(() => {
@@ -514,9 +396,9 @@ export function useTrackSource(): UseTrackSource {
     setHydrated(true);
     getConfig()
       .then((c) => {
-        setMode(c.mode);
-        // Standalone has no browser credential; the password gate guards it.
-        setServerManaged(c.mode === 'standalone' ? true : !!c.serverToken);
+        // Before connect: the poll reads the server's local copy when there is one.
+        setMirrorMode(!!c.mirror?.enabled);
+        setServerManaged(!!c.serverToken);
         setPasswordRequired(!!c.passwordRequired);
         setMisconfigured(c.misconfigured ?? null);
         setServerCache(c.cache ?? { enabled: false, intervalSec: null });
@@ -524,27 +406,17 @@ export function useTrackSource(): UseTrackSource {
         setSyncMisconfig(c.sync?.misconfigured ?? null);
       })
       .catch(() => {
-        setMode('toggl');
         setServerManaged(false);
       });
   }, []);
 
   // With the server cache on, its interval sets the poll rate and the
-  // per-device picker is hidden. Standalone uses a fixed rate.
-  const standalone = backend.mode === 'standalone';
-  const cacheEnabled = !standalone && serverCache.enabled && !!serverCache.intervalSec;
-  const effectiveRefreshSec = standalone
-    ? STANDALONE_REFRESH_SEC
-    : cacheEnabled
-    ? serverCache.intervalSec!
-    : settings.refreshSec;
+  // per-device picker is hidden.
+  const cacheEnabled = serverCache.enabled && !!serverCache.intervalSec;
+  const effectiveRefreshSec = cacheEnabled ? serverCache.intervalSec! : settings.refreshSec;
   // Poll 1s slower than the cache TTL so each poll lands after expiry and
   // gets fresh data.
-  const pollIntervalSec = standalone
-    ? STANDALONE_REFRESH_SEC
-    : cacheEnabled
-    ? serverCache.intervalSec! + 1
-    : settings.refreshSec;
+  const pollIntervalSec = cacheEnabled ? serverCache.intervalSec! + 1 : settings.refreshSec;
 
   // 1s tick for the live clock and the request meter.
   useEffect(() => {
@@ -580,27 +452,13 @@ export function useTrackSource(): UseTrackSource {
     }
   }, []);
 
-  // Verify credentials and load the workspace/project list. Toggl mode uses
-  // the 24h cache unless forced (Connect/Reconnect); standalone is always live.
+  // Verify credentials and load the workspace/project list, from the 24h
+  // cache unless forced (Connect/Reconnect).
   const connect = useCallback(
     async (token: string, force = false) => {
       setConnecting(true);
       setAuthError(null);
       try {
-        if (standalone) {
-          const ws = await listWorkspaces();
-          setWorkspaces(ws);
-          const projs = workspacesToProjects(ws);
-          setProjects(projs);
-          setSettings((prev) => ({
-            ...prev,
-            token: '',
-            workspaceId: 1,
-            selectedProjects: enrichSelected(prev.selectedProjects, projs),
-          }));
-          setReady(true);
-          return;
-        }
         if (!force) {
           const c = loadCache();
           if (c && c.projects?.length && Date.now() - c.at < CACHE_TTL) {
@@ -644,10 +502,6 @@ export function useTrackSource(): UseTrackSource {
         setAuthError(
           isRateLimit(e)
             ? 'Toggl rate limit reached. Wait a bit, then try again.'
-            : standalone
-            ? `Could not reach the store. Check MONGODB_URI and the database's network access.${
-                errorDetail(e) ? ` (${errorDetail(e)})` : ''
-              }`
             : serverManaged
             ? 'The server-configured Toggl token was rejected. Check TOGGL_API_TOKEN.'
             : 'Could not authenticate with Toggl. Check your API token.'
@@ -657,13 +511,13 @@ export function useTrackSource(): UseTrackSource {
         setConnecting(false);
       }
     },
-    [backend, metered, serverManaged, standalone]
+    [backend, metered, serverManaged]
   );
 
   // Connect once the server-token status is known.
   useEffect(() => {
     if (!hydrated || serverManaged === null || ready) return;
-    // e.g. standalone without APP_PASSWORD: show the problem, don't connect.
+    // A deployment problem: show it, don't connect.
     if (misconfigured) {
       setAuthError(misconfigured);
       setShowSettings(true);
@@ -696,13 +550,14 @@ export function useTrackSource(): UseTrackSource {
       if (metered && !cacheEnabled) setReqThisHour(recordReqs(1));
       try {
         const win = pollWindow(new Date());
-        const { entries: ent, dataAtMs } = await backend.fetchEntries(
+        const { entries: ent, dataAtMs, pending } = await backend.fetchEntries(
           settings.token,
           new Date(win.startMs).toISOString(),
           new Date(win.endMs).toISOString()
         );
         if (cancelled) return;
         setEntries(ent ?? []);
+        setPendingToggl(pending ?? 0);
         setLastUpdatedMs(dataAtMs ?? Date.now());
         setFetchError(null);
         backoffStepRef.current = 0;
@@ -725,11 +580,6 @@ export function useTrackSource(): UseTrackSource {
         }
       }
     };
-    // Lets mutations trigger an immediate refetch.
-    refetchRef.current = () => {
-      fetchNow();
-    };
-
     const tick = async () => {
       if (cancelled) return;
       const hidden = typeof document !== 'undefined' && document.visibilityState === 'hidden';
@@ -759,7 +609,6 @@ export function useTrackSource(): UseTrackSource {
     return () => {
       cancelled = true;
       clearTimeout(timer);
-      refetchRef.current = null;
       document.removeEventListener('visibilitychange', onVisible);
     };
   }, [ready, livePollPaused, settings.token, pollIntervalSec, cacheEnabled, backend, metered]);
@@ -778,47 +627,6 @@ export function useTrackSource(): UseTrackSource {
     },
     [backend, metered, cacheEnabled, settings.token]
   );
-
-  const refetchEntries = useCallback(() => {
-    refetchRef.current?.();
-  }, []);
-  const clearMutationError = useCallback(() => setMutationError(null), []);
-
-  // Refetch on store changes made in other tabs/windows.
-  useEffect(() => {
-    if (!standalone || !ready) return;
-    const ch = storeChannel();
-    if (!ch) return;
-    const onMessage = (e: MessageEvent) => {
-      if (e.data === 'workspaces') refreshWorkspacesRef.current?.();
-      refetchRef.current?.();
-    };
-    ch.addEventListener('message', onMessage);
-    return () => ch.removeEventListener('message', onMessage);
-  }, [standalone, ready]);
-
-  // Standalone workspaces are outside the sync payload, so changes from other
-  // devices arrive through neither the settings pull nor the BroadcastChannel.
-  // Re-list on focus (throttled like the sync pull). Otherwise a recall or a
-  // setExportFields write could build on an obsolete snapshot.
-  const lastWsListRef = useRef(0);
-  useEffect(() => {
-    if (!standalone || !ready) return;
-    const onFocus = () => {
-      if (document.visibilityState !== 'visible') return;
-      if (Date.now() - lastWsListRef.current < 30_000) return;
-      lastWsListRef.current = Date.now();
-      refreshWorkspacesRef.current?.().catch(() => {
-        /* transient: the next focus or mutation retries */
-      });
-    };
-    window.addEventListener('focus', onFocus);
-    document.addEventListener('visibilitychange', onFocus);
-    return () => {
-      window.removeEventListener('focus', onFocus);
-      document.removeEventListener('visibilitychange', onFocus);
-    };
-  }, [standalone, ready]);
 
   // ---- Cross-device settings sync ----
   // Pull on load and on focus; push (debounced) when the syncable content
@@ -1001,260 +809,10 @@ export function useTrackSource(): UseTrackSource {
     [persist]
   );
 
-  // ---- Standalone mutations ----
-  // Apply the optimistic change, call the server, reconcile with its result,
-  // then refetch so side effects (e.g. the timer a new start closed) become
-  // canonical. On failure, roll back and set mutationError; resolves null.
-  const runMutation = useCallback(
-    async <R,>(
-      optimistic: (list: TimeEntry[]) => TimeEntry[],
-      run: () => Promise<R>,
-      reconcile: ((result: R, list: TimeEntry[]) => TimeEntry[]) | null,
-      failMessage: string
-    ): Promise<R | null> => {
-      const snapshot = entriesRef.current;
-      setEntries(optimistic);
-      try {
-        const result = await run();
-        if (reconcile) setEntries((list) => reconcile(result, list));
-        refetchRef.current?.();
-        broadcastStoreChange('entries');
-        return result;
-      } catch (e) {
-        setEntries(snapshot);
-        if (isAuthRequired(e)) {
-          setReady(false);
-          setAuthed(false);
-        } else {
-          const detail = errorDetail(e);
-          setMutationError(detail ? `${failMessage} (${detail})` : failMessage);
-        }
-        return null;
-      }
-    },
-    []
-  );
-
-  const isRunning = (e: TimeEntry) => e.duration < 0 || !e.stop;
-
-  const startTimer = useCallback<UseTrackSource['startTimer']>(
-    async ({ description, tags, workspaceId }) => {
-      const start = new Date().toISOString();
-      const startMs = Date.parse(start);
-      const temp: TimeEntry = {
-        id: -startMs, // provisional; swapped for the canonical id on response
-        start,
-        stop: null,
-        duration: -Math.floor(startMs / 1000),
-        project_id: workspaceId,
-        workspace_id: 1,
-        description,
-        tags,
-      };
-      return runMutation(
-        (list) => [
-          ...list.map((e) =>
-            isRunning(e) ? patchEntry(e, { stop: start }) : e
-          ),
-          temp,
-        ],
-        () => createEntryApi({ description, workspaceId, tags, start, stop: null }),
-        (created, list) => list.map((e) => (e.id === temp.id ? created : e)),
-        'Could not start the timer.'
-      );
-    },
-    [runMutation]
-  );
-
-  const addEntry = useCallback<UseTrackSource['addEntry']>(
-    async ({ description, tags, workspaceId, start, stop }) => {
-      // Only add the optimistic copy if it is inside the poll window. Older
-      // entries belong to the tracker's history list.
-      const inWindow = Date.parse(start) >= pollWindow(new Date()).startMs;
-      const temp: TimeEntry = patchEntry(
-        {
-          id: -Date.parse(start) - 1,
-          start,
-          stop,
-          duration: 0,
-          project_id: workspaceId,
-          workspace_id: 1,
-          description,
-          tags,
-        },
-        {}
-      );
-      return runMutation(
-        (list) => (inWindow ? [...list, temp] : list),
-        () => createEntryApi({ description, workspaceId, tags, start, stop }),
-        (created, list) =>
-          inWindow ? list.map((e) => (e.id === temp.id ? created : e)) : list,
-        'Could not add the entry.'
-      );
-    },
-    [runMutation]
-  );
-
-  const editEntry = useCallback<UseTrackSource['editEntry']>(
-    (id, patch) =>
-      runMutation(
-        (list) => list.map((e) => (e.id === id ? patchEntry(e, patch) : e)),
-        () => updateEntryApi(id, patch),
-        (canon, list) => list.map((e) => (e.id === id ? canon : e)),
-        'Could not save the change.'
-      ),
-    [runMutation]
-  );
-
-  const removeEntry = useCallback<UseTrackSource['removeEntry']>(
-    async (id) => {
-      const res = await runMutation(
-        (list) => list.filter((e) => e.id !== id),
-        () => deleteEntryApi(id),
-        null,
-        'Could not delete the entry.'
-      );
-      return res !== null;
-    },
-    [runMutation]
-  );
-
-  const stopTimer = useCallback<UseTrackSource['stopTimer']>(
-    (id) => {
-      const stop = new Date().toISOString();
-      return runMutation(
-        (list) => list.map((e) => (e.id === id ? patchEntry(e, { stop }) : e)),
-        () => stopEntryApi(id),
-        (canon, list) => list.map((e) => (e.id === id ? canon : e)),
-        'Could not stop the timer.'
-      );
-    },
-    [runMutation]
-  );
-
-  // ---- Standalone workspace CRUD ----
-  const refreshWorkspaces = useCallback(async (): Promise<StoreWorkspace[]> => {
-    const ws = await listWorkspaces();
-    setWorkspaces(ws);
-    const projs = workspacesToProjects(ws);
-    setProjects(projs);
-    setSettings((prev) => ({
-      ...prev,
-      selectedProjects: enrichSelected(prev.selectedProjects, projs),
-    }));
-    return ws;
-  }, []);
-  refreshWorkspacesRef.current = refreshWorkspaces;
-
-  const workspaceOp = useCallback(
-    async <R,>(run: () => Promise<R>, failMessage: string): Promise<R | null> => {
-      try {
-        const result = await run();
-        await refreshWorkspaces();
-        broadcastStoreChange('workspaces');
-        return result;
-      } catch (e) {
-        if (isAuthRequired(e)) {
-          setReady(false);
-          setAuthed(false);
-        } else {
-          const detail = errorDetail(e);
-          setMutationError(detail ? `${failMessage} (${detail})` : failMessage);
-        }
-        return null;
-      }
-    },
-    [refreshWorkspaces]
-  );
-
-  const createWorkspace = useCallback<UseTrackSource['createWorkspace']>(
-    (name, settingsSnapshot, color) =>
-      workspaceOp(
-        () => createWorkspaceApi(name, settingsSnapshot, color),
-        'Could not create the workspace.'
-      ),
-    [workspaceOp]
-  );
-
-  const updateWorkspace = useCallback<UseTrackSource['updateWorkspace']>(
-    (id, patch) =>
-      workspaceOp(() => updateWorkspaceApi(id, patch), 'Could not update the workspace.'),
-    [workspaceOp]
-  );
-
-  const deleteWorkspace = useCallback<UseTrackSource['deleteWorkspace']>(
-    async (id, force = false) => {
-      try {
-        await deleteWorkspaceApi(id, force);
-        // The server strips references from the other workspace documents.
-        // Strip them from this device's active settings too (selection,
-        // linked codes, recalled-workspace pointer).
-        setSettings((prev) => {
-          const selectedProjects = prev.selectedProjects.filter((p) => p.id !== id);
-          const codeMappings = (prev.codeMappings ?? []).filter((m) => m.projectId !== id);
-          const activePresetId =
-            prev.activePresetId === String(id) ? null : prev.activePresetId;
-          if (
-            selectedProjects.length === prev.selectedProjects.length &&
-            codeMappings.length === (prev.codeMappings ?? []).length &&
-            activePresetId === prev.activePresetId
-          ) {
-            return prev;
-          }
-          const next = { ...prev, selectedProjects, codeMappings, activePresetId };
-          try {
-            window.localStorage.setItem(LS_KEY, JSON.stringify(next));
-          } catch {
-            /* ignore quota / private-mode errors */
-          }
-          return next;
-        });
-        await refreshWorkspaces();
-        broadcastStoreChange('workspaces');
-        return 'ok';
-      } catch (e) {
-        if (e instanceof ApiError && e.status === 409) return 'has-entries';
-        if (isAuthRequired(e)) {
-          setReady(false);
-          setAuthed(false);
-        } else {
-          const detail = errorDetail(e);
-          setMutationError(
-            detail ? `Could not delete the workspace. (${detail})` : 'Could not delete the workspace.'
-          );
-        }
-        return null;
-      }
-    },
-    [refreshWorkspaces]
-  );
-
-  // ---- Export identity fields ----
-  // Written to the active settings and to the stored workspace they match (if
-  // any), so each workspace keeps its own details across switches. The store
-  // write is debounced because the engagement note saves on every keystroke.
-  const workspacesRef = useRef<StoreWorkspace[]>([]);
-  useEffect(() => {
-    workspacesRef.current = workspaces;
-  }, [workspaces]);
-
-  // Standalone: store documents. Toggl: the localStorage presets.
+  // ---- Stored workspaces (the presets in the settings) ----
   const storedWorkspaces = useMemo(
-    () =>
-      standalone
-        ? workspaces.map((w) => ({
-            id: String(w.id),
-            name: w.name,
-            color: w.color,
-            value: w.settings,
-          }))
-        : settings.presets.map((p) => ({
-            id: p.id,
-            name: p.name,
-            color: p.color,
-            value: p.value,
-          })),
-    [standalone, workspaces, settings.presets]
+    () => settings.presets.map((p) => ({ id: p.id, name: p.name, value: p.value })),
+    [settings.presets]
   );
 
   // Content decides whether any workspace is active; the recalled id picks
@@ -1280,91 +838,24 @@ export function useTrackSource(): UseTrackSource {
     [storedWorkspaces, persist, projects]
   );
 
-  const exportCommitRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  // The target workspace is fixed at write time, so switching workspaces
-  // before the timer fires does not redirect the note.
-  const exportPendingRef = useRef<{ workspaceId: number; fields: ExportFieldValues } | null>(null);
-
-  // `beacon`: the page is going away. Call the API directly with keepalive so
-  // the request outlives the document.
-  const commitExportFields = useCallback(
-    (pending: { workspaceId: number; fields: ExportFieldValues }, beacon = false) => {
-      const ws = workspacesRef.current.find((w) => w.id === pending.workspaceId);
-      if (!ws || exportFieldsEqual(ws.settings.exportFields, pending.fields)) return;
-      const patch = { settings: { ...ws.settings, exportFields: pending.fields } };
-      if (beacon) {
-        void updateWorkspaceApi(ws.id, patch, { keepalive: true }).catch(() => {
-          /* already in local settings; the page is unloading */
-        });
-        return;
-      }
-      updateWorkspace(ws.id, patch);
-    },
-    [updateWorkspace]
-  );
-
-  // Send the queued write now, when the page is hidden or left. Otherwise a
-  // note typed in the last 1.2s never reaches the workspace document.
-  const flushExportFields = useCallback(
-    (beacon = false) => {
-      if (exportCommitRef.current) {
-        clearTimeout(exportCommitRef.current);
-        exportCommitRef.current = null;
-      }
-      const pending = exportPendingRef.current;
-      exportPendingRef.current = null;
-      if (pending) commitExportFields(pending, beacon);
-    },
-    [commitExportFields]
-  );
-
-  const flushExportFieldsRef = useRef(flushExportFields);
-  useEffect(() => {
-    flushExportFieldsRef.current = flushExportFields;
-  }, [flushExportFields]);
-
-  useEffect(() => {
-    const onHide = () => {
-      if (document.visibilityState === 'hidden') flushExportFieldsRef.current(true);
-    };
-    document.addEventListener('visibilitychange', onHide);
-    window.addEventListener('pagehide', onHide);
-    return () => {
-      document.removeEventListener('visibilitychange', onHide);
-      window.removeEventListener('pagehide', onHide);
-      // Route change or close without going hidden: flush now.
-      flushExportFieldsRef.current(true);
-    };
-  }, []);
-
   const setExportFields = useCallback<UseTrackSource['setExportFields']>(
     (fields) => {
       const value = normalizeExportFields(fields);
       const prev = settingsRef.current;
       if (exportFieldsEqual(prev.exportFields, value)) return;
       const activeId = activeWorkspaceRef.current;
-      // Toggl mode: presets live in the settings, so update the active one
-      // (only that one) in the same write.
+      // Presets live in the settings, so update the active one (only that
+      // one) in the same write. Each workspace keeps its own details.
       const presets = prev.presets.map((p) =>
         p.id === activeId ? { ...p, value: { ...p.value, exportFields: value } } : p
       );
       persist({ ...prev, exportFields: value, presets });
-      if (!standalone || activeId === null) return;
-      exportPendingRef.current = { workspaceId: Number(activeId), fields: value };
-      if (exportCommitRef.current) clearTimeout(exportCommitRef.current);
-      exportCommitRef.current = setTimeout(() => {
-        exportCommitRef.current = null;
-        const pending = exportPendingRef.current;
-        exportPendingRef.current = null;
-        if (pending) commitExportFields(pending);
-      }, 1200);
     },
-    [persist, standalone, commitExportFields]
+    [persist]
   );
 
   return {
     hydrated,
-    mode,
     settings,
     setSettings,
     persist,
@@ -1382,6 +873,7 @@ export function useTrackSource(): UseTrackSource {
     connect,
     entries,
     lastUpdatedMs,
+    pendingToggl,
     nowMs,
     reqThisHour,
     cacheEnabled,
@@ -1410,17 +902,5 @@ export function useTrackSource(): UseTrackSource {
       exportFile: exportSettingsFile,
       importFile: importSettingsFile,
     },
-    workspaces,
-    refetchEntries,
-    mutationError,
-    clearMutationError,
-    startTimer,
-    addEntry,
-    editEntry,
-    removeEntry,
-    stopTimer,
-    createWorkspace,
-    updateWorkspace,
-    deleteWorkspace,
   };
 }

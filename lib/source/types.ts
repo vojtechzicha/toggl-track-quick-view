@@ -1,17 +1,10 @@
-// Contract between the UI and a time-entry source: the Toggl API (via the
-// proxy) or the standalone MongoDB store. Everything downstream consumes
-// TimeEntry, so a source only implements connect and fetchEntries.
+// Contract between the UI and its time-entry source, the Toggl API (via the
+// proxy). Everything downstream consumes TimeEntry, so a source only
+// implements connect and fetchEntries.
 
 import type { TimeEntry } from '@/lib/calc';
 
-/** Which kind of backend serves the data. */
-export type SourceMode = 'toggl' | 'standalone';
-
-/**
- * Something to track against: a Toggl project, or in standalone mode a stored
- * workspace (same numeric-id contract, so selectedProjects and codeMappings
- * work unchanged).
- */
+/** Something to track against: a Toggl project. */
 export interface TrackProject {
   id: number;
   name: string;
@@ -36,10 +29,11 @@ export interface FetchedEntries {
    * receipt time.
    */
   dataAtMs: number | null;
+  /** Changes in the server's local copy not yet in Toggl (mirror only). */
+  pending?: number;
 }
 
 export interface TrackBackend {
-  readonly mode: SourceMode;
   /** Requests-per-hour budget to meter against; null when unmetered. */
   readonly hourlyRequestLimit: number | null;
   /** Verify credentials and resolve the account + project list. */

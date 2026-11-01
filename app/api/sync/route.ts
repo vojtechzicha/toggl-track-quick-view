@@ -9,13 +9,12 @@
 // creates the document; if one exists the caller gets a 409 with it, so a
 // fresh device cannot wipe an existing setup.
 //
-// Works in both modes whenever MONGODB_URI is set. Both methods require the
-// password gate, like the store routes.
+// Works whenever MONGODB_URI is set. Both methods require the password gate.
 
 import type { NextRequest } from 'next/server';
 import { verifyToken } from '@/lib/serverAuth';
 import { getStoreDb } from '@/lib/store/mongo';
-import { jsonRes, storeError } from '@/lib/store/guard';
+import { jsonRes, storeError } from '@/lib/store/http';
 import type { SyncDoc, SyncPayload } from '@/lib/sync/model';
 
 export const runtime = 'nodejs';
@@ -42,7 +41,7 @@ function toWire(doc: SyncDbDoc): SyncDoc {
   };
 }
 
-/** storeGuard without the standalone-mode requirement. */
+/** Database configured, password set, and a valid session. */
 function syncGuard(req: NextRequest): Response | null {
   if (!process.env.MONGODB_URI) {
     return jsonRes({ error: 'Settings sync is not enabled (MONGODB_URI is not set).' }, 404);

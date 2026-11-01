@@ -11,6 +11,8 @@
 //  - Capped at MAX_STORE_ENTRIES; the oldest entry is evicted.
 //  - Per server instance, in memory. Serverless cold starts begin empty.
 
+import { recordQuota } from '@/lib/toggl/server';
+
 const TOGGL_BASE = 'https://api.track.toggl.com/api/v9';
 const DEFAULT_INTERVAL_SEC = 180; // 20 Toggl req/hour, under the 30 limit
 const MIN_INTERVAL_SEC = 30;
@@ -51,6 +53,8 @@ async function fetchUpstream(
     headers: { Authorization: `Basic ${auth}`, 'Content-Type': 'application/json' },
     cache: 'no-store',
   });
+  // The cache serves only the server token, whose budget the MCP tools share.
+  recordQuota(path, res.headers);
   const body = await res.text();
   return {
     at: Date.now(),

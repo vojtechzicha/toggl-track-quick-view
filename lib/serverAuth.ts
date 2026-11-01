@@ -18,8 +18,8 @@ const KEY_SALT = 'tqv-auth-v1';
 
 /**
  * Active when APP_PASSWORD is set and the server holds data worth guarding:
- * a Toggl token, or a database (MONGODB_URI) whose routes write. The store
- * and sync routes require the password (lib/store/guard.ts).
+ * a Toggl token, or a database (MONGODB_URI) whose routes write. The sync
+ * route and the MCP consent page require the password.
  */
 export function gateEnabled(): boolean {
   return (
@@ -73,4 +73,17 @@ export function verifyPassword(input: string | null | undefined): boolean {
   const a = crypto.createHash('sha256').update(input).digest();
   const b = crypto.createHash('sha256').update(expected).digest();
   return crypto.timingSafeEqual(a, b);
+}
+
+/**
+ * A stable fingerprint of the current APP_PASSWORD (never the password
+ * itself). MCP grants store it, so rotating the password also disconnects
+ * every Claude connector, as it ends every browser session.
+ */
+export function passwordFingerprint(): string {
+  return crypto
+    .createHmac('sha256', 'tqv-mcp-grant-v1')
+    .update(process.env.APP_PASSWORD || '')
+    .digest('base64url')
+    .slice(0, 22);
 }

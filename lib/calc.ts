@@ -204,8 +204,7 @@ export function hasBillingTag(tags?: string[], prefix?: string): boolean {
 // impractical. An entry with no billing tag whose description starts with a
 // bracketed id ("[T-123] Fix login") bills to that id: the bracket content
 // becomes the billing code and the bracket is dropped from the billed
-// description. A billing tag takes precedence. Applies in Toggl and standalone
-// mode. Overtime markers work inside the bracket too ("[T-123(X)] …").
+// description. A billing tag takes precedence. Overtime markers work inside the bracket too ("[T-123(X)] …").
 const SUPPORT_TICKET_RE = /^\s*\[([^\]]+)\]\s*/;
 
 /**
