@@ -85,3 +85,9 @@ signature-*.png
 
 # macOS
 .DS_Store
+
+# Apple signing material — CSRs, certificates, and (never committed) the
+# App Store Connect .p8 that notarization uses. The certificates are public and
+# the private keys live in the login keychain, but this is the directory those
+# files get dropped into, so it is the directory that must never be committed.
+/_apple/
