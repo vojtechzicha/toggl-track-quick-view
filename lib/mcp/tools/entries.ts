@@ -4,7 +4,7 @@
 // timesheet show it immediately. Each entry reports its sync status.
 
 import { z } from 'zod';
-import { QUOTA_RESERVE, getAccount, remainingIn, type TogglAccount } from '@/lib/toggl/server';
+import { QUOTA_RESERVE, getAccount, rememberTags, remainingIn, type TogglAccount } from '@/lib/toggl/server';
 import {
   EMPTY_PUSH,
   changedGroups,
@@ -217,7 +217,10 @@ const createTimeEntries = defineTool({
         after: compactEntry(toTimeEntry(doc), account, now),
       });
     }
-    if (created.length) await syncAfterResponse({ pull: 'none' });
+    if (created.length) {
+      await rememberTags(newTags);
+      await syncAfterResponse({ pull: 'none' });
+    }
     return {
       created,
       skipped_duplicates: skipped,
@@ -248,7 +251,7 @@ const updateInput = z.object({
 type UpdateInput = z.infer<typeof updateInput>;
 
 /** The entry's fields after the update. */
-function applyUpdate(u: UpdateInput, before: EntryFields, account: TogglAccount, allowNewTags: boolean): EntryFields {
+export function applyUpdate(u: UpdateInput, before: EntryFields, account: TogglAccount, allowNewTags: boolean): EntryFields {
   if (!before.stop) throw new ToolError(`Entry ${u.id} is running; stop it in Toggl first.`);
   const next: EntryFields = { ...before, tags: [...before.tags] };
   const beforeStart = Date.parse(before.start);
@@ -259,8 +262,11 @@ function applyUpdate(u: UpdateInput, before: EntryFields, account: TogglAccount,
       throw new ToolError(`Entry ${u.id}: give stop or duration_minutes, not both.`);
     }
     const keepLength = u.stop === undefined && u.duration_minutes === undefined;
+    // The stored instant itself when start is not being changed: re-reading it
+    // as local wall time would drop its seconds and, in the repeated autumn
+    // hour, could move it by an hour.
     const times = resolveTimes(
-      u.start ?? fmtLocal(beforeStart),
+      u.start ?? before.start,
       keepLength ? undefined : u.stop,
       keepLength ? (beforeStop - beforeStart) / 60000 : u.duration_minutes
     );
@@ -276,11 +282,15 @@ function applyUpdate(u: UpdateInput, before: EntryFields, account: TogglAccount,
     next.project_id = r.value.id;
   }
   if (u.tags !== undefined || u.add_tags !== undefined || u.remove_tags !== undefined) {
-    const base = u.tags !== undefined ? u.tags : before.tags;
-    const resolved = resolveTags(account, [...base, ...(u.add_tags ?? [])], allowNewTags);
+    // Tags the entry already carries stay as they are, even ones the catalog
+    // doesn't know yet (created by an earlier allow_new_tags write).
+    const kept = u.tags !== undefined ? [] : before.tags;
+    const resolved = resolveTags(account, [...(u.tags ?? []), ...(u.add_tags ?? [])], allowNewTags);
     if (resolved.errors.length) throw new ToolError(`Entry ${u.id}: ${resolved.errors.join(' ')}`);
-    const removed = new Set((u.remove_tags ?? []).map((t) => resolveTags(account, [t], true).tags[0] ?? t));
-    next.tags = resolved.tags.filter((t) => !removed.has(t));
+    const removed = new Set(
+      (u.remove_tags ?? []).flatMap((t) => [t.trim(), ...resolveTags(account, [t], true).tags])
+    );
+    next.tags = [...new Set([...kept, ...resolved.tags])].filter((t) => !removed.has(t));
   }
   if (u.billable !== undefined) next.billable = u.billable;
   return next;
@@ -351,7 +361,11 @@ const updateTimeEntries = defineTool({
         after: show(p.next, p.doc),
       });
     }
-    if (updated.length) await syncAfterResponse({ pull: 'none' });
+    if (updated.length) {
+      const known = new Set(account.tags.map((t) => t.name));
+      await rememberTags(changing.flatMap((p) => p.next.tags).filter((t) => !known.has(t)));
+      await syncAfterResponse({ pull: 'none' });
+    }
     return { updated, unchanged, queue: await queueSummary() };
   },
 });

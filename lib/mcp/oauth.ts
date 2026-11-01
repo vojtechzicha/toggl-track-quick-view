@@ -393,6 +393,9 @@ export async function issueAuthorizationCode(
     code_challenge: request.codeChallenge,
     resource: request.resource,
     scopes,
+    // The password the user approved with. A code issued before a rotation
+    // must not turn into a grant under the new password.
+    password_fp: passwordFingerprint(),
     expires_at: new Date(Date.now() + AUTH_CODE_TTL_SECONDS * 1000),
   });
   return code;
@@ -461,12 +464,15 @@ export async function exchangeAuthorizationCode(
   if (resource && !sameResource(resource, stored.resource || getMcpResourceUrl(origin))) {
     throw new OAuthError('invalid_target', 'Unknown resource.');
   }
+  if (stored.password_fp !== passwordFingerprint()) {
+    throw new OAuthError('invalid_grant', 'The app password changed since this was approved. Connect again.');
+  }
 
   const grant = await store.createGrant({
     client_id: stored.client_id,
     client_name: stored.client_name,
     scopes: stored.scopes,
-    password_fp: passwordFingerprint(),
+    password_fp: stored.password_fp,
   });
   return issueTokens(grant, stored.scopes, stored.resource);
 }

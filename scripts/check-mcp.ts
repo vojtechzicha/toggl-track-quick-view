@@ -26,6 +26,7 @@ const entries = await import('../lib/mcp/entries.ts');
 const timesheet = await import('../lib/mcp/timesheet.ts');
 const { buildExportDoc } = await import('../lib/export/model.ts');
 const { EMPTY_EXPORT_FIELDS } = await import('../lib/exportFields.ts');
+const { applyUpdate } = await import('../lib/mcp/tools/entries.ts');
 
 let checks = 0;
 const ok = (cond: unknown, msg: string) => {
@@ -165,6 +166,30 @@ setMcpStoreForChecks(memoryStore());
     'wrong PKCE verifier refused'
   );
 
+  // A code approved before a password rotation is refused afterwards.
+  {
+    const c = await oauth.registerClient({ redirect_uris: [REDIRECT], token_endpoint_auth_method: 'none' });
+    const p = pkce();
+    const v = await oauth.validateAuthorizeRequest(
+      { client_id: c.client_id, redirect_uri: REDIRECT, response_type: 'code', code_challenge: p.challenge, code_challenge_method: 'S256' },
+      ORIGIN
+    );
+    assert.ok(v.ok);
+    const code = await oauth.issueAuthorizationCode(v.request, v.request.scopes);
+    const saved = process.env.APP_PASSWORD;
+    process.env.APP_PASSWORD = 'rotated between consent and exchange';
+    await rejects(
+      oauth.exchangeAuthorizationCode(
+        new URLSearchParams({ code, code_verifier: p.verifier }),
+        { _id: c.client_id, token_endpoint_auth_method: 'none' },
+        ORIGIN
+      ),
+      'invalid_grant',
+      'code from before a rotation refused'
+    );
+    process.env.APP_PASSWORD = saved;
+  }
+
   // Rotating APP_PASSWORD disconnects every grant.
   const live = await connect();
   ok(await oauth.verifyAccessToken(live.tokens.access_token, ORIGIN), 'live before rotation');
@@ -298,6 +323,33 @@ const account = {
   const t = entries.totals(existing, now);
   eq(t.days, [{ date: '2026-10-29', hours: 2 }], 'day totals');
   eq(t.weeks, [{ week_starting_saturday: '2026-10-24', hours: 2 }], 'Saturday–Friday week totals');
+}
+
+// ─── Updates ────────────────────────────────────────────────────────────────
+
+{
+  // 02:30:45 CEST on the night the clocks go back: the repeated hour.
+  const before = {
+    project_id: 10,
+    description: 'Night shift',
+    tags: ['D-100', 'Brand new'], // "Brand new" came from an earlier allow_new_tags write
+    billable: false,
+    start: '2026-10-25T00:30:45.000Z',
+    stop: '2026-10-25T01:30:45.000Z',
+    duration: 3600,
+  };
+  const longer = applyUpdate({ id: 1, duration_minutes: 90 }, before, account, false);
+  eq(longer.start, before.start, 'changing only the length keeps the exact start (seconds, DST hour)');
+  eq(longer.duration, 5400, 'new length');
+  const stopOnly = applyUpdate({ id: 1, stop: '2026-10-25T01:45:00Z' }, before, account, false);
+  eq(stopOnly.start, before.start, 'changing only the stop keeps the exact start');
+
+  const tagged = applyUpdate({ id: 1, add_tags: ['D-200'] }, before, account, false);
+  eq(tagged.tags, ['D-100', 'Brand new', 'D-200 Phase two'], 'kept tags are not re-validated; added ones are');
+  const removed = applyUpdate({ id: 1, remove_tags: ['Brand new'] }, before, account, false);
+  eq(removed.tags, ['D-100'], 'a tag unknown to the catalog can be removed');
+  assert.throws(() => applyUpdate({ id: 1, tags: ['D-999'] }, before, account, false), /Unknown tag/);
+  checks++;
 }
 
 // ─── Timesheet ──────────────────────────────────────────────────────────────

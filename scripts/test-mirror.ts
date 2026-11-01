@@ -277,10 +277,22 @@ try {
   await assert.rejects(tool('delete_time_entries', { ids: [one.id] }), /already in Toggl/);
   checks++;
 
+  // ── A tag created by one call is known to the next ──
+  await tool('create_time_entries', {
+    allow_new_tags: true,
+    entries: [{ start: `${d}T22:00`, duration_minutes: 15, description: 'New tag', project: 'Alpha', tags: ['D-NEW'] }],
+  });
+  const reuse = await tool('create_time_entries', {
+    entries: [{ start: `${d}T22:30`, duration_minutes: 15, description: 'Reuses it', project: 'Alpha', tags: ['D-NEW'] }],
+  });
+  eq(reuse.created.length, 1, 'a new tag is accepted by the next call without allow_new_tags');
+  await sync.push();
+
   // ── Leases ──
   await tool('create_time_entries', { entries: [{ start: `${d}T21:00`, duration_minutes: 15, description: 'Race', project: 'Alpha' }] });
+  const beforeRace = posts();
   const [r1, r2] = await Promise.all([sync.push(), sync.push()]);
-  eq([r1.pushed + r2.pushed, posts() - p8Posts], [1, 1], 'two concurrent pushes send it once');
+  eq([r1.pushed + r2.pushed, posts() - beforeRace], [1, 1], 'two concurrent pushes send it once');
 
   // ── A since too old falls back to a range re-read ──
   ok((await sync.syncNow({ pull: 'force', push: false })).error === null, 'sync round without errors');

@@ -249,6 +249,27 @@ export async function getAccount(opts: { refresh?: boolean } = {}) {
   });
 }
 
+/**
+ * Add tags a write introduced (allow_new_tags) to the cached catalog, so the
+ * next call accepts them without waiting for the daily refresh. Toggl creates
+ * them when the entry is pushed; the next refresh brings their real ids (0
+ * until then).
+ */
+export async function rememberTags(names: string[]): Promise<void> {
+  if (names.length === 0) return;
+  const col = await cacheCol();
+  const hit = await col.findOne({ _id: 'account' });
+  if (!hit) return;
+  const account = hit.value as TogglAccount;
+  const known = new Set(account.tags.map((t) => t.name));
+  const added = [...new Set(names)].filter((n) => !known.has(n));
+  if (added.length === 0) return;
+  const tags = [...account.tags, ...added.map((name) => ({ id: 0, name }))].sort((a, b) =>
+    a.name.localeCompare(b.name)
+  );
+  await col.updateOne({ _id: 'account' }, { $set: { 'value.tags': tags } });
+}
+
 /** Remaining requests in a bucket, or null when unknown (no recent response). */
 export async function remainingIn(bucket: QuotaBucket): Promise<{ remaining: number; resetsInSec: number } | null> {
   const snap = (await quotaStatus()).find((q) => q.bucket === bucket);
