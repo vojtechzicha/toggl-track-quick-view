@@ -493,9 +493,12 @@ async function pushOne(read: MirrorDoc): Promise<Outcome> {
     await acknowledge(doc, res.data);
     return { kind: 'ok', quota: res.quota };
   } catch (e) {
+    // Every update below is guarded by the version the request was built
+    // from: an entry corrected while it was out (a valid project instead of
+    // an archived one) keeps its fresh push state and goes out next run.
     if (isQuotaError(e)) {
       // 402/429: Toggl did not take it.
-      await col.updateOne({ _id: doc._id }, { $set: { 'push.in_flight_since': null, 'push.sent': null } });
+      await col.updateOne({ _id: doc._id, version: doc.version }, { $set: { 'push.in_flight_since': null, 'push.sent': null } });
       return {
         kind: 'stop',
         reason: `quota: Toggl refused (HTTP ${e.status}); resets in ${Math.ceil((e.resetsInSec ?? 3600) / 60)} min`,
@@ -504,7 +507,7 @@ async function pushOne(read: MirrorDoc): Promise<Outcome> {
     }
     if (e instanceof TogglError && e.status === 404 && !creating) {
       // Deleted in Toggl since the last pull.
-      await col.updateOne({ _id: doc._id }, { $set: { remote_deleted: true, updated_at: new Date() } });
+      await col.updateOne({ _id: doc._id, version: doc.version }, { $set: { remote_deleted: true, updated_at: new Date() } });
       return { kind: 'failed', quota: null };
     }
     // A 4xx is Toggl refusing this entry (an archived project, a bad value):
@@ -515,7 +518,7 @@ async function pushOne(read: MirrorDoc): Promise<Outcome> {
     const attempts = doc.push.attempts + 1;
     const failed = refused || attempts >= MAX_PUSH_ATTEMPTS;
     await col.updateOne(
-      { _id: doc._id },
+      { _id: doc._id, version: doc.version },
       {
         $set: {
           'push.attempts': attempts,

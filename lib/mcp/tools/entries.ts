@@ -489,48 +489,62 @@ const resolveConflicts = defineTool({
     const col = await entriesCol();
     const done: { id: number; kept: string; new_id?: number }[] = [];
     for (const r of resolutions) {
-      const doc = await byPublicId(r.id);
-      if (!doc) throw new ToolError(`Entry ${r.id} is not in the local copy.`);
-      if (r.keep === 'local') {
-        // Re-created in Toggl: it needs a local number to be addressed by
-        // until Toggl assigns a new id.
-        const recreate = doc.remote_deleted;
-        const localSeq = recreate && doc.local_seq === null ? await nextLocalSeq() : doc.local_seq;
-        await col.updateOne(
-          { _id: doc._id },
-          {
-            $set: {
-              conflicts: [],
-              // A create that may have reached Toggl keeps its in-flight
-              // marker, so the next push checks Toggl before sending again.
-              push: {
-                ...EMPTY_PUSH,
-                in_flight_since: recreate ? null : doc.push.in_flight_since,
-                sent: recreate ? null : doc.push.sent ?? null,
-              },
-              dirty: true,
-              local_seq: localSeq,
-              ...(recreate ? { remote_deleted: false, toggl_id: null, remote: null } : {}),
-              updated_at: new Date(),
-            },
-            $inc: { version: 1 },
-          }
-        );
-      } else if (doc.remote_deleted || !doc.remote) {
-        await col.deleteOne({ _id: doc._id });
-      } else {
-        const { at: _at, ...fields } = doc.remote;
-        await col.updateOne(
-          { _id: doc._id },
-          {
-            $set: { fields, ...spanOf(fields), conflicts: [], push: { ...EMPTY_PUSH }, dirty: false, updated_at: new Date() },
-            $inc: { version: 1 },
-          }
-        );
+      const first = await byPublicId(r.id);
+      if (!first) throw new ToolError(`Entry ${r.id} is not in the local copy.`);
+      // Guarded by the version read, re-read when a pull or push got there
+      // first, so the resolution applies to the current remote state.
+      let doc: MirrorDoc | null = first;
+      for (let attempt = 0; ; attempt++) {
+        if (!doc) throw new ToolError(`Entry ${r.id} disappeared while resolving; list it again.`);
+        let matched: number;
+        if (r.keep === 'local') {
+          // Re-created in Toggl: it needs a local number to be addressed by
+          // until Toggl assigns a new id.
+          const recreate = doc.remote_deleted;
+          const localSeq = recreate && doc.local_seq === null ? await nextLocalSeq() : doc.local_seq;
+          matched = (
+            await col.updateOne(
+              { _id: doc._id, version: doc.version },
+              {
+                $set: {
+                  conflicts: [],
+                  // A create that may have reached Toggl keeps its in-flight
+                  // marker, so the next push checks Toggl before sending again.
+                  push: {
+                    ...EMPTY_PUSH,
+                    in_flight_since: recreate ? null : doc.push.in_flight_since,
+                    sent: recreate ? null : doc.push.sent ?? null,
+                  },
+                  dirty: true,
+                  local_seq: localSeq,
+                  ...(recreate ? { remote_deleted: false, toggl_id: null, remote: null } : {}),
+                  updated_at: new Date(),
+                },
+                $inc: { version: 1 },
+              }
+            )
+          ).matchedCount;
+        } else if (doc.remote_deleted || !doc.remote) {
+          matched = (await col.deleteOne({ _id: doc._id, version: doc.version })).deletedCount;
+        } else {
+          const { at: _at, ...fields } = doc.remote;
+          matched = (
+            await col.updateOne(
+              { _id: doc._id, version: doc.version },
+              {
+                $set: { fields, ...spanOf(fields), conflicts: [], push: { ...EMPTY_PUSH }, dirty: false, updated_at: new Date() },
+                $inc: { version: 1 },
+              }
+            )
+          ).matchedCount;
+        }
+        if (matched > 0) break;
+        if (attempt >= 3) throw new ToolError(`Entry ${r.id} kept changing while resolving; try again.`);
+        doc = await col.findOne({ _id: first._id });
       }
-      const after = await col.findOne({ _id: doc._id });
+      const after = await col.findOne({ _id: first._id });
       done.push({ id: r.id, kept: r.keep, ...(after && publicId(after) !== r.id ? { new_id: publicId(after) } : {}) });
-      await audit(ctx, { tool: 'resolve_conflicts', action: 'update', entryId: r.id, before: { sync: statusOf(doc) }, after: { kept: r.keep } });
+      await audit(ctx, { tool: 'resolve_conflicts', action: 'update', entryId: r.id, before: { sync: statusOf(first) }, after: { kept: r.keep } });
     }
     await syncAfterResponse({ pull: 'none' });
     return { resolved: done, queue: await queueSummary() };

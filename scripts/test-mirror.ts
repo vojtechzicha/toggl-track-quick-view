@@ -38,6 +38,8 @@ const toggl = {
   log: [] as string[],
   /** Commit the next POST but lose the answer (network error). */
   loseNextAnswer: false,
+  /** Runs while the next POST is "on the wire", before Toggl answers. */
+  duringNextPost: null as null | (() => Promise<void>),
   /** Runs while the next PUT is "on the wire", before Toggl answers. */
   duringNextPut: null as null | (() => Promise<void>),
   /** Runs after the next range GET has taken its snapshot, before it answers. */
@@ -111,6 +113,11 @@ globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) =>
   }
   const body = init?.body ? JSON.parse(String(init.body)) : {};
   if (method === 'POST' && path === '/workspaces/1/time_entries') {
+    if (toggl.duringNextPost) {
+      const hook = toggl.duringNextPost;
+      toggl.duringNextPost = null;
+      await hook();
+    }
     if (body.project_id === 99) return json({ error: 'project archived' }, 400);
     const e = put({ id: toggl.nextId++, ...body });
     if (toggl.loseNextAnswer) {
@@ -374,6 +381,17 @@ try {
   const p8Posts = posts();
   await sync.push();
   eq(posts(), p8Posts, 'not retried until edited');
+
+  // Corrected while the refused request was out: the correction is not parked.
+  const fixme = await store.docFromLocal(1, { project_id: 99, description: 'Fixed mid-flight', tags: [], billable: false, start: new Date(`${d}T19:30`).toISOString(), stop: new Date(`${d}T19:45`).toISOString(), duration: 900 });
+  await docs.insertOne(fixme);
+  toggl.duringNextPost = async () => {
+    await tool('update_time_entries', { updates: [{ id: -fixme.local_seq!, project: 'Alpha' }] });
+  };
+  await sync.push();
+  eq((await store.byPublicId(-fixme.local_seq!))!.push.failed, false, 'a correction made during the refused request stays eligible');
+  await sync.push();
+  eq([...toggl.entries.values()].filter((e) => e.description === 'Fixed mid-flight').map((e) => e.project_id), [10], 'and reaches Toggl');
 
   // ── Delete only what Toggl doesn't have ──
   const local = await tool('create_time_entries', { entries: [{ start: `${d}T20:00`, duration_minutes: 15, description: 'Oops', project: 'Alpha' }] });
