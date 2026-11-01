@@ -337,29 +337,42 @@ const updateTimeEntries = defineTool({
     const col = await entriesCol();
     const updated: { id: number; changes: string[] }[] = [];
     for (const p of changing) {
-      const dirty = p.doc.remote ? changedGroups(p.next, p.doc.remote).length > 0 : true;
-      const res = await col.updateOne(
-        { _id: p.doc._id, version: p.doc.version },
-        {
-          $set: {
-            fields: p.next,
-            ...spanOf(p.next),
-            dirty,
-            // An edit is a new attempt: a parked entry gets another try.
-            push: { ...EMPTY_PUSH, in_flight_since: p.doc.push.in_flight_since },
-            updated_at: new Date(),
-          },
-          $inc: { version: 1 },
-        }
-      );
-      if (res.matchedCount === 0) throw new ToolError(`Entry ${p.u.id} changed while saving; list it and try again.`);
+      // Saved against the version it was read at. If a pull or a push changed
+      // the entry meanwhile, re-read it and apply the same update to its
+      // current state, so nothing merged in between is written back over.
+      let doc = p.doc;
+      let next = p.next;
+      for (let attempt = 0; ; attempt++) {
+        const dirty = doc.remote ? changedGroups(next, doc.remote).length > 0 : true;
+        const res = await col.updateOne(
+          { _id: doc._id, version: doc.version },
+          {
+            $set: {
+              fields: next,
+              ...spanOf(next),
+              dirty,
+              // An edit is a new attempt: a parked entry gets another try. A
+              // create already sent keeps its in-flight marker for adoption.
+              push: { ...EMPTY_PUSH, in_flight_since: doc.push.in_flight_since, sent: doc.push.sent ?? null },
+              updated_at: new Date(),
+            },
+            $inc: { version: 1 },
+          }
+        );
+        if (res.matchedCount > 0) break;
+        const fresh = await col.findOne({ _id: doc._id });
+        if (!fresh || attempt >= 3) throw new ToolError(`Entry ${p.u.id} kept changing while saving; list it and try again.`);
+        doc = fresh;
+        next = applyUpdate(p.u, fresh.fields, account, !!allow_new_tags);
+      }
+      p.next = next;
       updated.push({ id: p.u.id, changes: p.changed });
       await audit(ctx, {
         tool: 'update_time_entries',
         action: 'update',
         entryId: p.u.id,
-        before: show(p.doc.fields, p.doc),
-        after: show(p.next, p.doc),
+        before: show(doc.fields, doc),
+        after: show(next, doc),
       });
     }
     if (updated.length) {
@@ -398,8 +411,14 @@ const deleteTimeEntries = defineTool({
     }
     if (dry_run) return { dry_run: true, would_delete: docs.map((d) => compactEntry(toTimeEntry(d), account, now)) };
     const col = await entriesCol();
+    const refused: number[] = [];
     for (const d of docs) {
-      await col.deleteOne({ _id: d._id, toggl_id: null });
+      // Only while the pusher hasn't claimed it (sync.ts pushOne).
+      const res = await col.deleteOne({ _id: d._id, toggl_id: null, 'push.in_flight_since': null });
+      if (res.deletedCount === 0) {
+        refused.push(publicId(d));
+        continue;
+      }
       await audit(ctx, {
         tool: 'delete_time_entries',
         action: 'delete',
@@ -407,7 +426,13 @@ const deleteTimeEntries = defineTool({
         before: compactEntry(toTimeEntry(d), account, now),
       });
     }
-    return { deleted: docs.map(publicId), queue: await queueSummary() };
+    return {
+      deleted: docs.map(publicId).filter((id) => !refused.includes(id)),
+      ...(refused.length
+        ? { not_deleted: refused.map((id) => ({ id, reason: 'being sent to Toggl right now; it will be in Toggl shortly' })) }
+        : {}),
+      queue: await queueSummary(),
+    };
   },
 });
 

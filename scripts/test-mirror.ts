@@ -38,6 +38,8 @@ const toggl = {
   log: [] as string[],
   /** Commit the next POST but lose the answer (network error). */
   loseNextAnswer: false,
+  /** Runs while the next PUT is "on the wire", before Toggl answers. */
+  duringNextPut: null as null | (() => Promise<void>),
   clock: 0,
   // `at` follows real time (the mirror asks for changes since real times), and never repeats.
   tick() {
@@ -105,7 +107,13 @@ globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) =>
   if (method === 'PUT' && m) {
     const cur = toggl.entries.get(Number(m[1]));
     if (!cur || cur.server_deleted_at) return json({ error: 'not found' }, 404);
-    return json(put({ ...cur, ...body, id: cur.id }));
+    const updated = put({ ...cur, ...body, id: cur.id });
+    if (toggl.duringNextPut) {
+      const hook = toggl.duringNextPut;
+      toggl.duringNextPut = null;
+      await hook();
+    }
+    return json(updated);
   }
   return json({ error: `fake Toggl: no route ${method} ${path}` }, 404);
 }) as typeof fetch;
@@ -230,6 +238,40 @@ try {
   const lostRemote = [...toggl.entries.values()].filter((e) => e.description === 'Lost again');
   eq(lostRemote.length, 1, 'adopted, not duplicated');
   eq(lostRemote[0].tags, ['D-2'], 'the edit made after the lost answer reached Toggl');
+
+  // Lost answer, then the description edited before the next run: adoption
+  // matches what was sent, and the edit goes out as an update. One entry.
+  const lost3 = await tool('create_time_entries', { entries: [{ start: `${d}T17:30`, duration_minutes: 15, description: 'Sent as this', project: 'Alpha' }] });
+  toggl.loseNextAnswer = true;
+  await sync.push();
+  await tool('update_time_entries', { updates: [{ id: lost3.created[0].id, description: 'Renamed before sync' }] });
+  await sync.push();
+  const lost3Remote = [...toggl.entries.values()].filter((e) => e.start === new Date(`${d}T17:30`).toISOString());
+  eq(lost3Remote.map((e) => e.description), ['Renamed before sync'], 'adopted by what was sent, then renamed: no twin');
+
+  // An edit back to the old value while the PUT is out is still sent.
+  const revertId = lost3Remote[0].id;
+  await tool('update_time_entries', { updates: [{ id: revertId, description: 'B' }] });
+  toggl.duringNextPut = async () => {
+    await tool('update_time_entries', { updates: [{ id: revertId, description: 'Renamed before sync' }] });
+  };
+  await sync.push();
+  eq(toggl.entries.get(revertId)!.description, 'Renamed before sync', 'the revert made during the PUT reached Toggl');
+  eq((await store.byTogglId(revertId))!.dirty, false, 'and the entry is clean');
+
+  // A pull bumps the version, so an older snapshot cannot be written back.
+  const vBefore = (await store.byTogglId(revertId))!.version;
+  put({ ...toggl.entries.get(revertId)!, description: 'Changed in Toggl' });
+  await sync.pullIfStale(0);
+  ok((await store.byTogglId(revertId))!.version > vBefore, 'merge bumps the version');
+
+  // A claimed (in-flight) create cannot be deleted.
+  const claimed = await tool('create_time_entries', { entries: [{ start: `${d}T23:00`, duration_minutes: 15, description: 'Claimed', project: 'Alpha' }] });
+  await (await store.entriesCol()).updateOne({ local_seq: -claimed.created[0].id }, { $set: { 'push.in_flight_since': new Date() } });
+  await assert.rejects(tool('delete_time_entries', { ids: [claimed.created[0].id] }), /being sent/);
+  checks++;
+  ok(await store.byPublicId(claimed.created[0].id), 'an entry being sent is not deleted');
+  await sync.push();
 
   // ── Merge: edited in Toggl and here ──
   const one = [...toggl.entries.values()].find((e) => e.description === 'One')!;

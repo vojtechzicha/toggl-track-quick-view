@@ -115,6 +115,11 @@ ok(m.spanOf(m.fieldsFromToggl(remote({ stop: null, duration: -1 }))).end_at.getU
   ok(m.matchesInFlight(local, remote({ start: '2026-10-29T08:00:41+00:00' })), 'same minute matches');
   ok(!m.matchesInFlight(local, remote({ description: 'Other' })), 'other description does not');
   ok(!m.matchesInFlight(local, remote({ project_id: 11 })), 'other project does not');
+  const edited = {
+    fields: { ...base, description: 'Renamed since' },
+    push: { sent: { start: base.start, project_id: 10, description: 'Design' } },
+  };
+  ok(m.matchesInFlight(edited, remote()), 'matches what was sent, not the edited fields');
 
   const st = (o: object) =>
     m.statusOf({ dirty: false, push: { ...m.EMPTY_PUSH }, remote_deleted: false, conflicts: [], toggl_id: 1, ...o } as never);

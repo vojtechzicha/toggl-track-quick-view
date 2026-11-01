@@ -141,6 +141,7 @@ export async function applyRemote(e: TogglEntry, counts: ApplyCounts = emptyCoun
               push: { ...EMPTY_PUSH },
               updated_at: new Date(),
             },
+            $inc: { version: 1 },
           }
         );
         if (res.matchedCount === 0) continue;
@@ -171,6 +172,9 @@ export async function applyRemote(e: TogglEntry, counts: ApplyCounts = emptyCoun
           ...spanOf(merged.fields),
           updated_at: new Date(),
         },
+        // Any change bumps the version, so a tool holding an older snapshot
+        // re-reads instead of writing it back over this merge.
+        $inc: { version: 1 },
         ...(merged.conflicts.length ? { $push: { conflicts: { $each: merged.conflicts } } } : {}),
       }
     );
@@ -395,38 +399,49 @@ async function pushOne(doc: MirrorDoc): Promise<Outcome> {
     if (!again || again.toggl_id !== null || !again.dirty) return { kind: 'ok', quota: null };
   }
 
+  // Claim the document as it was read: if it was deleted or edited since, the
+  // claim misses and the next loop iteration picks up the current state. For a
+  // create the claim records what is sent, so a lost answer can be adopted
+  // (applyRemote) even if the entry is edited before the next pull, and
+  // delete_time_entries refuses a claimed entry.
+  const claim = await col.updateOne(
+    { _id: doc._id, version: doc.version, toggl_id: doc.toggl_id },
+    {
+      $set: {
+        'push.last_attempt_at': now,
+        ...(creating
+          ? {
+              'push.in_flight_since': now,
+              'push.sent': {
+                start: doc.fields.start,
+                project_id: doc.fields.project_id,
+                description: doc.fields.description,
+              },
+            }
+          : {}),
+      },
+    }
+  );
+  if (claim.matchedCount === 0) return { kind: 'ok', quota: null };
+
   try {
     let res: { data: TogglEntry; quota: ResponseQuota | null };
     if (creating) {
-      await col.updateOne({ _id: doc._id }, { $set: { 'push.in_flight_since': now, 'push.last_attempt_at': now } });
       const wid = doc.workspace_id || (await workspaceId());
       res = await togglRequestMeta<TogglEntry>('POST', `/workspaces/${wid}/time_entries`, createBody(doc, CREATED_WITH));
     } else {
-      await col.updateOne({ _id: doc._id }, { $set: { 'push.last_attempt_at': now } });
       res = await togglRequestMeta<TogglEntry>(
         'PUT',
         `/workspaces/${doc.workspace_id}/time_entries/${doc.toggl_id}`,
         updateBody(doc)
       );
     }
-    const theirs = fieldsFromToggl(res.data);
-    const base = {
-      toggl_id: res.data.id,
-      remote: { ...theirs, at: res.data.at },
-      push: { ...EMPTY_PUSH },
-    };
-    // Clear `dirty` only if nothing was edited while the request was out.
-    const clean = await col.updateOne(
-      { _id: doc._id, version: doc.version },
-      { $set: { ...base, dirty: false, fields: theirs, ...spanOf(theirs), updated_at: new Date() } }
-    );
-    if (clean.matchedCount === 0) {
-      await col.updateOne({ _id: doc._id }, { $set: { ...base, updated_at: new Date() } });
-    }
+    await acknowledge(doc, res.data);
     return { kind: 'ok', quota: res.quota };
   } catch (e) {
     if (isQuotaError(e)) {
-      await col.updateOne({ _id: doc._id }, { $set: { 'push.in_flight_since': null } });
+      // 402/429: Toggl did not take it.
+      await col.updateOne({ _id: doc._id }, { $set: { 'push.in_flight_since': null, 'push.sent': null } });
       return {
         kind: 'stop',
         reason: `quota: Toggl refused (HTTP ${e.status}); resets in ${Math.ceil((e.resetsInSec ?? 3600) / 60)} min`,
@@ -454,6 +469,7 @@ async function pushOne(doc: MirrorDoc): Promise<Outcome> {
           // A create that may have reached Toggl stays in flight, so the next
           // try pulls first and adopts it instead of creating a twin.
           'push.in_flight_since': creating && !refused ? doc.push.in_flight_since ?? now : null,
+          ...(creating && refused ? { 'push.sent': null } : {}),
           'push.failed': failed,
         },
       }
@@ -461,6 +477,36 @@ async function pushOne(doc: MirrorDoc): Promise<Outcome> {
     if (!refused) return { kind: 'stop', reason: `Toggl unreachable: ${errorText(e)}`, quota: null };
     return { kind: 'failed', quota: null };
   }
+}
+
+/**
+ * Store Toggl's answer to a push. Unedited since it was read: the document
+ * becomes Toggl's state, clean. Edited meanwhile: the edit stays, and `dirty`
+ * is recomputed against what Toggl now has (an edit back to the old value is
+ * then still a change to send).
+ */
+async function acknowledge(sentDoc: MirrorDoc, answer: TogglEntry): Promise<void> {
+  const col = await entriesCol();
+  const theirs = fieldsFromToggl(answer);
+  const base = {
+    toggl_id: answer.id,
+    remote: { ...theirs, at: answer.at },
+    push: { ...EMPTY_PUSH },
+    updated_at: new Date(),
+  };
+  for (let attempt = 0; attempt < 5; attempt++) {
+    const current = attempt === 0 ? sentDoc : await col.findOne({ _id: sentDoc._id });
+    if (!current) return;
+    const unchanged = current.version === sentDoc.version;
+    const res = await col.updateOne(
+      { _id: sentDoc._id, version: current.version },
+      unchanged
+        ? { $set: { ...base, dirty: false, fields: theirs, ...spanOf(theirs) }, $inc: { version: 1 } }
+        : { $set: { ...base, dirty: changedGroups(current.fields, theirs).length > 0 }, $inc: { version: 1 } }
+    );
+    if (res.matchedCount > 0) return;
+  }
+  throw new Error(`Entry ${answer.id} kept changing while its push was stored.`);
 }
 
 // ─── Orchestration ──────────────────────────────────────────────────────────

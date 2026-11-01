@@ -77,6 +77,11 @@ export interface PushState {
   last_attempt_at: Date | null;
   /** A create was sent at this time and its answer not yet stored (see adoption in sync.ts). */
   in_flight_since: Date | null;
+  /**
+   * What identifies that create in Toggl, as sent. Adoption matches on this,
+   * not on the current fields, which may have been edited since.
+   */
+  sent: Pick<EntryFields, 'start' | 'project_id' | 'description'> | null;
   /** Toggl refused it three times; skipped until edited again. */
   failed: boolean;
 }
@@ -86,6 +91,7 @@ export const EMPTY_PUSH: PushState = {
   last_error: null,
   last_attempt_at: null,
   in_flight_since: null,
+  sent: null,
   failed: false,
 };
 
@@ -250,12 +256,16 @@ export function updateBody(doc: Pick<MirrorDoc, 'fields' | 'remote' | 'workspace
  * Whether a remote entry Toggl reports is the create we sent but never heard
  * back from: same start minute, project and description.
  */
-export function matchesInFlight(doc: Pick<MirrorDoc, 'fields'>, e: TogglEntry): boolean {
+export function matchesInFlight(
+  doc: Pick<MirrorDoc, 'fields'> & { push?: Pick<PushState, 'sent'> },
+  e: TogglEntry
+): boolean {
   const theirs = fieldsFromToggl(e);
+  const sent = doc.push?.sent ?? doc.fields;
   return (
-    Math.floor(Date.parse(theirs.start) / 60000) === Math.floor(Date.parse(doc.fields.start) / 60000) &&
-    theirs.project_id === doc.fields.project_id &&
-    theirs.description === doc.fields.description
+    Math.floor(Date.parse(theirs.start) / 60000) === Math.floor(Date.parse(sent.start) / 60000) &&
+    theirs.project_id === sent.project_id &&
+    theirs.description === sent.description
   );
 }
 
