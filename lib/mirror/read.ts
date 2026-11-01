@@ -16,7 +16,7 @@ export interface MirrorRead {
 export async function readMirror(fromMs: number, toMs: number, opts: { fresh?: boolean } = {}): Promise<MirrorRead> {
   let warning: string | null = null;
   try {
-    await ensureCovered(fromMs);
+    await ensureCovered(fromMs, toMs);
     await pullIfStale(opts.fresh ? 0 : pullIntervalSec());
   } catch (e) {
     const st = await getState();

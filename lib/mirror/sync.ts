@@ -204,6 +204,9 @@ export async function refreshRange(fromMs: number, toMs: number): Promise<ApplyC
   const col = await entriesCol();
   for (let a = fromMs; a < toMs; a = addDays(a, CHUNK_WEEKS * 7)) {
     const b = Math.min(toMs, addDays(a, CHUNK_WEEKS * 7));
+    // Only documents unchanged since the request went out can be judged by
+    // its answer: one a push acknowledged meanwhile is missing from it.
+    const requestedAt = new Date();
     const remote = await getRange(a, b);
     for (const e of remote) await applyRemote(e, counts);
     const seen = new Set(remote.map((e) => e.id));
@@ -212,6 +215,7 @@ export async function refreshRange(fromMs: number, toMs: number): Promise<ApplyC
         toggl_id: { $ne: null },
         start_at: { $gte: new Date(a), $lt: new Date(b) },
         dirty: false,
+        updated_at: { $lt: requestedAt },
       })
       .toArray();
     for (const d of stale) {
@@ -224,11 +228,16 @@ export async function refreshRange(fromMs: number, toMs: number): Promise<ApplyC
   return counts;
 }
 
+/** The fill reaches this far ahead (scheduled entries). Later weeks are read on demand. */
+const FILL_AHEAD_DAYS = 8;
+
 async function fill(now: number): Promise<MirrorState> {
   const from = addDays(startOfWeek(new Date(now)).getTime(), -7 * (FILL_WEEKS - 1));
-  await refreshRange(from, addDays(now, 8));
+  const to = addDays(now, FILL_AHEAD_DAYS);
+  await refreshRange(from, to);
   await setState({
     covered_from_ms: from,
+    covered_to_ms: to,
     since_ms: now,
     last_pull_at: new Date(now),
     last_reconcile_at: new Date(now),
@@ -259,12 +268,20 @@ export async function ensureFilled(): Promise<MirrorState> {
 }
 
 /** Make sure entries from `fromMs` on are in the mirror; reads older weeks from Toggl once. */
-export async function ensureCovered(fromMs: number): Promise<void> {
+export async function ensureCovered(fromMs: number, toMs?: number): Promise<void> {
   const st = await ensureFilled();
-  if (fromMs >= st.covered_from_ms) return;
-  const from = startOfWeek(new Date(fromMs)).getTime();
-  await refreshRange(from, st.covered_from_ms);
-  await setState({ covered_from_ms: from });
+  if (fromMs < st.covered_from_ms) {
+    const from = startOfWeek(new Date(fromMs)).getTime();
+    await refreshRange(from, st.covered_from_ms);
+    await setState({ covered_from_ms: from });
+  }
+  // Entries already scheduled beyond the fill never change, so no pull brings
+  // them: read later weeks once, as they are asked for.
+  const coveredTo = st.covered_to_ms ?? addDays(st.since_ms, FILL_AHEAD_DAYS);
+  if (toMs !== undefined && toMs > coveredTo) {
+    await refreshRange(coveredTo, toMs);
+    await setState({ covered_to_ms: toMs });
+  }
 }
 
 /**
@@ -285,8 +302,19 @@ export async function pullIfStale(maxAgeSec: number): Promise<boolean> {
     } catch (e) {
       // A `since` too far back is refused; re-read the recent weeks instead.
       if (e instanceof TogglError && e.status === 400) {
-        await refreshRange(addDays(startOfWeek(new Date(now)).getTime(), -14), addDays(now, 8));
-        await setState({ since_ms: now, last_pull_at: new Date(now), last_reconcile_at: new Date(now) });
+        // Changes since the bookmark are unknown everywhere. Re-read the recent
+        // weeks now and narrow the coverage to them, so any older or later week
+        // is read again (ensureCovered) before it is served.
+        const from = addDays(startOfWeek(new Date(now)).getTime(), -14);
+        const to = addDays(now, FILL_AHEAD_DAYS);
+        await refreshRange(from, to);
+        await setState({
+          covered_from_ms: from,
+          covered_to_ms: to,
+          since_ms: now,
+          last_pull_at: new Date(now),
+          last_reconcile_at: new Date(now),
+        });
         return true;
       }
       throw e;

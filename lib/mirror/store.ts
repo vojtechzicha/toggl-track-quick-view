@@ -9,8 +9,9 @@ import { EMPTY_PUSH, spanOf, type EntryFields, type MirrorDoc } from './model';
 
 export interface MirrorState {
   _id: 'toggl';
-  /** The mirror holds every entry starting on or after this (ms epoch). */
+  /** The mirror holds every entry starting in [covered_from_ms, covered_to_ms) (ms epoch). */
   covered_from_ms: number;
+  covered_to_ms: number;
   /** Next incremental pull asks for changes since this (ms epoch). */
   since_ms: number;
   last_pull_at: Date | null;

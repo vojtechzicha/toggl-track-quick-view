@@ -39,7 +39,7 @@ export async function GET(req: NextRequest) {
   }
   try {
     if (req.headers.get('x-toggl-refresh') === '1') {
-      await ensureCovered(fromMs);
+      await ensureCovered(fromMs, toMs);
       await refreshRange(fromMs, toMs);
     }
     const read = await readMirror(fromMs, toMs);

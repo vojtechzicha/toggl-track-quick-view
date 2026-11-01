@@ -40,6 +40,10 @@ const toggl = {
   loseNextAnswer: false,
   /** Runs while the next PUT is "on the wire", before Toggl answers. */
   duringNextPut: null as null | (() => Promise<void>),
+  /** Runs after the next range GET has taken its snapshot, before it answers. */
+  duringNextRangeGet: null as null | (() => Promise<void>),
+  /** Answer `since` requests with 400, as for a bookmark too old. */
+  rejectSince: false,
   clock: 0,
   // `at` follows real time (the mirror asks for changes since real times), and never repeats.
   tick() {
@@ -88,10 +92,19 @@ globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) =>
   if (method === 'GET' && path === '/me/time_entries') {
     const since = url.searchParams.get('since');
     const all = [...toggl.entries.values()];
-    if (since) return json(all.filter((e) => Date.parse(e.at) >= Number(since) * 1000));
+    if (since) {
+      if (toggl.rejectSince) return json({ error: 'since too old' }, 400);
+      return json(all.filter((e) => Date.parse(e.at) >= Number(since) * 1000));
+    }
     const a = Date.parse(url.searchParams.get('start_date')!);
     const b = Date.parse(url.searchParams.get('end_date')!);
-    return json(all.filter((e) => !e.server_deleted_at && Date.parse(e.start) >= a && Date.parse(e.start) < b));
+    const snapshot = all.filter((e) => !e.server_deleted_at && Date.parse(e.start) >= a && Date.parse(e.start) < b);
+    if (toggl.duringNextRangeGet) {
+      const hook = toggl.duringNextRangeGet;
+      toggl.duringNextRangeGet = null;
+      await hook();
+    }
+    return json(snapshot);
   }
   const body = init?.body ? JSON.parse(String(init.body)) : {};
   if (method === 'POST' && path === '/workspaces/1/time_entries') {
@@ -159,9 +172,17 @@ try {
   const iso = (ms: number) => new Date(ms).toISOString();
   put({ id: 1, project_id: 10, description: 'Old work', tags: ['D-1'], start: iso(now - 2 * 86400e3), stop: iso(now - 2 * 86400e3 + 3600e3), duration: 3600 });
   put({ id: 2, project_id: 10, description: 'Ancient', tags: ['D-1'], start: iso(now - 200 * 86400e3), stop: iso(now - 200 * 86400e3 + 3600e3), duration: 3600 });
+  // Six weeks old: inside the first fill, outside the re-read after an expired bookmark.
+  put({ id: 4, project_id: 10, description: 'Older work', tags: ['D-1'], start: iso(now - 40 * 86400e3), stop: iso(now - 40 * 86400e3 + 3600e3), duration: 3600 });
+  // Scheduled far ahead before the mirror existed: no pull will ever mention it.
+  put({ id: 3, project_id: 10, description: 'Planned', tags: ['D-1'], start: iso(now + 30 * 86400e3), stop: iso(now + 30 * 86400e3 + 3600e3), duration: 3600 });
   await sync.ensureFilled();
   const filled = (await store.entriesCol()).countDocuments();
-  eq(await filled, 1, 'first fill reads the recent weeks only');
+  eq(await filled, 2, 'first fill reads the recent weeks only');
+  const ahead = new Date(now + 30 * 86400e3);
+  const aheadDay = `${ahead.getFullYear()}-${String(ahead.getMonth() + 1).padStart(2, '0')}-${String(ahead.getDate()).padStart(2, '0')}`;
+  const aheadList = await tool('list_time_entries', { from: aheadDay, to: aheadDay });
+  eq(aheadList.entries.map((e: { description: string }) => e.description), ['Planned'], 'a later week is read when first asked for');
   ok(toggl.log.filter((l) => l.includes('start_date')).length <= 5, 'fill takes a handful of range requests');
 
   // ── Create: instant, then pushed ──
@@ -289,6 +310,16 @@ try {
   await sync.push();
   eq([...toggl.entries.values()].filter((e) => e.description === 'Lease held').length, 1, 'no twin after keep local');
 
+  // A push acknowledged while a range re-read is out survives its cleanup.
+  const racing = await tool('create_time_entries', { entries: [{ start: `${d}T06:00`, duration_minutes: 20, description: 'Pushed mid-read', project: 'Alpha' }] });
+  toggl.duringNextRangeGet = async () => {
+    await sync.push();
+  };
+  const dayStart = new Date(`${d}T00:00`).getTime();
+  await sync.refreshRange(dayStart, dayStart + 86400e3);
+  const survivor = await store.byPublicId(racing.created[0].id);
+  ok(survivor && survivor.toggl_id !== null && !survivor.dirty, 'pushed during the re-read and still there');
+
   // ── Merge: edited in Toggl and here ──
   const one = [...toggl.entries.values()].find((e) => e.description === 'One')!;
   const oneDoc = (await store.byTogglId(one.id))!;
@@ -364,6 +395,19 @@ try {
   const beforeRace = posts();
   const [r1, r2] = await Promise.all([sync.push(), sync.push()]);
   eq([r1.pushed + r2.pushed, posts() - beforeRace], [1, 1], 'two concurrent pushes send it once');
+
+  // An expired bookmark narrows the coverage, so older weeks are re-read before they are served.
+  const old = toggl.entries.get(4)!;
+  put({ ...old, description: 'Old work, edited during the outage' });
+  toggl.rejectSince = true;
+  await sync.pullIfStale(0);
+  toggl.rejectSince = false;
+  const st = (await store.getState())!;
+  ok(st.covered_from_ms > now - 20 * 86400e3, 'coverage narrowed to the re-read weeks');
+  const oldDay = new Date(Date.parse(old.start));
+  const od = `${oldDay.getFullYear()}-${String(oldDay.getMonth() + 1).padStart(2, '0')}-${String(oldDay.getDate()).padStart(2, '0')}`;
+  const oldList = await tool('list_time_entries', { from: od, to: od });
+  ok(oldList.entries.some((e: { description: string }) => e.description === 'Old work, edited during the outage'), 'the edit made during the outage is served');
 
   // ── A since too old falls back to a range re-read ──
   ok((await sync.syncNow({ pull: 'force', push: false })).error === null, 'sync round without errors');
