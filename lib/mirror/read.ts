@@ -18,6 +18,9 @@ export async function readMirror(fromMs: number, toMs: number, opts: { fresh?: b
   try {
     await ensureCovered(fromMs, toMs);
     await pullIfStale(opts.fresh ? 0 : pullIntervalSec());
+    // A pull that recovered from an expired bookmark narrows the coverage;
+    // read this range again if it fell outside.
+    await ensureCovered(fromMs, toMs);
   } catch (e) {
     // Serve the local copy only for weeks it has really read; a range never
     // read would come back empty or partial, and writes plan against it.

@@ -44,6 +44,8 @@ const toggl = {
   duringNextRangeGet: null as null | (() => Promise<void>),
   /** Answer `since` requests with 400, as for a bookmark too old. */
   rejectSince: false,
+  /** Toggl's per-response cap (1000); lowered by the test to exercise splitting. */
+  pageLimit: 1000,
   clock: 0,
   // `at` follows real time (the mirror asks for changes since real times), and never repeats.
   tick() {
@@ -99,6 +101,7 @@ globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) =>
     const a = Date.parse(url.searchParams.get('start_date')!);
     const b = Date.parse(url.searchParams.get('end_date')!);
     const snapshot = all.filter((e) => !e.server_deleted_at && Date.parse(e.start) >= a && Date.parse(e.start) < b);
+    snapshot.splice(toggl.pageLimit);
     if (toggl.duringNextRangeGet) {
       const hook = toggl.duringNextRangeGet;
       toggl.duringNextRangeGet = null;
@@ -425,6 +428,30 @@ try {
   const covered = await tool('list_time_entries', { from: d, to: d, fresh: true });
   ok(covered.warning && covered.entries.length > 0, 'a covered range is served from the copy, with a warning');
   toggl.quota.user = 30;
+
+  // A historical read that runs into an expired bookmark re-reads its own range.
+  put({ ...toggl.entries.get(4)!, description: 'Older work, edited again' });
+  toggl.rejectSince = true;
+  const histDay = new Date(Date.parse(toggl.entries.get(4)!.start));
+  const hd = `${histDay.getFullYear()}-${String(histDay.getMonth() + 1).padStart(2, '0')}-${String(histDay.getDate()).padStart(2, '0')}`;
+  const hist = await tool('list_time_entries', { from: hd, to: hd, fresh: true });
+  toggl.rejectSince = false;
+  ok(hist.entries.some((e: { description: string }) => e.description === 'Older work, edited again'), 'the same read serves the re-read week');
+
+  // A response at Toggl's cap is split until every part is complete; nothing is lost or wrongly removed.
+  const busy = new Date(now - 3 * 86400e3);
+  const bd = `${busy.getFullYear()}-${String(busy.getMonth() + 1).padStart(2, '0')}-${String(busy.getDate()).padStart(2, '0')}`;
+  for (let i = 0; i < 8; i++) {
+    put({ id: 5000 + i, project_id: 11, description: `Busy ${i}`, tags: [], start: new Date(`${bd}T0${i + 1}:00`).toISOString(), stop: new Date(`${bd}T0${i + 1}:30`).toISOString(), duration: 1800 });
+  }
+  toggl.pageLimit = 5;
+  sync.configureForTests({ pageLimit: 5 });
+  const bStart = new Date(`${bd}T00:00`).getTime();
+  await sync.refreshRange(bStart - 7 * 86400e3, bStart + 86400e3);
+  toggl.pageLimit = 1000;
+  sync.configureForTests({ pageLimit: 1000 });
+  const busyDocs = (await store.inRange(bStart, bStart + 86400e3)).filter((x) => x.fields.description.startsWith('Busy'));
+  eq(busyDocs.length, 8, 'all entries of a capped range are read, by splitting it');
 
   // ── A since too old falls back to a range re-read ──
   ok((await sync.syncNow({ pull: 'force', push: false })).error === null, 'sync round without errors');

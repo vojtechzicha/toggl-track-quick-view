@@ -63,7 +63,8 @@ let writeSpacingMs = 1000; // Toggl's per-IP safeguard tolerates about one reque
 let backgroundSync = true;
 
 /** scripts/test-mirror.ts only: no spacing, and no sync started behind the test's back. */
-export function configureForTests(opts: { writeSpacingMs?: number; backgroundSync?: boolean }): void {
+export function configureForTests(opts: { writeSpacingMs?: number; backgroundSync?: boolean; pageLimit?: number }): void {
+  if (opts.pageLimit !== undefined) togglPageLimit = opts.pageLimit;
   if (opts.writeSpacingMs !== undefined) writeSpacingMs = opts.writeSpacingMs;
   if (opts.backgroundSync !== undefined) backgroundSync = opts.backgroundSync;
 }
@@ -202,13 +203,31 @@ async function getRange(fromMs: number, toMs: number): Promise<TogglEntry[]> {
  */
 export async function refreshRange(fromMs: number, toMs: number): Promise<ApplyCounts> {
   const counts = emptyCounts();
-  const col = await entriesCol();
   for (let a = fromMs; a < toMs; a = addDays(a, CHUNK_WEEKS * 7)) {
-    const b = Math.min(toMs, addDays(a, CHUNK_WEEKS * 7));
+    await refreshChunk(a, Math.min(toMs, addDays(a, CHUNK_WEEKS * 7)), counts);
+  }
+  return counts;
+}
+
+/** Toggl answers at most this many entries per request; a full answer may be cut off. */
+let togglPageLimit = 1000;
+const HOUR_MS = 3600 * 1000;
+
+async function refreshChunk(a: number, b: number, counts: ApplyCounts): Promise<void> {
+  const col = await entriesCol();
+  {
     // Only documents unchanged since the request went out can be judged by
     // its answer: one a push acknowledged meanwhile is missing from it.
     const requestedAt = new Date();
     const remote = await getRange(a, b);
+    if (remote.length >= togglPageLimit) {
+      // Possibly cut off: never judge (or cover) from a partial answer.
+      if (b - a <= HOUR_MS) throw new Error('Toggl returned its maximum for a single hour; refusing a partial read.');
+      const mid = a + Math.floor((b - a) / 2);
+      await refreshChunk(a, mid, counts);
+      await refreshChunk(mid, b, counts);
+      return;
+    }
     for (const e of remote) await applyRemote(e, counts);
     const seen = new Set(remote.map((e) => e.id));
     const stale = await col
@@ -226,7 +245,6 @@ export async function refreshRange(fromMs: number, toMs: number): Promise<ApplyC
       }
     }
   }
-  return counts;
 }
 
 /** The fill reaches this far ahead (scheduled entries). Later weeks are read on demand. */
